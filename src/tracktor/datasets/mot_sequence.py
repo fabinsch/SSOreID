@@ -13,13 +13,38 @@ from frcnn.model import test
 
 from ..config import cfg
 
-
 class MOT17_Sequence(Dataset):
     """Multiple Object Tracking Dataset.
 
     This dataloader is designed so that it can handle only one sequence, if more have to be
     handled one should inherit from this class.
     """
+
+    object_class_to_id = {
+        "pedestrian": 1,
+        "person_on_vehicle": 2,
+        "car": 3,
+        "bicycle": 4,
+        "motorbike": 5,
+        "non_motorized_vehicle": 6,
+        "static_person": 7,
+        "distractor": 8,
+        "occluder": 9,
+        "occluder_on_the_ground": 10,
+        "occluder_full": 11,
+        "reflection": 12}
+
+    field_name_to_idx = {
+        "frame_number": 0,
+        "identity_number": 1,
+        "bounding_box_top_left_x": 2,
+        "bounding_box_top_left_y": 3,
+        "bounding_box_width": 4,
+        "bounding_box_height": 5,
+        "confidence_score": 6,
+        "object_class": 7,
+        "visibility_of_object": 8
+    }
 
     def __init__(self, seq_name=None, dets='', vis_threshold=0.0,
                  normalize_mean=[0.485, 0.456, 0.406],
@@ -131,16 +156,18 @@ class MOT17_Sequence(Dataset):
                 reader = csv.reader(inf, delimiter=',')
                 for row in reader:
                     # class person, certainity 1, visibility >= 0.25
-                    if int(row[6]) == 1 and int(row[7]) == 1 and float(row[8]) >= self._vis_threshold:
+                    if int(row[self.field_name_to_idx["confidence_score"]]) == 1 and \
+                            int(row[self.field_name_to_idx["object_class"]]) == self.object_class_to_id["pedestrian"] and \
+                            float(row[self.field_name_to_idx["visibility_of_object"]]) >= self._vis_threshold:
                         # Make pixel indexes 0-based, should already be 0-based (or not)
-                        x1 = int(row[2]) - 1
-                        y1 = int(row[3]) - 1
+                        x1 = int(row[self.field_name_to_idx["bounding_box_top_left_x"]]) - 1
+                        y1 = int(row[self.field_name_to_idx["bounding_box_top_left_y"]]) - 1
                         # This -1 accounts for the width (width of 1 x1=x2)
-                        x2 = x1 + int(row[4]) - 1
-                        y2 = y1 + int(row[5]) - 1
+                        x2 = x1 + int(row[self.field_name_to_idx["bounding_box_width"]]) - 1
+                        y2 = y1 + int(row[self.field_name_to_idx["bounding_box_height"]]) - 1
                         bb = np.array([x1,y1,x2,y2], dtype=np.float32)
-                        boxes[int(row[0])][int(row[1])] = bb
-                        visibility[int(row[0])][int(row[1])] = float(row[8])
+                        boxes[int(row[self.field_name_to_idx["frame_number"]])][int(row[self.field_name_to_idx["identity_number"]])] = bb
+                        visibility[int(row[self.field_name_to_idx["frame_number"]])][int(row[self.field_name_to_idx["identity_number"]])] = float(row[8])
 
         det_file = self.get_det_file(label_path, raw_label_path, mot17_label_path)
 
@@ -148,14 +175,14 @@ class MOT17_Sequence(Dataset):
             with open(det_file, "r") as inf:
                 reader = csv.reader(inf, delimiter=',')
                 for row in reader:
-                    x1 = float(row[2]) - 1
-                    y1 = float(row[3]) - 1
+                    x1 = float(row[self.field_name_to_idx["bounding_box_top_left_x"]]) - 1
+                    y1 = float(row[self.field_name_to_idx["bounding_box_top_left_y"]]) - 1
                     # This -1 accounts for the width (width of 1 x1=x2)
-                    x2 = x1 + float(row[4]) - 1
-                    y2 = y1 + float(row[5]) - 1
-                    score = float(row[6])
+                    x2 = x1 + float(row[self.field_name_to_idx["bounding_box_width"]]) - 1
+                    y2 = y1 + float(row[self.field_name_to_idx["bounding_box_height"]]) - 1
+                    score = float(row[self.field_name_to_idx["confidence_score"]])
                     bb = np.array([x1,y1,x2,y2, score], dtype=np.float32)
-                    dets[int(row[0])].append(bb)
+                    dets[int(row[self.field_name_to_idx["frame_number"]])].append(bb)
 
         for i in range(1,seqLength+1):
             im_path = osp.join(imDir,"{:06d}.jpg".format(i))
