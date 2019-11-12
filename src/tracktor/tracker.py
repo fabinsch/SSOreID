@@ -9,9 +9,8 @@ from scipy.spatial.distance import cdist
 from torch.autograd import Variable
 
 import cv2
-from frcnn.model.nms_wrapper import nms
 
-from .utils import bbox_overlaps, bbox_transform_inv, clip_boxes
+from .utils import bbox_overlaps, bbox_transform_inv, clip_boxes, nms
 
 
 class Tracker():
@@ -67,7 +66,7 @@ class Tracker():
 	def regress_tracks(self, blob):
 		"""Regress the position of the tracks and also checks their scores."""
 		pos = self.get_pos()
-
+		print(pos)
 		# regress
 		_, scores, bbox_pred, rois = self.obj_detect.test_rois(pos)
 		boxes = bbox_transform_inv(rois, bbox_pred)

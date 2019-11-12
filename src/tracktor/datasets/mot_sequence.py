@@ -9,9 +9,9 @@ from torch.utils.data import Dataset
 from torchvision.transforms import Compose, Normalize, ToTensor
 
 import cv2
-from frcnn.model import test
 
 from ..config import cfg
+from ..utils import get_blobs
 
 class MOT17_Sequence(Dataset):
     """Multiple Object Tracking Dataset.
@@ -85,7 +85,7 @@ class MOT17_Sequence(Dataset):
         d = self.data[idx]
         # construct image blob and return new dictionary, so blobs are not saved into this class
         im = cv2.imread(d['im_path'])
-        blobs, im_scales = test._get_blobs(im)
+        blobs, im_scales = get_blobs(im)
         data = blobs['data']
 
         sample = {}
