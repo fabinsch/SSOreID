@@ -99,7 +99,8 @@ class ResNet(models.ResNet):
             im = trans(im)
             res.append(im)
         res = torch.stack(res, 0)
-        res = res.cuda()
+        if torch.cuda.is_available():
+            res.cuda()
         return res
 
     def sum_losses(self, batch, loss, margin, prec_at_k):
