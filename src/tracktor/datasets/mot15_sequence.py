@@ -11,7 +11,7 @@ from torch.utils.data import Dataset
 from torchvision.transforms import Normalize, Compose, ToTensor
 
 from ..config import cfg
-from ..utils import get_blobs
+from frcnn.model import test
 
 
 class MOT15_Sequence(Dataset):
@@ -55,7 +55,7 @@ class MOT15_Sequence(Dataset):
 		d = self.data[idx]
 		# construct image blob and return new dictionary, so blobs are not saved into this class
 		im = cv2.imread(d['im_path'])
-		blobs, im_scales = get_blobs(im)
+		blobs, im_scales = test._get_blobs(im)
 		data = blobs['data']
 
 		sample = {}

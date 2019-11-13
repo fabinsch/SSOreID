@@ -12,9 +12,12 @@ from torch.autograd import Variable
 class FPN(FPNResNet):
 
     def test_rois(self, rois):
+
         batch_size = self.im_data.size(0)
-        rois = rois.cuda()
-        padding = torch.zeros(rois.size(0), 1).cuda()
+        padding = torch.zeros(rois.size(0), 1)
+        if torch.cuda.is_available():
+            rois.cuda()
+            padding.cuda()
         rois_padd = torch.cat((padding, rois), 1)
         rois_padd = Variable(rois_padd, volatile=True)
 
@@ -40,13 +43,16 @@ class FPN(FPNResNet):
             box_deltas = bbox_pred.data
             if cfg.TRAIN.BBOX_NORMALIZE_TARGETS_PRECOMPUTED:
                 # Optionally normalize targets by a precomputed mean and stdev
+                bbox_stds = torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_STDS)
+                bbox_means = torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS)
+                if torch.cuda.is_available():
+                    bbox_stds.cuda()
+                    bbox_means.cuda()
                 if cfg.CLASS_AGNOSTIC_BBX_REG:
-                    box_deltas = box_deltas.view(-1, 4) * torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_STDS).cuda() \
-                                    + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS).cuda()
+                    box_deltas = box_deltas.view(-1, 4) * bbox_stds + bbox_means
                     box_deltas = box_deltas.view(1, -1, 4)
                 else:
-                    box_deltas = box_deltas.view(-1, 4) * torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_STDS).cuda() \
-                                    + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS).cuda()
+                    box_deltas = box_deltas.view(-1, 4) * bbox_stds + bbox_means
                     box_deltas = box_deltas.view(1, -1, 4 * self.n_classes)
 
         box_deltas = box_deltas.squeeze(dim=0)
@@ -55,8 +61,14 @@ class FPN(FPNResNet):
         return cls_score, cls_prob, box_deltas, rois
 
     def load_image(self, image, im_info):
-        self.im_data = Variable(image.permute(0, 3, 1, 2).cuda(), volatile=True)
-        self.im_info = im_info.unsqueeze(dim=0).cuda()
+        permuted_image = image.permute(0, 3, 1, 2)
+        if torch.cuda.is_available():
+            permuted_image.cuda()
+        self.im_data = Variable(permuted_image, volatile=True)
+
+        self.im_info = im_info.unsqueeze(dim=0)
+        if torch.cuda.is_available():
+            self.im_info.cuda()
 
         # feed image data to base model to obtain base feature map
         # Bottom-up
