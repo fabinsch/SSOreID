@@ -4,11 +4,8 @@ import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 from torch.autograd import Variable
 
-from frcnn.model.bbox_transform import bbox_transform_inv, clip_boxes
-from helper.csrc import _C
-
 from .tracker import Tracker, Track
-from .utils import bbox_overlaps
+from .utils import bbox_overlaps, bbox_transform_inv, clip_boxes
 
 
 class OracleTracker(Tracker):
