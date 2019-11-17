@@ -55,6 +55,8 @@ class FPN(FPNResNet):
                     box_deltas = box_deltas.view(1, -1, 4 * self.n_classes)
 
         box_deltas = box_deltas.squeeze(dim=0)
+        if torch.cuda.is_available():
+            box_deltas = box_deltas.cuda()
         cls_score = cls_score.squeeze(dim=0).data
         cls_prob = cls_prob.squeeze(dim=0).data
         return cls_score, cls_prob, box_deltas, rois
