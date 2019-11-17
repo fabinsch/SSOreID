@@ -16,11 +16,11 @@ class FPN(FPNResNet):
         batch_size = self.im_data.size(0)
         padding = torch.zeros(rois.size(0), 1)
         rois_padd = torch.cat((padding, rois), 1)
-        print(rois_padd.type().is_cuda())
+        print(rois_padd.type())
         if torch.cuda.is_available():
             rois.cuda()
             rois_padd.cuda()
-        print(rois_padd.type().is_cuda())
+        print(rois_padd.type())
 
         roi_pool_feat = self._PyramidRoI_Feat(
             self.mrcnn_feature_maps, rois_padd, self.im_info)
