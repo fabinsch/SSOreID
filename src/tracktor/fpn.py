@@ -16,11 +16,9 @@ class FPN(FPNResNet):
         batch_size = self.im_data.size(0)
         padding = torch.zeros(rois.size(0), 1)
         rois_padd = torch.cat((padding, rois), 1)
-        print(rois_padd.type())
         if torch.cuda.is_available():
             rois.cuda()
             rois_padd = rois_padd.cuda()
-        print(rois_padd.type())
 
         roi_pool_feat = self._PyramidRoI_Feat(
             self.mrcnn_feature_maps, rois_padd, self.im_info)
@@ -47,8 +45,8 @@ class FPN(FPNResNet):
                 bbox_stds = torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_STDS)
                 bbox_means = torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS)
                 if torch.cuda.is_available():
-                    bbox_stds.cuda()
-                    bbox_means.cuda()
+                    bbox_stds = bbox_stds.cuda()
+                    bbox_means = bbox_means.cuda()
                 if cfg.CLASS_AGNOSTIC_BBX_REG:
                     box_deltas = box_deltas.view(-1, 4) * bbox_stds + bbox_means
                     box_deltas = box_deltas.view(1, -1, 4)
