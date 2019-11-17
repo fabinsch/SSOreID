@@ -61,9 +61,8 @@ class FPN(FPNResNet):
         return cls_score, cls_prob, box_deltas, rois
 
     def load_image(self, image, im_info):
-        permuted_image = image.permute(0, 3, 1, 2)
+        self.im_data = image.permute(0, 3, 1, 2).cuda()
 
-        self.im_data = permuted_image
         if torch.cuda.is_available():
             print("Cuda is available: {}".format(torch.cuda.is_available()))
             self.im_data.cuda()
