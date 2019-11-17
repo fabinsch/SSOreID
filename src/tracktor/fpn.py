@@ -19,7 +19,7 @@ class FPN(FPNResNet):
         print(rois_padd.type())
         if torch.cuda.is_available():
             rois.cuda()
-            rois_padd.cuda()
+            rois_padd = rois_padd.cuda()
         print(rois_padd.type())
 
         roi_pool_feat = self._PyramidRoI_Feat(
