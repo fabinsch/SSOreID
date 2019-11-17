@@ -19,7 +19,7 @@ class FPN(FPNResNet):
             rois.cuda()
             padding.cuda()
         rois_padd = torch.cat((padding, rois), 1)
-        rois_padd = Variable(rois_padd, volatile=True)
+        rois_padd = Variable(rois_padd)
 
         roi_pool_feat = self._PyramidRoI_Feat(
             self.mrcnn_feature_maps, rois_padd, self.im_info)
@@ -65,7 +65,7 @@ class FPN(FPNResNet):
         print("Cuda is available: {}".format(torch.cuda.is_available()))
         if torch.cuda.is_available():
             permuted_image.cuda()
-        self.im_data = Variable(permuted_image, volatile=True)
+        self.im_data = Variable(permuted_image)
 
         self.im_info = im_info.unsqueeze(dim=0)
         if torch.cuda.is_available():
