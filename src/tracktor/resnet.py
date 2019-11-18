@@ -68,7 +68,6 @@ class ResNet(models.ResNet):
         if torch.cuda.is_available():
             rois = rois.cuda()
         x = self.build_crops(image, rois)
-        x = Variable(x)
         
         return self.forward(x)
 
