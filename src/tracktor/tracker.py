@@ -394,7 +394,7 @@ class Tracker():
 				if keep.nelement() > 0:
 					ones = torch.ones(self.get_pos().size(0)).add_(3).view(-1, 1)
 					if torch.cuda.is_available():
-						ones.cuda()
+						ones = ones.cuda()
 					nms_inp_reg = torch.cat((self.get_pos(), ones),1)
 					new_features = self.get_appearances(blob)
 
