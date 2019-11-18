@@ -381,8 +381,8 @@ class Tracker():
 
 				# nms here if tracks overlap
 				emphasized_scores = person_scores.add_(3)
-				print(self.get_pos().type())
-				print(emphasized_scores.type())
+				if torch.cuda.is_available():
+					emphasized_scores = emphasized_scores.cuda()
 				nms_inp_reg = torch.cat((self.get_pos(), emphasized_scores.view(-1, 1)), 1)
 				print("#####Do NMS on already active tracks######")
 				keep = nms(nms_inp_reg, self.regression_nms_thresh)
