@@ -40,7 +40,7 @@ class FRCNN(resnetv1):
     def test_rois(self, rois):
         rois_score = rois.new(rois.size()[0],1).zero_()
         rois = torch.cat((rois_score, rois), 1)
-        rois = Variable(rois).cuda()
+        rois = rois.cuda()
         self._predictions["rois"] = rois
         return self.forward(rois)
 
@@ -53,7 +53,9 @@ class FRCNN(resnetv1):
 
     def load_image(self, image, im_info):
         self.eval()
-        self._image = Variable(image.permute(0,3,1,2).cuda(), volatile=True)
+        self._image = image.permute(0,3,1,2)
+        if torch.cuda.is_available():
+            self._image = self._image.cuda()
         self._im_info = im_info.cpu().numpy() # No need to change; actually it can be an list
 
         self._mode = 'TEST'
