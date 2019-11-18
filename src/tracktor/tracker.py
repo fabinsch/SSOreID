@@ -328,8 +328,9 @@ class Tracker():
 				rois = torch.zeros(0).cuda()
 		else:
 			_, scores, bbox_pred, rois = self.obj_detect.detect()
-			if torch.cuda.is_available():
-				rois = rois.cuda()
+
+		if torch.cuda.is_available():
+			rois = rois.cuda()
 
 		if rois.nelement() > 0:
 			print(rois.type())
