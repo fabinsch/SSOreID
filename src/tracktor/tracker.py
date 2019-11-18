@@ -123,9 +123,6 @@ class Tracker():
 
 	def reid(self, blob, new_det_pos, new_det_scores):
 		"""Tries to ReID inactive tracks with provided detections."""
-		print(blob['app_data'][0].type())
-		print(new_det_pos)
-		print(new_det_pos / blob['im_info'][0][2])
 		new_det_features = self.reid_network.test_rois(blob['app_data'][0], new_det_pos / blob['im_info'][0][2]).data
 		if len(self.inactive_tracks) >= 1 and self.do_reid:
 			print("LENGTH OF INACTIVE TRACKS IS {}".format((self.inactive_tracks)))
@@ -372,7 +369,6 @@ class Tracker():
 				self.motion()
 			#regress
 			person_scores = self.regress_tracks(blob)
-			print("Person scores {}".format(person_scores))
 
 			if len(self.tracks):
 
@@ -384,7 +380,6 @@ class Tracker():
 				if torch.cuda.is_available():
 					emphasized_scores = emphasized_scores.cuda()
 				nms_inp_reg = torch.cat((self.get_pos(), emphasized_scores.view(-1, 1)), 1)
-				print("#####Do NMS on already active tracks######")
 				keep = nms(nms_inp_reg, self.regression_nms_thresh)
 
 				self.tracks_to_inactive([self.tracks[i]
