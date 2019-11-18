@@ -330,6 +330,8 @@ class Tracker():
 			_, scores, bbox_pred, rois = self.obj_detect.detect()
 
 		if rois.nelement() > 0:
+			print(rois.type())
+			print(bbox_pred.type())
 			boxes = bbox_transform_inv(rois, bbox_pred)
 			boxes = clip_boxes(Variable(boxes), blob['im_info'][0][:2]).data
 
