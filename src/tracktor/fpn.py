@@ -65,7 +65,6 @@ class FPN(FPNResNet):
         self.im_data = image.permute(0, 3, 1, 2).cuda()
 
         if torch.cuda.is_available():
-            print("Cuda is available: {}".format(torch.cuda.is_available()))
             self.im_data.cuda()
 
         self.im_info = im_info.unsqueeze(dim=0)
