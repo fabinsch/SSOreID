@@ -69,6 +69,8 @@ class Tracker():
 		pos = self.get_pos()
 		# regress
 		_, scores, bbox_pred, rois = self.obj_detect.test_rois(pos)
+		if torch.cuda.is_available():
+			rois = rois.cuda()
 		boxes = bbox_transform_inv(rois, bbox_pred)
 		boxes = clip_boxes(Variable(boxes), blob['im_info'][0][:2]).data
 		pos = boxes[:, self.cl*4:(self.cl+1)*4]
