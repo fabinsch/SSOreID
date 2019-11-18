@@ -67,6 +67,7 @@ class ResNet(models.ResNet):
         """Tests the rois on a particular image. Should be inside image."""
         if torch.cuda.is_available():
             rois = rois.cuda()
+            image = image.cuda()
         x = self.build_crops(image, rois)
         
         return self.forward(x)
