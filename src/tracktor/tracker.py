@@ -121,6 +121,9 @@ class Tracker():
 
 	def reid(self, blob, new_det_pos, new_det_scores):
 		"""Tries to ReID inactive tracks with provided detections."""
+		print(blob['app_data'][0].type())
+		print(new_det_pos)
+		print(new_det_pos / blob['im_info'][0][2])
 		new_det_features = self.reid_network.test_rois(blob['app_data'][0], new_det_pos / blob['im_info'][0][2]).data
 		if len(self.inactive_tracks) >= 1 and self.do_reid:
 			print("LENGTH OF INACTIVE TRACKS IS {}".format((self.inactive_tracks)))
@@ -333,8 +336,6 @@ class Tracker():
 			rois = rois.cuda()
 
 		if rois.nelement() > 0:
-			print(rois.type())
-			print(bbox_pred.type())
 			boxes = bbox_transform_inv(rois, bbox_pred)
 			boxes = clip_boxes(Variable(boxes), blob['im_info'][0][:2]).data
 
