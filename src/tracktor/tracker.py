@@ -492,7 +492,6 @@ class Track(object):
 	def test_features(self, test_features):
 		"""Compares test_features to features of this Track object"""
 		if len(self.features) > 1:
-			print(self.features)
 			features = torch.cat(list(self.features), 0)
 		else:
 			features = self.features[0]
