@@ -39,7 +39,7 @@ tracktor:
     motion_model: False
     # DPM or DPM_RAW or 0, raw includes the unfiltered (no nms) versions of the provided detections,
     # 0 tells the tracker to use private detections (Faster R-CNN)
-    public_detections: True
+    public_detections: False
     # How much last appearance features are to keep
     max_features_num: 10
     # Do camera motion compensation
