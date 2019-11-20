@@ -167,7 +167,9 @@ class Tracker():
 			for t in remove_inactive:
 				self.inactive_tracks.remove(t)
 
-			keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().cuda()
+			keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long()
+			if torch.cuda.is_available():
+				keep = keep.cuda()
 			if keep.nelement() > 0:
 				new_det_pos = new_det_pos[keep]
 				new_det_scores = new_det_scores[keep]
@@ -237,7 +239,9 @@ class Tracker():
 					p2 = torch.Tensor([p[2], p[3], 1]).view(3,1)
 					p1_n = torch.mm(warp_matrix, p1).view(1,2)
 					p2_n = torch.mm(warp_matrix, p2).view(1,2)
-					pos = torch.cat((p1_n, p2_n), 1).cuda()
+					pos = torch. cat((p1_n, p2_n), 1)
+					if torch.cuda.is_available():
+						pos = torch.cat((p1_n, p2_n), 1).cuda()
 					t.pos = pos.view(1,-1)
 
 			if self.motion_model:

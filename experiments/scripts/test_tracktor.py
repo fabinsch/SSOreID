@@ -78,7 +78,6 @@ def my_main(tracktor, siamese, _config):
         if torch.cuda.is_available():
             checkpoint = torch.load(tracktor['obj_detect_weights'])
         else:
-
             checkpoint = torch.load(tracktor['obj_detect_weights'], map_location=torch.device('cpu'))
 
         if 'pooling_mode' in checkpoint.keys():
