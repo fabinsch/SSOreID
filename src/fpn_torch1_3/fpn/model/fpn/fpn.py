@@ -116,32 +116,6 @@ class _FPN(nn.Module):
         roi_level[roi_level < 2] = 2
         roi_level[roi_level > 5] = 5
 
-        # Cropping is not ported to pytorch 1.3 yet!
-        """if cfg.POOLING_MODE == 'crop':
-            # pdb.set_trace()
-            # pooled_feat_anchor = _crop_pool_layer(base_feat, rois.view(-1, 5))
-            # NOTE: need to add pyrmaid
-            roi_pool_feats = []
-            box_to_levels = []
-            for i, l in enumerate(range(2, 6)):
-                if (roi_level == l).sum() == 0:
-                    continue
-                idx_l = (roi_level == l).nonzero().squeeze()
-                box_to_levels.append(idx_l)
-                # scale = feat_maps[i].size(2) / im_info[0][0]
-                # feat = self.RCNN_roi_align(feat_maps[i], rois[idx_l], scale)
-                grid_xy = _affine_grid_gen(rois, feat_maps[i].size()[2:], self.grid_size)  ##
-                grid_yx = torch.stack([grid_xy.data[:,:,:,1], grid_xy.data[:,:,:,0]], 3).contiguous()
-                feat = self.RCNN_roi_crop(feat_maps[i], Variable(grid_yx).detach()) ##
-                if cfg.CROP_RESIZE_WITH_MAX_POOL:
-                    feat = F.max_pool2d(feat, 2, 2)
-
-                roi_pool_feats.append(feat)
-            roi_pool_feat = torch.cat(roi_pool_feats, 0)
-            box_to_level = torch.cat(box_to_levels, 0)
-            idx_sorted, order = torch.sort(box_to_level)
-            roi_pool_feat = roi_pool_feat[order]"""
-
         if cfg.POOLING_MODE == 'align':
             roi_pool_feats = []
             box_to_levels = []
