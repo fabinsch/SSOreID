@@ -72,7 +72,7 @@ def my_main(tracktor, siamese, _config):
         from tracktor.fpn import FPN
         from fpn.model.utils import config
 
-        config.cfg.CUDA = False
+        config.cfg.CUDA = True
         config.cfg.TRAIN.USE_FLIPPED = False
 
         if torch.cuda.is_available():
