@@ -348,6 +348,7 @@ class Tracker():
 		else:
 			inds = torch.zeros(0).cuda()
 
+        # Are there any bounding boxes that have a high enough person (class 1) classification score.
 		if inds.nelement() > 0:
 			boxes = boxes[inds]
 			det_pos = boxes[:, self.cl*4:(self.cl+1)*4]

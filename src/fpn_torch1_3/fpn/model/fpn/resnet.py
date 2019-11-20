@@ -344,5 +344,5 @@ class FPNResNet(_FPN):
 
   def _head_to_tail(self, pool5):
     block5 = self.RCNN_top(pool5)
-    fc7 = block5.mean(3).mean(2)
+    fc7 = block5.squeeze()
     return fc7
