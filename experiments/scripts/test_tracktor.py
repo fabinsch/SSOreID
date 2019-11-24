@@ -121,6 +121,10 @@ def my_main(tracktor, siamese, _config):
 
     time_total = 0
     for sequence in Datasets(tracktor['dataset']):
+        string = str(sequence)
+
+        if string != 'MOT17-05':
+            continue
         tracker.reset()
 
         now = time.time()
