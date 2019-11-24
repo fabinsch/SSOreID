@@ -28,9 +28,15 @@ class FPN(FPNResNet):
 
         # compute bbox offset
         bbox_pred = self.RCNN_bbox_pred(pooled_feat)
+        if len(bbox_pred.size()) == 1:
+            bbox_pred.unsqueeze_(0)
 
         # compute object classification probability
         cls_score = self.RCNN_cls_score(pooled_feat)
+        print(cls_score.size())
+        if len(cls_score.size()) == 1:
+            cls_score.unsqueeze_(0)
+        print(cls_score.size())
         cls_prob = F.softmax(cls_score, dim=1)
 
         rois_padd = rois_padd.view(batch_size, -1, rois_padd.size(1))

@@ -175,9 +175,13 @@ class Tracker():
 				new_det_scores = new_det_scores[keep]
 				new_det_features = new_det_features[keep]
 			else:
-				new_det_pos = torch.zeros(0).cuda()
-				new_det_scores = torch.zeros(0).cuda()
-				new_det_features = torch.zeros(0).cuda()
+				new_det_pos = torch.zeros(0)
+				new_det_scores = torch.zeros(0)
+				new_det_features = torch.zeros(0)
+				if torch.cuda.is_available():
+					new_det_pos = new_det_pos.cuda()
+					new_det_scores = new_det_scores.cuda()
+					new_det_features = new_det_features.cuda()
 		return new_det_pos, new_det_scores, new_det_features
 
 	def clear_inactive(self):
@@ -327,8 +331,10 @@ class Tracker():
 		self.obj_detect.load_image(blob['data'][0], blob['im_info'][0])
 		if self.public_detections:
 			dets = blob['dets']
+
 			if len(dets) > 0:
 				dets = torch.cat(dets, 0)[:,:4]
+				print(dets.size())
 				_, scores, bbox_pred, rois = self.obj_detect.test_rois(dets)
 			else:
 				rois = torch.zeros(0).cuda()
