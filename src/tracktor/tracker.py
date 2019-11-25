@@ -78,6 +78,8 @@ class Tracker():
 				RCNN_bbox_pred_copy = nn.Linear(1024, 4 * 2)
 
 			RCNN_bbox_pred_copy.load_state_dict(self.obj_detect.RCNN_bbox_pred.state_dict())
+			if torch.cuda.is_available():
+				RCNN_bbox_pred_copy = RCNN_bbox_pred_copy.cuda()
 			track.finetune_detector(RCNN_bbox_pred_copy, self.obj_detect._PyramidRoI_Feat,
 									self.obj_detect._head_to_tail, self.obj_detect.mrcnn_feature_maps, new_det_pos[i])
 			self.tracks.append(track)
