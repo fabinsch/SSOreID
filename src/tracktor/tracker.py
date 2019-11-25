@@ -75,7 +75,7 @@ class Tracker():
 			if fpn_cfg.CLASS_AGNOSTIC_BBX_REG:
 				RCNN_bbox_pred_copy = nn.Linear(1024, 4)
 			else:
-				RCNN_bbox_pred_copy = nn.Linear(1024, 4 * self.n_classes)
+				RCNN_bbox_pred_copy = nn.Linear(1024, 4 * 2)
 
 			RCNN_bbox_pred_copy.load_state_dict(self.obj_detect.RCNN_bbox_pred.state_dict())
 			track.finetune_detector(RCNN_bbox_pred_copy, self.obj_detect._PyramidRoI_Feat,
