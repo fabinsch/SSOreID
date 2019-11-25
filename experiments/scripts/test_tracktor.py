@@ -52,6 +52,7 @@ def my_main(tracktor, siamese, _config):
 
     # object detection
     print("[*] Building object detector")
+    print(tracktor['network'])
     if tracktor['network'].startswith('frcnn'):
         # FRCNN
         from tracktor.frcnn import FRCNN
