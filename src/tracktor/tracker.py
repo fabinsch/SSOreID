@@ -565,6 +565,8 @@ class Track(object):
 		rois = self.training_boxes
 
 		padding = torch.zeros(rois.size(0), 1)
+		if torch.cuda.is_available():
+			padding = padding.cuda()
 		rois_padd = torch.cat((padding, rois), 1)
 		if torch.cuda.is_available():
 			rois.cuda()
