@@ -13,6 +13,11 @@ import cv2
 from .utils import bbox_overlaps, bbox_transform_inv, clip_boxes
 from helper.csrc.wrapper.nms import nms
 
+import matplotlib
+matplotlib.use('TkAgg')
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from fpn.model.utils.config import cfg as fpn_cfg
 
 class Tracker():
 	"""The main tracking file, here is where magic happens."""
@@ -56,12 +61,17 @@ class Tracker():
 			t.pos = t.last_pos
 		self.inactive_tracks += tracks
 
-	def add(self, new_det_pos, new_det_scores, new_det_features):
+	def add(self, new_det_pos, new_det_scores, new_det_features, im_info):
 		"""Initializes new Track objects and saves them."""
 		num_new = new_det_pos.size(0)
+
 		for i in range(num_new):
-			self.tracks.append(Track(new_det_pos[i].view(1,-1), new_det_scores[i], self.track_num + i, new_det_features[i].view(1,-1),
-																	self.inactive_patience, self.max_features_num))
+			track = Track(new_det_pos[i].view(1, -1), new_det_scores[i], self.track_num + i,
+						  new_det_features[i].view(1, -1), self.inactive_patience, self.max_features_num, im_info)
+			track.generate_training_set(plot=False)
+			track.finetune_detector(self.obj_detect.RCNN_bbox_pred, self.obj_detect._PyramidRoI_Feat,
+									self.obj_detect._head_to_tail, self.obj_detect.mrcnn_feature_maps, new_det_pos[i])
+			self.tracks.append(track)
 		self.track_num += num_new
 
 	def regress_tracks(self, blob):
@@ -334,7 +344,6 @@ class Tracker():
 
 			if len(dets) > 0:
 				dets = torch.cat(dets, 0)[:,:4]
-				print(dets.size())
 				_, scores, bbox_pred, rois = self.obj_detect.test_rois(dets)
 			else:
 				rois = torch.zeros(0).cuda()
@@ -446,7 +455,7 @@ class Tracker():
 
 			# add new
 			if new_det_pos.nelement() > 0:
-				self.add(new_det_pos, new_det_scores, new_det_features)
+				self.add(new_det_pos, new_det_scores, new_det_features, im_info=blob['im_info'])
 
 		####################
 		# Generate Results #
@@ -472,7 +481,7 @@ class Tracker():
 class Track(object):
 	"""This class contains all necessary for every individual track."""
 
-	def __init__(self, pos, score, track_id, features, inactive_patience, max_features_num):
+	def __init__(self, pos, score, track_id, features, inactive_patience, max_features_num, im_info):
 		self.id = track_id
 		self.pos = pos
 		self.score = score
@@ -484,6 +493,9 @@ class Track(object):
 		self.last_pos = torch.Tensor([])
 		self.last_v = torch.Tensor([])
 		self.gt_id = None
+		self.im_info = im_info
+		self.RCNN_bbox_pred = None
+		self.head_to_tail = None
 
 	def is_to_purge(self):
 		"""Tests if the object has been too long inactive and is to remove."""
@@ -509,3 +521,95 @@ class Track(object):
 		features = features.mean(0, keepdim=True)
 		dist = F.pairwise_distance(features, test_features)
 		return dist
+
+	def generate_training_set(self, plot=False):
+		gt_pos = self.pos
+		random_displacement = 3*torch.randn(5, 4)
+		random_displaced_bboxes = gt_pos.repeat(5, 1) + random_displacement
+		self.training_boxes = clip_boxes(random_displaced_bboxes, self.im_info[0][:2])
+		print(random_displaced_bboxes)
+		print(self.training_boxes)
+
+		if plot:
+			rectangles = self.training_boxes.numpy()
+			num_rectangles = len(rectangles)
+			h, w = self.im_info[0][:2]
+			im = np.zeros([int(h.item()), int(w.item())])
+			fig, ax = plt.subplots(1)
+			ax.imshow(im, cmap='gist_gray_r')
+			gt_pos_np = gt_pos.numpy()
+			gt_patch = patches.Rectangle((gt_pos_np[0, 0],
+									gt_pos[0, 1]),
+									gt_pos[0, 2],
+									gt_pos[0, 3], linewidth=0.5, edgecolor='r', facecolor='none')
+			rects = [patches.Rectangle((rectangles[i, 0],
+									rectangles[i, 1]),
+									rectangles[i, 2],
+									rectangles[i, 3], linewidth=0.5, edgecolor='b', facecolor='none') for i in range(num_rectangles)]
+			for i in range(num_rectangles):
+				ax.add_patch(rects[i])
+			ax.add_patch(gt_patch)
+
+			plt.show()
+
+
+	def finetune_detector(self, RCNN_bbox_pred, PyramidRoI_Feat, head_to_tail, mrcnn_feature_maps, gt_box):
+	#	optimizer = torch.optim.Adam([RCNN_bbox_pred.parameters(), head_to_tail.parameters()], lr=0.0001)
+		optimizer = torch.optim.Adam(RCNN_bbox_pred.parameters(), lr=0.0001)
+		criterion = torch.nn.SmoothL1Loss()
+
+		rois = self.training_boxes
+
+		padding = torch.zeros(rois.size(0), 1)
+		rois_padd = torch.cat((padding, rois), 1)
+		if torch.cuda.is_available():
+			rois.cuda()
+			rois_padd = rois_padd.cuda()
+
+		roi_pool_feat = PyramidRoI_Feat(
+			mrcnn_feature_maps, rois_padd, self.im_info)
+
+		# feed pooled features to top model
+		pooled_feat = head_to_tail(roi_pool_feat)
+
+		# compute bbox offset
+		bbox_pred = RCNN_bbox_pred(pooled_feat)
+
+		if fpn_cfg.TEST.BBOX_REG:
+			# Apply bounding-box regression deltas
+			box_deltas = bbox_pred.data
+			n_classes = 2
+			if fpn_cfg.TRAIN.BBOX_NORMALIZE_TARGETS_PRECOMPUTED:
+				# Optionally normalize targets by a precomputed mean and stdev
+				bbox_stds = torch.FloatTensor(fpn_cfg.TRAIN.BBOX_NORMALIZE_STDS)
+				bbox_means = torch.FloatTensor(fpn_cfg.TRAIN.BBOX_NORMALIZE_MEANS)
+				if torch.cuda.is_available():
+					bbox_stds = bbox_stds.cuda()
+					bbox_means = bbox_means.cuda()
+				if fpn_cfg.CLASS_AGNOSTIC_BBX_REG:
+					box_deltas = box_deltas.view(-1, 4) * bbox_stds + bbox_means
+					box_deltas = box_deltas.view(1, -1, 4)
+				else:
+					box_deltas = box_deltas.view(-1, 4) * bbox_stds + bbox_means
+					box_deltas = box_deltas.view(1, -1, 4 * n_classes)
+
+		box_deltas = box_deltas.squeeze(dim=0)
+
+		if torch.cuda.is_available():
+			box_deltas = box_deltas.cuda()
+
+		boxes = bbox_transform_inv(rois, bbox_pred)[:, 4:]
+		print(box_deltas)
+		input(boxes)
+
+		input('forward worked')
+
+		optimizer.zero_grad()
+		loss = criterion(boxes, gt_box)
+		loss.backward()
+		optimizer.step()
+		input('backward also worked')
+
+		self.RCNN_bbox_pred = RCNN_bbox_pred
+		self.head_to_tail = head_to_tail
+		return None
