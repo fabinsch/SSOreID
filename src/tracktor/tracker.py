@@ -541,8 +541,6 @@ class Track(object):
 			gt_pos = gt_pos.cuda()
 		random_displaced_bboxes = gt_pos.repeat(5, 1) + random_displacement
 		self.training_boxes = clip_boxes(random_displaced_bboxes, self.im_info[0][:2])
-		print(random_displaced_bboxes)
-		print(self.training_boxes)
 
 		if plot:
 			rectangles = self.training_boxes.numpy()
@@ -567,7 +565,7 @@ class Track(object):
 			plt.show()
 
 
-	def finetune_detector(self, RCNN_bbox_pred, PyramidRoI_Feat, head_to_tail, mrcnn_feature_maps, gt_box, epochs=5):
+	def finetune_detector(self, RCNN_bbox_pred, PyramidRoI_Feat, head_to_tail, mrcnn_feature_maps, gt_box, epochs=20):
 	#	optimizer = torch.optim.Adam([RCNN_bbox_pred.parameters(), head_to_tail.parameters()], lr=0.0001)
 		optimizer = torch.optim.Adam(RCNN_bbox_pred.parameters(), lr=0.0001)
 		criterion = torch.nn.SmoothL1Loss()
