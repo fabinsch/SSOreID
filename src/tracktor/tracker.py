@@ -574,16 +574,17 @@ class Track(object):
 
 		rois = self.training_boxes
 
-		padding = torch.zeros(rois.size(0), 1)
-		if torch.cuda.is_available():
-			padding = padding.cuda()
-		rois_padd = torch.cat((padding, rois), 1)
-		if torch.cuda.is_available():
-			rois.cuda()
-			rois_padd = rois_padd.cuda()
+		with torch.no_grad():
+			padding = torch.zeros(rois.size(0), 1)
+			if torch.cuda.is_available():
+				padding = padding.cuda()
+			rois_padd = torch.cat((padding, rois), 1)
+			if torch.cuda.is_available():
+				rois.cuda()
+				rois_padd = rois_padd.cuda()
 
-		roi_pool_feat = PyramidRoI_Feat(
-			mrcnn_feature_maps, rois_padd, self.im_info)
+			roi_pool_feat = PyramidRoI_Feat(
+				mrcnn_feature_maps, rois_padd, self.im_info)
 
 		for i in range(epochs):
 
