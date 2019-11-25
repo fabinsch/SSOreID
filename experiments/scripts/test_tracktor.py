@@ -71,16 +71,21 @@ def my_main(tracktor, siamese, _config):
         # FPN
         from tracktor.fpn import FPN
         from fpn.model.utils import config
-        config.cfg.TRAIN.USE_FLIPPED = False
+
         config.cfg.CUDA = True
         config.cfg.TRAIN.USE_FLIPPED = False
-        checkpoint = torch.load(tracktor['obj_detect_weights'])
+
+        if torch.cuda.is_available():
+            checkpoint = torch.load(tracktor['obj_detect_weights'])
+        else:
+            checkpoint = torch.load(tracktor['obj_detect_weights'], map_location=torch.device('cpu'))
 
         if 'pooling_mode' in checkpoint.keys():
             config.cfg.POOLING_MODE = checkpoint['pooling_mode']
 
         set_cfgs = ['ANCHOR_SCALES', '[4, 8, 16, 32]',
                     'ANCHOR_RATIOS', '[0.5,1,2]']
+
         config.cfg_from_file(_config['tracktor']['obj_detect_config'])
         config.cfg_from_list(set_cfgs)
 
@@ -93,13 +98,18 @@ def my_main(tracktor, siamese, _config):
 
     pprint.pprint(config.cfg)
     obj_detect.eval()
-    obj_detect.cuda()
+    if torch.cuda.is_available():
+        obj_detect.cuda()
 
     # reid
     reid_network = resnet50(pretrained=False, **siamese['cnn'])
-    reid_network.load_state_dict(torch.load(tracktor['reid_network_weights']))
+    if torch.cuda.is_available():
+        reid_network.load_state_dict(torch.load(tracktor['reid_network_weights']))
+    else:
+        reid_network.load_state_dict(torch.load(tracktor['reid_network_weights'], map_location=torch.device('cpu')))
     reid_network.eval()
-    reid_network.cuda()
+    if torch.cuda.is_available():
+        reid_network.cuda()
 
     # tracktor
     if 'oracle' in tracktor:
@@ -116,10 +126,10 @@ def my_main(tracktor, siamese, _config):
         now = time.time()
 
         print("[*] Evaluating: {}".format(sequence))
-
         data_loader = DataLoader(sequence, batch_size=1, shuffle=False)
         for i, frame in enumerate(data_loader):
             if i >= len(sequence) * tracktor['frame_split'][0] and i <= len(sequence) * tracktor['frame_split'][1]:
+                print("Evaluating {}th image".format(i))
                 tracker.step(frame)
         results = tracker.get_results()
 

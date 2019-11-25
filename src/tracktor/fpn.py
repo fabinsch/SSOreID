@@ -12,11 +12,13 @@ from torch.autograd import Variable
 class FPN(FPNResNet):
 
     def test_rois(self, rois):
+
         batch_size = self.im_data.size(0)
-        rois = rois.cuda()
-        padding = torch.zeros(rois.size(0), 1).cuda()
+        padding = torch.zeros(rois.size(0), 1)
         rois_padd = torch.cat((padding, rois), 1)
-        rois_padd = Variable(rois_padd, volatile=True)
+        if torch.cuda.is_available():
+            rois.cuda()
+            rois_padd = rois_padd.cuda()
 
         roi_pool_feat = self._PyramidRoI_Feat(
             self.mrcnn_feature_maps, rois_padd, self.im_info)
@@ -26,9 +28,15 @@ class FPN(FPNResNet):
 
         # compute bbox offset
         bbox_pred = self.RCNN_bbox_pred(pooled_feat)
+        if len(bbox_pred.size()) == 1:
+            bbox_pred.unsqueeze_(0)
 
         # compute object classification probability
         cls_score = self.RCNN_cls_score(pooled_feat)
+        print(cls_score.size())
+        if len(cls_score.size()) == 1:
+            cls_score.unsqueeze_(0)
+        print(cls_score.size())
         cls_prob = F.softmax(cls_score, dim=1)
 
         rois_padd = rois_padd.view(batch_size, -1, rois_padd.size(1))
@@ -40,23 +48,34 @@ class FPN(FPNResNet):
             box_deltas = bbox_pred.data
             if cfg.TRAIN.BBOX_NORMALIZE_TARGETS_PRECOMPUTED:
                 # Optionally normalize targets by a precomputed mean and stdev
+                bbox_stds = torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_STDS)
+                bbox_means = torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS)
+                if torch.cuda.is_available():
+                    bbox_stds = bbox_stds.cuda()
+                    bbox_means = bbox_means.cuda()
                 if cfg.CLASS_AGNOSTIC_BBX_REG:
-                    box_deltas = box_deltas.view(-1, 4) * torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_STDS).cuda() \
-                                    + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS).cuda()
+                    box_deltas = box_deltas.view(-1, 4) * bbox_stds + bbox_means
                     box_deltas = box_deltas.view(1, -1, 4)
                 else:
-                    box_deltas = box_deltas.view(-1, 4) * torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_STDS).cuda() \
-                                    + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS).cuda()
+                    box_deltas = box_deltas.view(-1, 4) * bbox_stds + bbox_means
                     box_deltas = box_deltas.view(1, -1, 4 * self.n_classes)
 
         box_deltas = box_deltas.squeeze(dim=0)
+        if torch.cuda.is_available():
+            box_deltas = box_deltas.cuda()
         cls_score = cls_score.squeeze(dim=0).data
         cls_prob = cls_prob.squeeze(dim=0).data
         return cls_score, cls_prob, box_deltas, rois
 
     def load_image(self, image, im_info):
-        self.im_data = Variable(image.permute(0, 3, 1, 2).cuda(), volatile=True)
-        self.im_info = im_info.unsqueeze(dim=0).cuda()
+        self.im_data = image.permute(0, 3, 1, 2)
+
+        if torch.cuda.is_available():
+            self.im_data = self.im_data.cuda()
+
+        self.im_info = im_info.unsqueeze(dim=0)
+        if torch.cuda.is_available():
+            self.im_info.cuda()
 
         # feed image data to base model to obtain base feature map
         # Bottom-up

@@ -18,14 +18,15 @@ from torch.utils.data import DataLoader
 import cv2
 import seaborn as sns
 from easydict import EasyDict as edict
-from mot_evaluation.bbox import bbox_overlap
-from mot_evaluation.io import (extract_valid_gt_data, print_metrics,
+from experiments.evaluation_tools.mot_evaluation.bbox import bbox_overlap
+from experiments.evaluation_tools.mot_evaluation.io import (extract_valid_gt_data, print_metrics,
                                read_seqmaps, read_txt_to_struct)
-from mot_evaluation.measurements import clear_mot_hungarian, idmeasures
+from experiments.evaluation_tools.mot_evaluation.measurements import clear_mot_hungarian, idmeasures
 from sacred import Experiment
 from sklearn.utils.linear_assignment_ import linear_assignment
 from tracktor.config import cfg, get_output_dir
 from tracktor.datasets.factory import Datasets
+
 
 sns.set_palette('deep')
 sns.set(font_scale=1.5, rc={'text.usetex': True})
@@ -253,15 +254,14 @@ def evaluate_bm(all_metrics):
 def evaluate_tracking(sequences, track_dir, gt_dir):
     all_info = []
     for seqname in sequences:
-        track_res = os.path.join(track_dir, seqname, 'res.txt')
-        gt_file = os.path.join(gt_dir, seqname, 'gt.txt')
+        track_res = os.path.join(track_dir, seqname + '.txt')
+        gt_file = os.path.join(gt_dir, seqname, 'gt', 'gt.txt')
         assert os.path.exists(track_res) and os.path.exists(gt_file), 'Either tracking result or groundtruth directory does not exist'
-
         trackDB = read_txt_to_struct(track_res)
         gtDB = read_txt_to_struct(gt_file)
 
         gtDB, distractor_ids = extract_valid_gt_data(gtDB)
-        metrics, extra_info = evaluate_sequence(trackDB, gtDB, distractor_ids)
+        metrics, extra_info, clear_mot_info, ML_PT_MT, M, gtDB, trackDB = evaluate_sequence(trackDB, gtDB, distractor_ids)
         print_metrics(seqname + ' Evaluation', metrics)
         all_info.append(extra_info)
     all_metrics = evaluate_bm(all_info)
@@ -300,14 +300,14 @@ def my_main(_config):
     #if not osp.exists(output_dir):
     #    os.makedirs(output_dir)
 
-    #sequences_raw = ["MOT17-13", "MOT17-11", "MOT17-10", "MOT17-09", "MOT17-05", "MOT17-04", "MOT17-02", ]
+    sequences_raw = ["MOT17-13"]#, "MOT17-11", "MOT17-10", "MOT17-09", "MOT17-05", "MOT17-04", "MOT17-02", ]
 
-    #sequences = ["{}-{}".format(s, detections) for s in sequences_raw]
-    #sequences = sequences[:1]
+    sequences = ["{}-{}".format(s, detections) for s in sequences_raw]
+    sequences = sequences[:1]
 
     # tracker = ["FRCNN_Base", "HAM_SADF17", "MOTDT17", "EDMT17", "IOU17", "MHT_bLSTM", "FWT_17", "jCC", "MHT_DAM_17"]
     # tracker = ["Baseline", "BnW", "FWT_17", "jCC", "MOTDT17", "MHT_DAM_17"]
-    tracker = ["Tracktor", "FWT", "jCC", "MOTDT17"]
+    tracker = ["Tracktor++"]#, "FWT", "jCC", "MOTDT17"]
     #tracker = ["Baseline"]
 
     for t in tracker:
@@ -317,12 +317,13 @@ def my_main(_config):
             ################################
             # Make videos for each tracker #
             ################################
-            db = Datasets(dataset)[2]
+            #db = Datasets(dataset)[2]
+            db_string = 'mot17_13_FRCNN17'
+            db = Datasets(db_string)
 
-            s = "{}-{}".format(db, detections)
-
-            gt_file = osp.join(cfg.DATA_DIR, "MOT17Labels", "train", s, "gt", "gt.txt")
-            res_file = osp.join(results_dir, t, s+".txt")
+            s = "{}-{}".format(db_string, detections)
+            gt_file = osp.join(cfg.DATA_DIR, "MOT17/train/MOT17-13-FRCNN/gt/gt.txt")
+            res_file = osp.join('output/tracktor/MOT17/Tracktor++/MOT17-13-FRCNN.txt')
 
             stDB = read_txt_to_struct(res_file)
             gtDB = read_txt_to_struct(gt_file)
@@ -400,7 +401,7 @@ def my_main(_config):
             loop_cy_iter = cyl()
             styles = defaultdict(lambda : next(loop_cy_iter))
 
-            for frame,v in enumerate(db,1):
+            for frame,v in enumerate(db[0],0):
                 im_path = v['im_path']
                 im_name = osp.basename(im_path)
                 im_output = osp.join(output_dir, im_name)

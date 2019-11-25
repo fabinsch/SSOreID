@@ -65,9 +65,10 @@ class ResNet(models.ResNet):
 
     def test_rois(self, image, rois):
         """Tests the rois on a particular image. Should be inside image."""
+
         x = self.build_crops(image, rois)
-        x = Variable(x)
-        
+        if torch.cuda.is_available():
+            x = x.cuda()
         return self.forward(x)
 
     def compare(self, e0, e1, train=False):
@@ -99,7 +100,8 @@ class ResNet(models.ResNet):
             im = trans(im)
             res.append(im)
         res = torch.stack(res, 0)
-        res = res.cuda()
+        if torch.cuda.is_available():
+            res.cuda()
         return res
 
     def sum_losses(self, batch, loss, margin, prec_at_k):

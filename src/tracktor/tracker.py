@@ -9,9 +9,9 @@ from scipy.spatial.distance import cdist
 from torch.autograd import Variable
 
 import cv2
-from frcnn.model.nms_wrapper import nms
 
 from .utils import bbox_overlaps, bbox_transform_inv, clip_boxes
+from helper.csrc.wrapper.nms import nms
 
 
 class Tracker():
@@ -67,9 +67,10 @@ class Tracker():
 	def regress_tracks(self, blob):
 		"""Regress the position of the tracks and also checks their scores."""
 		pos = self.get_pos()
-
 		# regress
 		_, scores, bbox_pred, rois = self.obj_detect.test_rois(pos)
+		if torch.cuda.is_available():
+			rois = rois.cuda()
 		boxes = bbox_transform_inv(rois, bbox_pred)
 		boxes = clip_boxes(Variable(boxes), blob['im_info'][0][:2]).data
 		pos = boxes[:, self.cl*4:(self.cl+1)*4]
@@ -85,7 +86,10 @@ class Tracker():
 				s.append(scores[i])
 				# t.prev_pos = t.pos
 				t.pos = pos[i].view(1,-1)
-		return torch.Tensor(s[::-1]).cuda()
+		scores_of_active_tracks = torch.Tensor(s[::-1])
+		if torch.cuda.is_available():
+			scores_of_active_tracks.cuda()
+		return scores_of_active_tracks
 
 	def get_pos(self):
 		"""Get the positions of all active tracks."""
@@ -102,7 +106,7 @@ class Tracker():
 		if len(self.tracks) == 1:
 			features = self.tracks[0].features
 		elif len(self.tracks) > 1:
-			features = torch.cat([t.features for t in self.tracks],0)
+			features = torch.cat([t.features for t in self.tracks], 0)
 		else:
 			features = torch.zeros(0).cuda()
 		return features
@@ -112,7 +116,7 @@ class Tracker():
 		if len(self.inactive_tracks) == 1:
 			features = self.inactive_tracks[0].features
 		elif len(self.inactive_tracks) > 1:
-			features = torch.cat([t.features for t in self.inactive_tracks],0)
+			features = torch.cat([t.features for t in self.inactive_tracks], 0)
 		else:
 			features = torch.zeros(0).cuda()
 		return features
@@ -121,11 +125,14 @@ class Tracker():
 		"""Tries to ReID inactive tracks with provided detections."""
 		new_det_features = self.reid_network.test_rois(blob['app_data'][0], new_det_pos / blob['im_info'][0][2]).data
 		if len(self.inactive_tracks) >= 1 and self.do_reid:
+			print("LENGTH OF INACTIVE TRACKS IS {}".format((self.inactive_tracks)))
 			# calculate appearance distances
 			dist_mat = []
 			pos = []
 			for t in self.inactive_tracks:
-				dist_mat.append(torch.cat([t.test_features(feat.view(1,-1)) for feat in new_det_features], 1))
+				features_list = [t.test_features(feat.view(1, -1)) for feat in new_det_features]
+				dist = torch.stack(features_list, 1)
+				dist_mat.append(dist)
 				pos.append(t.pos)
 			if len(dist_mat) > 1:
 				dist_mat = torch.cat(dist_mat, 0)
@@ -160,15 +167,21 @@ class Tracker():
 			for t in remove_inactive:
 				self.inactive_tracks.remove(t)
 
-			keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().cuda()
+			keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long()
+			if torch.cuda.is_available():
+				keep = keep.cuda()
 			if keep.nelement() > 0:
 				new_det_pos = new_det_pos[keep]
 				new_det_scores = new_det_scores[keep]
 				new_det_features = new_det_features[keep]
 			else:
-				new_det_pos = torch.zeros(0).cuda()
-				new_det_scores = torch.zeros(0).cuda()
-				new_det_features = torch.zeros(0).cuda()
+				new_det_pos = torch.zeros(0)
+				new_det_scores = torch.zeros(0)
+				new_det_features = torch.zeros(0)
+				if torch.cuda.is_available():
+					new_det_pos = new_det_pos.cuda()
+					new_det_scores = new_det_scores.cuda()
+					new_det_features = new_det_features.cuda()
 		return new_det_pos, new_det_scores, new_det_features
 
 	def clear_inactive(self):
@@ -204,7 +217,8 @@ class Tracker():
 			number_of_iterations = self.number_of_iterations
 			termination_eps = self.termination_eps
 			criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, number_of_iterations,  termination_eps)
-			(cc, warp_matrix) = cv2.findTransformECC (im1_gray,im2_gray,warp_matrix, warp_mode, criteria)
+			(cc, warp_matrix) = cv2.findTransformECC (im1_gray,im2_gray,warp_matrix, warp_mode, criteria, inputMask=None,
+													  gaussFiltSize=1)
 			warp_matrix = torch.from_numpy(warp_matrix)
 			pos = []
 			for t in self.tracks:
@@ -214,7 +228,10 @@ class Tracker():
 
 				p1_n = torch.mm(warp_matrix, p1).view(1,2)
 				p2_n = torch.mm(warp_matrix, p2).view(1,2)
-				pos = torch.cat((p1_n, p2_n), 1).cuda()
+
+				pos = torch.cat((p1_n, p2_n), 1)
+				if torch.cuda.is_available():
+					pos.cuda()
 
 				t.pos = pos.view(1,-1)
 				#t.pos = clip_boxes(Variable(pos), blob['im_info'][0][:2]).data
@@ -226,7 +243,9 @@ class Tracker():
 					p2 = torch.Tensor([p[2], p[3], 1]).view(3,1)
 					p1_n = torch.mm(warp_matrix, p1).view(1,2)
 					p2_n = torch.mm(warp_matrix, p2).view(1,2)
-					pos = torch.cat((p1_n, p2_n), 1).cuda()
+					pos = torch. cat((p1_n, p2_n), 1)
+					if torch.cuda.is_available():
+						pos = torch.cat((p1_n, p2_n), 1).cuda()
 					t.pos = pos.view(1,-1)
 
 			if self.motion_model:
@@ -312,13 +331,18 @@ class Tracker():
 		self.obj_detect.load_image(blob['data'][0], blob['im_info'][0])
 		if self.public_detections:
 			dets = blob['dets']
+
 			if len(dets) > 0:
 				dets = torch.cat(dets, 0)[:,:4]
+				print(dets.size())
 				_, scores, bbox_pred, rois = self.obj_detect.test_rois(dets)
 			else:
 				rois = torch.zeros(0).cuda()
 		else:
 			_, scores, bbox_pred, rois = self.obj_detect.detect()
+
+		if torch.cuda.is_available():
+			rois = rois.cuda()
 
 		if rois.nelement() > 0:
 			boxes = bbox_transform_inv(rois, bbox_pred)
@@ -330,6 +354,7 @@ class Tracker():
 		else:
 			inds = torch.zeros(0).cuda()
 
+        # Are there any bounding boxes that have a high enough person (class 1) classification score.
 		if inds.nelement() > 0:
 			boxes = boxes[inds]
 			det_pos = boxes[:, self.cl*4:(self.cl+1)*4]
@@ -342,7 +367,10 @@ class Tracker():
 		# Predict tracks #
 		##################
 		num_tracks = 0
-		nms_inp_reg = torch.zeros(0).cuda()
+		nms_inp_reg = torch.zeros(0)
+		if torch.cuda.is_available():
+			nms_inp_reg.cuda()
+
 		if len(self.tracks):
 			# align
 			if self.do_align:
@@ -359,7 +387,10 @@ class Tracker():
 				# new_features = self.get_appearances(blob)
 
 				# nms here if tracks overlap
-				nms_inp_reg = torch.cat((self.get_pos(), person_scores.add_(3).view(-1, 1)), 1)
+				emphasized_scores = person_scores.add_(3)
+				if torch.cuda.is_available():
+					emphasized_scores = emphasized_scores.cuda()
+				nms_inp_reg = torch.cat((self.get_pos(), emphasized_scores.view(-1, 1)), 1)
 				keep = nms(nms_inp_reg, self.regression_nms_thresh)
 
 				self.tracks_to_inactive([self.tracks[i]
@@ -367,7 +398,10 @@ class Tracker():
 				                         if i not in keep])
 
 				if keep.nelement() > 0:
-					nms_inp_reg = torch.cat((self.get_pos(), torch.ones(self.get_pos().size(0)).add_(3).view(-1,1).cuda()),1)
+					ones = torch.ones(self.get_pos().size(0)).add_(3).view(-1, 1)
+					if torch.cuda.is_available():
+						ones = ones.cuda()
+					nms_inp_reg = torch.cat((self.get_pos(), ones),1)
 					new_features = self.get_appearances(blob)
 
 					self.add_features(new_features)
@@ -407,6 +441,7 @@ class Tracker():
 			new_det_scores = nms_inp_det[:,4]
 
 			# try to redientify tracks
+			print("###Invoke reid####")
 			new_det_pos, new_det_scores, new_det_features = self.reid(blob, new_det_pos, new_det_scores)
 
 			# add new
@@ -468,7 +503,7 @@ class Track(object):
 	def test_features(self, test_features):
 		"""Compares test_features to features of this Track object"""
 		if len(self.features) > 1:
-			features = torch.cat(self.features, 0)
+			features = torch.cat(list(self.features), 0)
 		else:
 			features = self.features[0]
 		features = features.mean(0, keepdim=True)

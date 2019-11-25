@@ -4,11 +4,8 @@ import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 from torch.autograd import Variable
 
-from frcnn.model.bbox_transform import bbox_transform_inv, clip_boxes
-from frcnn.model.nms_wrapper import nms
-
 from .tracker import Tracker, Track
-from .utils import bbox_overlaps
+from .utils import bbox_overlaps, bbox_transform_inv, clip_boxes
 
 
 class OracleTracker(Tracker):
@@ -444,7 +441,7 @@ class OracleTracker(Tracker):
 					# keep all
 					keep = torch.arange(nms_inp_reg.size(0)).long().cuda()
 				else:
-					keep = nms(nms_inp_reg, self.regression_nms_thresh)
+					keep = _C.nms(nms_inp_reg, self.regression_nms_thresh)
 
 				# Plot the killed tracks for debugging
 				self.tracks_to_inactive([self.tracks[i]
@@ -470,12 +467,12 @@ class OracleTracker(Tracker):
 		else:
 			nms_inp_det = torch.zeros(0).cuda()
 		if nms_inp_det.nelement() > 0:
-			keep = nms(nms_inp_det, self.detection_nms_thresh)
+			keep = _C.nms(nms_inp_det, self.detection_nms_thresh)
 			nms_inp_det = nms_inp_det[keep]
 			# check with every track in a single run (problem if tracks delete each other)
 			for i in range(num_tracks):
 				nms_inp = torch.cat((nms_inp_reg[i].view(1,-1), nms_inp_det), 0)
-				keep = nms(nms_inp, self.detection_nms_thresh)
+				keep = _C.nms(nms_inp, self.detection_nms_thresh)
 				keep = keep[torch.ge(keep,1)]
 				if keep.nelement() == 0:
 					nms_inp_det = nms_inp_det.new(0)
