@@ -70,7 +70,9 @@ class Tracker():
 			track = Track(new_det_pos[i].view(1, -1), new_det_scores[i], self.track_num + i,
 						  new_det_features[i].view(1, -1), self.inactive_patience, self.max_features_num, im_info)
 			track.generate_training_set(plot=False)
-			track.finetune_detector(self.obj_detect.RCNN_bbox_pred, self.obj_detect._PyramidRoI_Feat,
+			RCNN_bbox_pred_copy = type(self.obj_detect.RCNN_bbox_pred)()
+			RCNN_bbox_pred_copy.load_state_dict(self.obj_detect.RCNN_bbox_pred.state_dict())
+			track.finetune_detector(RCNN_bbox_pred_copy, self.obj_detect._PyramidRoI_Feat,
 									self.obj_detect._head_to_tail, self.obj_detect.mrcnn_feature_maps, new_det_pos[i])
 			self.tracks.append(track)
 		self.track_num += num_new
@@ -575,46 +577,48 @@ class Track(object):
 		roi_pool_feat = PyramidRoI_Feat(
 			mrcnn_feature_maps, rois_padd, self.im_info)
 
-		# feed pooled features to top model
-		pooled_feat = head_to_tail(roi_pool_feat)
+		for i in range(epochs):
 
-		# compute bbox offset
-		bbox_pred = RCNN_bbox_pred(pooled_feat)
+			# feed pooled features to top model
+			pooled_feat = head_to_tail(roi_pool_feat)
 
-		if fpn_cfg.TEST.BBOX_REG:
-			# Apply bounding-box regression deltas
-			box_deltas = bbox_pred.data
-			n_classes = 2
-			if fpn_cfg.TRAIN.BBOX_NORMALIZE_TARGETS_PRECOMPUTED:
-				# Optionally normalize targets by a precomputed mean and stdev
-				bbox_stds = torch.FloatTensor(fpn_cfg.TRAIN.BBOX_NORMALIZE_STDS)
-				bbox_means = torch.FloatTensor(fpn_cfg.TRAIN.BBOX_NORMALIZE_MEANS)
-				if torch.cuda.is_available():
-					bbox_stds = bbox_stds.cuda()
-					bbox_means = bbox_means.cuda()
-				if fpn_cfg.CLASS_AGNOSTIC_BBX_REG:
-					box_deltas = box_deltas.view(-1, 4) * bbox_stds + bbox_means
-					box_deltas = box_deltas.view(1, -1, 4)
-				else:
-					box_deltas = box_deltas.view(-1, 4) * bbox_stds + bbox_means
-					box_deltas = box_deltas.view(1, -1, 4 * n_classes)
+			# compute bbox offset
+			bbox_pred = RCNN_bbox_pred(pooled_feat)
 
-		box_deltas = box_deltas.squeeze(dim=0)
+			if fpn_cfg.TEST.BBOX_REG:
+				# Apply bounding-box regression deltas
+				box_deltas = bbox_pred.data
+				n_classes = 2
+				if fpn_cfg.TRAIN.BBOX_NORMALIZE_TARGETS_PRECOMPUTED:
+					# Optionally normalize targets by a precomputed mean and stdev
+					bbox_stds = torch.FloatTensor(fpn_cfg.TRAIN.BBOX_NORMALIZE_STDS)
+					bbox_means = torch.FloatTensor(fpn_cfg.TRAIN.BBOX_NORMALIZE_MEANS)
+					if torch.cuda.is_available():
+						bbox_stds = bbox_stds.cuda()
+						bbox_means = bbox_means.cuda()
+					if fpn_cfg.CLASS_AGNOSTIC_BBX_REG:
+						box_deltas = box_deltas.view(-1, 4) * bbox_stds + bbox_means
+						box_deltas = box_deltas.view(1, -1, 4)
+					else:
+						box_deltas = box_deltas.view(-1, 4) * bbox_stds + bbox_means
+						box_deltas = box_deltas.view(1, -1, 4 * n_classes)
 
-		if torch.cuda.is_available():
-			box_deltas = box_deltas.cuda()
+			box_deltas = box_deltas.squeeze(dim=0)
 
-		boxes = bbox_transform_inv(rois, bbox_pred)[:, 4:]
-		print(box_deltas)
-		input(boxes)
+			if torch.cuda.is_available():
+				box_deltas = box_deltas.cuda()
 
-		input('forward worked')
+			boxes = bbox_transform_inv(rois, bbox_pred)[:, 4:]
+			print(box_deltas)
+			input(boxes)
 
-		optimizer.zero_grad()
-		loss = criterion(boxes, gt_box)
-		loss.backward()
-		optimizer.step()
-		input('backward also worked')
+			input('forward worked')
+
+			optimizer.zero_grad()
+			loss = criterion(boxes, gt_box)
+			loss.backward()
+			optimizer.step()
+			input('backward also worked')
 
 		self.RCNN_bbox_pred = RCNN_bbox_pred
 		self.head_to_tail = head_to_tail
