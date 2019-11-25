@@ -526,6 +526,8 @@ class Track(object):
 	def generate_training_set(self, plot=False):
 		gt_pos = self.pos
 		random_displacement = 3*torch.randn(5, 4)
+		if torch.cuda.is_available():
+			gt_pos = gt_pos.cuda()
 		random_displaced_bboxes = gt_pos.repeat(5, 1) + random_displacement
 		self.training_boxes = clip_boxes(random_displaced_bboxes, self.im_info[0][:2])
 		print(random_displaced_bboxes)
