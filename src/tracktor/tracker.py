@@ -3,6 +3,7 @@ from collections import deque
 
 import numpy as np
 import torch
+import torch.nn
 import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
@@ -70,7 +71,12 @@ class Tracker():
 			track = Track(new_det_pos[i].view(1, -1), new_det_scores[i], self.track_num + i,
 						  new_det_features[i].view(1, -1), self.inactive_patience, self.max_features_num, im_info)
 			track.generate_training_set(plot=False)
-			RCNN_bbox_pred_copy = type(self.obj_detect.RCNN_bbox_pred)()
+
+			if fpn_cfg.CLASS_AGNOSTIC_BBX_REG:
+				RCNN_bbox_pred_copy = nn.Linear(1024, 4)
+			else:
+				RCNN_bbox_pred_copy = nn.Linear(1024, 4 * self.n_classes)
+
 			RCNN_bbox_pred_copy.load_state_dict(self.obj_detect.RCNN_bbox_pred.state_dict())
 			track.finetune_detector(RCNN_bbox_pred_copy, self.obj_detect._PyramidRoI_Feat,
 									self.obj_detect._head_to_tail, self.obj_detect.mrcnn_feature_maps, new_det_pos[i])
