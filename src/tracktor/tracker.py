@@ -618,16 +618,12 @@ class Track(object):
 				box_deltas = box_deltas.cuda()
 
 			boxes = bbox_transform_inv(rois, bbox_pred)[:, 4:]
-			print(box_deltas)
-			input(boxes)
-
-			input('forward worked')
 
 			optimizer.zero_grad()
 			loss = criterion(boxes, gt_box)
 			loss.backward()
 			optimizer.step()
-			input('backward also worked')
+			print('Finished epoch {} --- Loss {}'.format(i, loss.item()))
 
 		self.RCNN_bbox_pred = RCNN_bbox_pred
 		self.head_to_tail = head_to_tail
