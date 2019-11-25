@@ -3,7 +3,7 @@ from collections import deque
 
 import numpy as np
 import torch
-import torch.nn
+import torch.nn as nn
 import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
