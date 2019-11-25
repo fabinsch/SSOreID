@@ -14,7 +14,8 @@ from .utils import bbox_overlaps, bbox_transform_inv, clip_boxes
 from helper.csrc.wrapper.nms import nms
 
 import matplotlib
-matplotlib.use('TkAgg')
+if not torch.cuda.is_available():
+	matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from fpn.model.utils.config import cfg as fpn_cfg
