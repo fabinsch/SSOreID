@@ -636,5 +636,5 @@ class Track(object):
 		#TODO plot bounding boxes after training
 
 		self.RCNN_bbox_pred = RCNN_bbox_pred
-		self.RCNN_top = RCNN_topq
+		self.RCNN_top = RCNN_top
 		return None
