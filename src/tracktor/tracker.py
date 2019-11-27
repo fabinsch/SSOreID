@@ -72,16 +72,25 @@ class Tracker():
 						  new_det_features[i].view(1, -1), self.inactive_patience, self.max_features_num, im_info)
 			track.generate_training_set(plot=False)
 
+			RCNN_top_copy = nn.Sequential(
+			  nn.Conv2d(256, 1024, kernel_size=fpn_cfg.POOLING_SIZE, stride=cfg.POOLING_SIZE, padding=0),
+			  nn.ReLU(True),
+			  nn.Conv2d(1024, 1024, kernel_size=1, stride=1, padding=0),
+			  nn.ReLU(True)
+			  )
+
 			if fpn_cfg.CLASS_AGNOSTIC_BBX_REG:
 				RCNN_bbox_pred_copy = nn.Linear(1024, 4)
 			else:
 				RCNN_bbox_pred_copy = nn.Linear(1024, 4 * 2)
 
 			RCNN_bbox_pred_copy.load_state_dict(self.obj_detect.RCNN_bbox_pred.state_dict())
+			RCNN_top_copy.load_state_dict(self.obj_detect.RCNN_top.state_dict())
 			if torch.cuda.is_available():
 				RCNN_bbox_pred_copy = RCNN_bbox_pred_copy.cuda()
+				RCNN_top_copy = RCNN_top_copy.cuda()
 			track.finetune_detector(RCNN_bbox_pred_copy, self.obj_detect._PyramidRoI_Feat,
-									self.obj_detect._head_to_tail, self.obj_detect.mrcnn_feature_maps, new_det_pos[i])
+									RCNN_top_copy, self.obj_detect.mrcnn_feature_maps, new_det_pos[i])
 			self.tracks.append(track)
 		self.track_num += num_new
 
@@ -563,9 +572,9 @@ class Track(object):
 			plt.show()
 
 
-	def finetune_detector(self, RCNN_bbox_pred, PyramidRoI_Feat, head_to_tail, mrcnn_feature_maps, gt_box, epochs=20):
-	#	optimizer = torch.optim.Adam([RCNN_bbox_pred.parameters(), head_to_tail.parameters()], lr=0.0001)
-		optimizer = torch.optim.Adam(RCNN_bbox_pred.parameters(), lr=0.0001)
+	def finetune_detector(self, RCNN_bbox_pred, PyramidRoI_Feat, RCNN_top, mrcnn_feature_maps, gt_box, epochs=20):
+		optimizer = torch.optim.Adam([RCNN_bbox_pred.parameters(), RCNN_top.parameters()], lr=0.0001)
+	#	optimizer = torch.optim.Adam(RCNN_bbox_pred.parameters(), lr=0.0001)
 		criterion = torch.nn.SmoothL1Loss()
 
 		rois = self.training_boxes
@@ -585,7 +594,8 @@ class Track(object):
 		for i in range(epochs):
 
 			# feed pooled features to top model
-			pooled_feat = head_to_tail(roi_pool_feat)
+			pooled_feat = RCNN_top(roi_pool_feat)
+			pooled_feat = pooled_feat.squeeze()
 
 			# compute bbox offset
 			bbox_pred = RCNN_bbox_pred(pooled_feat)
@@ -621,6 +631,8 @@ class Track(object):
 			optimizer.step()
 			print('Finished epoch {} --- Loss {}'.format(i, loss.item()))
 
+		#TODO plot bounding boxes after training
+
 		self.RCNN_bbox_pred = RCNN_bbox_pred
-		self.head_to_tail = head_to_tail
+		self.RCNN_top = RCNN_top
 		return None
