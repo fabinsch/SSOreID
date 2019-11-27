@@ -146,7 +146,6 @@ class Tracker():
 		"""Tries to ReID inactive tracks with provided detections."""
 		new_det_features = self.reid_network.test_rois(blob['app_data'][0], new_det_pos / blob['im_info'][0][2]).data
 		if len(self.inactive_tracks) >= 1 and self.do_reid:
-			print("LENGTH OF INACTIVE TRACKS IS {}".format((self.inactive_tracks)))
 			# calculate appearance distances
 			dist_mat = []
 			pos = []
@@ -461,7 +460,6 @@ class Tracker():
 			new_det_scores = nms_inp_det[:,4]
 
 			# try to redientify tracks
-			print("###Invoke reid####")
 			new_det_pos, new_det_scores, new_det_features = self.reid(blob, new_det_pos, new_det_scores)
 
 			# add new
