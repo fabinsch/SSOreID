@@ -633,6 +633,8 @@ class Track(object):
 			optimizer.step()
 			print('Finished epoch {} --- Loss {}'.format(i, loss.item()))
 
+		#TODO plot bounding boxes after training
+
 		self.RCNN_bbox_pred = RCNN_bbox_pred
-		self.head_to_tail = head_to_tail
+		self.RCNN_top = RCNN_topq
 		return None
