@@ -63,17 +63,17 @@ class Tracker():
 			t.pos = t.last_pos
 		self.inactive_tracks += tracks
 
-	def add(self, new_det_pos, new_det_scores, new_det_features, im_info):
+	def add(self, new_det_pos, new_det_scores, new_det_features, image, im_info):
 		"""Initializes new Track objects and saves them."""
 		num_new = new_det_pos.size(0)
 
 		for i in range(num_new):
 			track = Track(new_det_pos[i].view(1, -1), new_det_scores[i], self.track_num + i,
 						  new_det_features[i].view(1, -1), self.inactive_patience, self.max_features_num, im_info)
-			track.generate_training_set(plot=False)
+			track.generate_training_set(image, plot=True)
 
 			RCNN_top_copy = nn.Sequential(
-			  nn.Conv2d(256, 1024, kernel_size=fpn_cfg.POOLING_SIZE, stride=cfg.POOLING_SIZE, padding=0),
+			  nn.Conv2d(256, 1024, kernel_size=fpn_cfg.POOLING_SIZE, stride=fpn_cfg.POOLING_SIZE, padding=0),
 			  nn.ReLU(True),
 			  nn.Conv2d(1024, 1024, kernel_size=1, stride=1, padding=0),
 			  nn.ReLU(True)
@@ -473,7 +473,7 @@ class Tracker():
 
 			# add new
 			if new_det_pos.nelement() > 0:
-				self.add(new_det_pos, new_det_scores, new_det_features, im_info=blob['im_info'])
+				self.add(new_det_pos, new_det_scores, new_det_features, blob['data'][0], im_info=blob['im_info'])
 
 		####################
 		# Generate Results #
@@ -540,7 +540,7 @@ class Track(object):
 		dist = F.pairwise_distance(features, test_features)
 		return dist
 
-	def generate_training_set(self, plot=False):
+	def generate_training_set(self, image, plot=False):
 		gt_pos = self.pos
 		random_displacement = 3*torch.randn(5, 4)
 		if torch.cuda.is_available():
@@ -552,33 +552,34 @@ class Track(object):
 		if plot:
 			rectangles = self.training_boxes.numpy()
 			num_rectangles = len(rectangles)
-			h, w = self.im_info[0][:2]
-			im = np.zeros([int(h.item()), int(w.item())])
+			h, w, scale = self.im_info[0][:3]
+			image = image.squeeze()
+			image = image[:, :, (2, 1, 0)]
 			fig, ax = plt.subplots(1)
-			ax.imshow(im, cmap='gist_gray_r')
+			ax.imshow(image, cmap='gist_gray_r')
 			gt_pos_np = gt_pos.numpy()
-			gt_patch = patches.Rectangle((gt_pos_np[0, 0],
-									gt_pos[0, 1]),
-									gt_pos[0, 2],
-									gt_pos[0, 3], linewidth=0.5, edgecolor='r', facecolor='none')
-			rects = [patches.Rectangle((rectangles[i, 0],
-									rectangles[i, 1]),
-									rectangles[i, 2],
-									rectangles[i, 3], linewidth=0.5, edgecolor='b', facecolor='none') for i in range(num_rectangles)]
+			ax.add_patch(
+                        plt.Rectangle((gt_pos_np[0, 0], gt_pos_np[0, 1]),
+									  gt_pos_np[0, 2] - gt_pos_np[0, 0],
+									  gt_pos_np[0, 3] - gt_pos_np[0, 1], fill=False,
+                            linewidth=1.3*scale, color='blue')
+                    )
 			for i in range(num_rectangles):
-				ax.add_patch(rects[i])
-			ax.add_patch(gt_patch)
+				ax.add_patch(
+					plt.Rectangle((rectangles[i, 0], rectangles[i, 1]),
+								  rectangles[i, 2] - rectangles[i, 0],
+								  rectangles[i, 3] - rectangles[i, 1], fill=False,
+								  linewidth=1.3 * scale, color='blue')
+				)
 
 			plt.show()
 
 
-	def finetune_detector(self, RCNN_bbox_pred, PyramidRoI_Feat, RCNN_top, mrcnn_feature_maps, gt_box, epochs=20):
-		optimizer = torch.optim.Adam([RCNN_bbox_pred.parameters(), RCNN_top.parameters()], lr=0.0001)
-	#	optimizer = torch.optim.Adam(RCNN_bbox_pred.parameters(), lr=0.0001)
+	def finetune_detector(self, RCNN_bbox_pred, PyramidRoI_Feat, RCNN_top, mrcnn_feature_maps, gt_box, epochs=10):
+		optimizer = torch.optim.Adam(list(RCNN_bbox_pred.parameters()) + list(RCNN_top.parameters()), lr=0.0001)
 		criterion = torch.nn.SmoothL1Loss()
 
 		rois = self.training_boxes
-
 		with torch.no_grad():
 			padding = torch.zeros(rois.size(0), 1)
 			if torch.cuda.is_available():
@@ -635,4 +636,3 @@ class Track(object):
 
 		self.RCNN_bbox_pred = RCNN_bbox_pred
 		self.RCNN_top = RCNN_top
-		return None

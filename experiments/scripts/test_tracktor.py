@@ -122,11 +122,15 @@ def my_main(tracktor, siamese, _config):
 
     time_total = 0
     for sequence in Datasets(tracktor['dataset']):
-        tracker.reset()
         sequence_string = str(sequence)
         if '09' not in sequence_string:
             print("Skipping {}".format(sequence_string))
             continue
+
+        tracker.reset()
+
+        # TODO take only first 8 seconds of 09 sequence
+
         now = time.time()
 
         print("[*] Evaluating: {}".format(sequence))
