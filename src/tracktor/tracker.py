@@ -505,7 +505,7 @@ class Track(object):
         optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()), lr=0.0001)
         criterion = torch.nn.SmoothL1Loss()
 
-        training_boxes = self.generate_training_set(batch_size=8, image=image, plot=True)
+        training_boxes = self.generate_training_set(batch_size=8, image=image, plot=plot)
 
         if isinstance(fpn_features, torch.Tensor):
             fpn_features = OrderedDict([(0, fpn_features)])
@@ -519,7 +519,8 @@ class Track(object):
         with torch.no_grad():
             roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
 
-        ax = plt.subplots(2, 5)
+        if plot:
+            ax = plt.subplots(2, 5)
         for i in range(epochs):
 
             # feed pooled features to top model
@@ -541,7 +542,6 @@ class Track(object):
             optimizer.step()
             print('Finished epoch {} --- Loss {}'.format(i, loss.item()))
 
-        # TODO plot bounding boxes after training
         plt.show()
         self.box_predictor = box_predictor
         self.box_head = box_head
