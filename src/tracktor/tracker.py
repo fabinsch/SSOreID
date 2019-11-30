@@ -115,8 +115,7 @@ class Tracker:
             pos = self.get_pos()
             boxes, scores = self.obj_detect.predict_boxes(pos)
             pos = clip_boxes_to_image(boxes, blob['img'].shape[-2:])
-        print(scores)
-        print(pos)
+
         s = []
         for i in range(len(self.tracks) - 1, -1, -1):
             t = self.tracks[i]
