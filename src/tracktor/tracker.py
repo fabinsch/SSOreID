@@ -77,8 +77,10 @@ class Tracker:
                           new_det_features[i].view(1, -1), self.inactive_patience, self.max_features_num,
                           self.motion_model_cfg['n_steps'] if self.motion_model_cfg['n_steps'] > 0 else 1, image.size())
 
-            track.generate_training_set(image, plot=True)
-            box_head_copy = TwoMLPHead(self.obj_detect.backbone.out_channels * self.obj_detect.roi_heads.box_roi_pool.output_size ** 2, representation_size=1024)
+            track.generate_training_set(image, plot=False)
+            box_head_copy = TwoMLPHead(self.obj_detect.backbone.out_channels *
+                                       self.obj_detect.roi_heads.box_roi_pool.output_size[0] ** 2,
+                                       representation_size=1024)
             box_predictor_copy = FastRCNNPredictor(1024, 2)
 
             box_head_copy.load_state_dict(self.obj_detect.roi_heads.box_head.state_dict())

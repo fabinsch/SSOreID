@@ -11,7 +11,7 @@ class FRCNN_FPN(FasterRCNN):
         self.fpn_features = None
         self.original_image_size = None
         self.image_size = None
-        self.backbone = resnet_fpn_backbone('resnet50', False)
+        backbone = resnet_fpn_backbone('resnet50', False)
         super(FRCNN_FPN, self).__init__(backbone, num_classes)
 
     def detect(self, img):
