@@ -95,7 +95,6 @@ def main(tracktor, siamese, _config, _log, _run):
             continue
 
         start = time.time()
-        # TODO take only first 8 seconds of 09 sequence == 118th frame
 
         _log.info(f"Tracking: {seq}")
 
