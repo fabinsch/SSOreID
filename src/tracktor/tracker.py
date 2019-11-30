@@ -505,8 +505,6 @@ class Track(object):
         return training_boxes
 
     def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image, epochs=20, plot=False):
-        global plotter
-        plotter = VisdomLinePlotter()
 
         optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()), lr=0.0001)
         criterion = torch.nn.SmoothL1Loss()
@@ -526,7 +524,9 @@ class Track(object):
             roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
 
         if plot:
-            ax = plt.subplots(2, 2)
+            global plotter
+            plotter = VisdomLinePlotter()
+
         for i in range(epochs):
 
             # feed pooled features to top model
@@ -546,7 +546,8 @@ class Track(object):
             loss.backward()
             optimizer.step()
             print('Finished epoch {} --- Loss {}'.format(i, loss.item()))
-            plotter.plot('loss', 'train', 'Class Loss', i, loss.item())
+            if plot:
+                plotter.plot('loss', 'train', 'Class Loss', i, loss.item())
 
         plt.show()
         self.box_predictor = box_predictor
