@@ -362,7 +362,7 @@ class Tracker:
 
             # regress
             person_scores = self.regress_tracks(blob)
-
+            print(person_scores)
             if len(self.tracks):
                 # create nms input
 
