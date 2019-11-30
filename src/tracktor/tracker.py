@@ -9,7 +9,6 @@ import cv2
 
 from tracktor.training_set_generation import replicate_and_randomize_boxes, plot_bounding_boxes
 from .utils import clip_boxes
-from helper.csrc.wrapper.nms import nms
 from .utils import bbox_overlaps, warp_pos, get_center, get_height, get_width, make_pos
 
 from torchvision.ops.boxes import clip_boxes_to_image, nms
@@ -115,8 +114,7 @@ class Tracker:
             pos = self.get_pos()
             boxes, scores = self.obj_detect.predict_boxes(pos)
             pos = clip_boxes_to_image(boxes, blob['img'].shape[-2:])
-        print(scores)
-        print(pos)
+
         s = []
         for i in range(len(self.tracks) - 1, -1, -1):
             t = self.tracks[i]
