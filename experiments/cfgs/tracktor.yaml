@@ -65,3 +65,5 @@ tracktor:
     reid_sim_threshold: 2.0
     # How much IoU do track and image need to be considered for matching
     reid_iou_threshold: 0.2
+    # Train appearance models for each track
+    finetune_appearance_models: True

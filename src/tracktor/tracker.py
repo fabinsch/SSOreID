@@ -41,7 +41,7 @@ class Tracker:
         self.reid_iou_threshold = tracker_cfg['reid_iou_threshold']
         self.do_align = tracker_cfg['do_align']
         self.motion_model_cfg = tracker_cfg['motion_model']
-
+        self.finetune_appearance_models = tracker_cfg['finetune_appearance_models']
         self.warp_mode = eval(tracker_cfg['warp_mode'])
         self.number_of_iterations = tracker_cfg['number_of_iterations']
         self.termination_eps = tracker_cfg['termination_eps']
@@ -76,31 +76,48 @@ class Tracker:
                           self.motion_model_cfg['n_steps'] if self.motion_model_cfg['n_steps'] > 0 else 1,
                           image.size()[1:3], self.obj_detect.image_size)
 
-            box_head_copy = TwoMLPHead(self.obj_detect.backbone.out_channels *
-                                       self.obj_detect.roi_heads.box_roi_pool.output_size[0] ** 2,
-                                       representation_size=1024)
-            box_predictor_copy = FastRCNNPredictor(1024, 2)
 
-            box_head_copy.load_state_dict(self.obj_detect.roi_heads.box_head.state_dict())
-            box_predictor_copy.load_state_dict(self.obj_detect.roi_heads.box_predictor.state_dict())
-            if torch.cuda.is_available():
-                box_head_copy = box_head_copy.cuda()
-                box_predictor_copy = box_predictor_copy.cuda()
-            track.finetune_detector(box_head_copy, self.obj_detect.roi_heads.box_roi_pool,
-                                    box_predictor_copy, self.obj_detect.fpn_features, new_det_pos[i],
-                                    self.obj_detect.roi_heads.box_coder.decode, image)
+            if self.finetune_appearance_models:
+                track.generate_training_set(image, plot=False)
+                box_head_copy = TwoMLPHead(self.obj_detect.backbone.out_channels *
+                                           self.obj_detect.roi_heads.box_roi_pool.output_size[0] ** 2,
+                                           representation_size=1024)
+                box_predictor_copy = FastRCNNPredictor(1024, 2)
+
+                box_head_copy.load_state_dict(self.obj_detect.roi_heads.box_head.state_dict())
+                box_predictor_copy.load_state_dict(self.obj_detect.roi_heads.box_predictor.state_dict())
+                if torch.cuda.is_available():
+                    box_head_copy = box_head_copy.cuda()
+                    box_predictor_copy = box_predictor_copy.cuda()
+                track.finetune_detector(box_head_copy, self.obj_detect.roi_heads.box_roi_pool,
+                                        box_predictor_copy, self.obj_detect.fpn_features, new_det_pos[i],
+                                        self.obj_detect.roi_heads.box_coder.decode, image)
             self.tracks.append(track)
 
         self.track_num += num_new
 
     def regress_tracks(self, blob):
         """Regress the position of the tracks and also checks their scores."""
-        pos = self.get_pos()
+        if self.finetune_appearance_models:
+            scores = []
+            pos = []
+            for i, track in enumerate(self.tracks):
+                # Regress with finetuned bbox head for each track
+                box, score = self.obj_detect.predict_boxes(track.pos,
+                                                           box_head=track.box_head,
+                                                           box_predictor=track.box_predictor)
+                scores.append(score)
+                bbox = clip_boxes_to_image(box, blob['img'].shape[-2:])
+                pos.append(bbox)
+            scores = torch.cat(scores)
+            pos = torch.cat(pos)
 
-        # regress
-        boxes, scores = self.obj_detect.predict_boxes(pos)
-        pos = clip_boxes_to_image(boxes, blob['img'].shape[-2:])
-
+        else:
+            pos = self.get_pos()
+            boxes, scores = self.obj_detect.predict_boxes(pos)
+            pos = clip_boxes_to_image(boxes, blob['img'].shape[-2:])
+        print(scores)
+        print(pos)
         s = []
         for i in range(len(self.tracks) - 1, -1, -1):
             t = self.tracks[i]
@@ -216,6 +233,7 @@ class Tracker:
                         new_det_pos = new_det_pos.cuda()
                         new_det_scores = new_det_scores.cuda()
                         new_det_features = new_det_features.cuda()
+
         return new_det_pos, new_det_scores, new_det_features
 
 
