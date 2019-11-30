@@ -169,7 +169,7 @@ class Tracker:
         """Tries to ReID inactive tracks with provided detections."""
         zeros = torch.zeros(0)
         if torch.cuda.is_available():
-            zeros.cuda()
+            zeros = zeros.cuda()
         new_det_features = [zeros for _ in range(len(new_det_pos))]
 
         if self.do_reid:
@@ -217,7 +217,7 @@ class Tracker:
 
                 keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long()
                 if torch.cuda.is_available():
-                    keep.cuda()
+                    keep = keep.cuda()
                 if keep.nelement() > 0:
                     new_det_pos = new_det_pos[keep]
                     new_det_scores = new_det_scores[keep]
@@ -348,7 +348,7 @@ class Tracker:
         num_tracks = 0
         nms_inp_reg = torch.zeros(0)
         if torch.cuda.is_available():
-            nms_inp_reg.cuda()
+            nms_inp_reg = nms_inp_reg.cuda()
 
         if len(self.tracks):
             # align
@@ -362,7 +362,7 @@ class Tracker:
 
             # regress
             person_scores = self.regress_tracks(blob)
-            print(person_scores)
+
             if len(self.tracks):
                 # create nms input
 
