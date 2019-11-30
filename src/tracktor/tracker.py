@@ -78,20 +78,16 @@ class Tracker:
                           self.motion_model_cfg['n_steps'] if self.motion_model_cfg['n_steps'] > 0 else 1, image.size())
 
             track.generate_training_set(image, plot=True)
-            
+            box_head_copy = TwoMLPHead(self.obj_detect.backbone.out_channels * self.obj_detect.roi_heads.box_roi_pool.output_size ** 2, representation_size=1024)
+            box_predictor_copy = FastRCNNPredictor(1024, 2)
 
-            if fpn_cfg.CLASS_AGNOSTIC_BBX_REG:
-                RCNN_bbox_pred_copy = nn.Linear(1024, 4)
-            else:
-                RCNN_bbox_pred_copy = nn.Linear(1024, 4 * 2)
-
-            RCNN_bbox_pred_copy.load_state_dict(self.obj_detect.roi_heads.box_head.state_dict())
-            RCNN_top_copy.load_state_dict(self.obj_detect.roi_heads.box_predictor.state_dict())
+            box_head_copy.load_state_dict(self.obj_detect.roi_heads.box_head.state_dict())
+            box_predictor_copy.load_state_dict(self.obj_detect.roi_heads.box_predictor.state_dict())
             if torch.cuda.is_available():
-                RCNN_bbox_pred_copy = RCNN_bbox_pred_copy.cuda()
-                RCNN_top_copy = RCNN_top_copy.cuda()
-            track.finetune_detector(RCNN_bbox_pred_copy, self.obj_detect._PyramidRoI_Feat,
-                                    RCNN_top_copy, self.obj_detect.mrcnn_feature_maps, new_det_pos[i])
+                box_head_copy = box_head_copy.cuda()
+                box_predictor_copy = box_predictor_copy.cuda()
+            track.finetune_detector(box_head_copy, self.obj_detect._PyramidRoI_Feat,
+                                    box_predictor_copy, self.obj_detect.mrcnn_feature_maps, new_det_pos[i])
 
         self.track_num += num_new
 
