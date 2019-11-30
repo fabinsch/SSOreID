@@ -90,7 +90,7 @@ class Tracker:
                     box_predictor_copy = box_predictor_copy.cuda()
                 track.finetune_detector(box_head_copy, self.obj_detect.roi_heads.box_roi_pool,
                                         box_predictor_copy, self.obj_detect.fpn_features, new_det_pos[i],
-                                        self.obj_detect.roi_heads.box_coder.decode, self.obj_detect.image)
+                                        self.obj_detect.roi_heads.box_coder.decode, image)
             self.tracks.append(track)
 
         self.track_num += num_new
@@ -535,7 +535,7 @@ class Track(object):
             if np.mod(i, 10) == 0 and plot:
                 ax = plt.subplot(2, 5, int(1 + i/10))
                 plt.subplot(2, 5, int(1 + i/10))
-                plot_bounding_boxes(self.im_info, scaled_gt_box.unsqueeze(0), image, pred_boxes, ax)
+                plot_bounding_boxes(self.im_info, scaled_gt_box.unsqueeze(0)*self.scale, image, pred_boxes * self.scale, ax)
 
             optimizer.zero_grad()
             loss = criterion(pred_boxes, scaled_gt_box)
