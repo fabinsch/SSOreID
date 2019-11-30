@@ -90,8 +90,8 @@ class Tracker:
             else:
                 RCNN_bbox_pred_copy = nn.Linear(1024, 4 * 2)
 
-            RCNN_bbox_pred_copy.load_state_dict(self.obj_detect.RCNN_bbox_pred.state_dict())
-            RCNN_top_copy.load_state_dict(self.obj_detect.RCNN_top.state_dict())
+            RCNN_bbox_pred_copy.load_state_dict(self.obj_detect.roi_heads.box_head.state_dict())
+            RCNN_top_copy.load_state_dict(self.obj_detect.roi_heads.box_predictor.state_dict())
             if torch.cuda.is_available():
                 RCNN_bbox_pred_copy = RCNN_bbox_pred_copy.cuda()
                 RCNN_top_copy = RCNN_top_copy.cuda()
