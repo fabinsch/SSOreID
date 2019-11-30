@@ -128,7 +128,7 @@ class Tracker:
 
         scores_of_active_tracks = torch.Tensor(s[::-1])
         if torch.cuda.is_available():
-            scores_of_active_tracks.cuda()
+            scores_of_active_tracks = scores_of_active_tracks.cuda()
         return scores_of_active_tracks
 
 
