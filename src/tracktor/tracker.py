@@ -257,8 +257,8 @@ class Tracker:
             im2_gray = cv2.cvtColor(im2, cv2.COLOR_RGB2GRAY)
             warp_matrix = np.eye(2, 3, dtype=np.float32)
             criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, self.number_of_iterations, self.termination_eps)
-            cc, warp_matrix = cv2.findTransformECC(im1_gray, im2_gray, warp_matrix, self.warp_mode, criteria, inputMask=None,
-                                                   gaussFiltSize=1)
+            cc, warp_matrix = cv2.findTransformECC(im1_gray, im2_gray, warp_matrix, self.warp_mode, criteria)#, inputMask=None,
+                                                   #gaussFiltSize=1)
             warp_matrix = torch.from_numpy(warp_matrix)
 
             for t in self.tracks:
@@ -501,7 +501,7 @@ class Track(object):
 
         return training_boxes
 
-    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image, epochs=100, plot=True):
+    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image, epochs=100, plot=False):
 
         optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()), lr=0.0001)
         criterion = torch.nn.SmoothL1Loss()
