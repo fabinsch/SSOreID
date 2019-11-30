@@ -26,13 +26,14 @@ ex = Experiment()
 
 ex.add_config('experiments/cfgs/tracktor.yaml')
 
-# hacky workaround to load the corresponding configs and not having to hardcode paths here
+# hacky workaround to load the corresponding configs and not having to har
+# dcode paths here
 ex.add_config(ex.configurations[0]._conf['tracktor']['reid_config'])
 ex.add_named_config('oracle', 'experiments/cfgs/oracle_tracktor.yaml')
 
 
 @ex.automain
-def main(tracktor, reid, _config, _log, _run):
+def main(tracktor, siamese, _config, _log, _run):
     sacred.commands.print_config(_run)
 
     # set all seeds
@@ -67,11 +68,11 @@ def main(tracktor, reid, _config, _log, _run):
         obj_detect.cuda()
 
     # reid
-    reid_network = resnet50(pretrained=False, **reid['cnn'])
+    reid_network = resnet50(pretrained=False, **siamese['cnn'])
     if torch.cuda.is_available():
         reid_network.load_state_dict(torch.load(tracktor['reid_weights']))
     else:
-        reid_network.load_state_dict(torch.load(tracktor['reid_network_weights'], map_location=torch.device('cpu')))
+        reid_network.load_state_dict(torch.load(tracktor['reid_weights'], map_location=torch.device('cpu')))
     reid_network.eval()
     if torch.cuda.is_available():
         reid_network.cuda()
