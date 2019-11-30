@@ -7,9 +7,10 @@ import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 import cv2
 
-from tracktor.training_set_generation import replicate_and_randomize_boxes, plot_bounding_boxes
-from .utils import clip_boxes
-from .utils import bbox_overlaps, warp_pos, get_center, get_height, get_width, make_pos
+from tracktor.training_set_generation import replicate_and_randomize_boxes
+from tracktor.visualization import plot_compare_bounding_boxes, VisdomLinePlotter, plot_bounding_boxes
+from tracktor.utils import clip_boxes
+from tracktor.utils import bbox_overlaps, warp_pos, get_center, get_height, get_width, make_pos
 
 from torchvision.ops.boxes import clip_boxes_to_image, nms
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHead
@@ -18,6 +19,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 if not torch.cuda.is_available():
     matplotlib.use('TkAgg')
+import visdom
 
 
 class Tracker:
@@ -94,7 +96,7 @@ class Tracker:
 
         self.track_num += num_new
 
-    def regress_tracks(self, blob):
+    def regress_tracks(self, blob, plot_compare=False):
         """Regress the position of the tracks and also checks their scores."""
         if self.finetune_appearance_models:
             scores = []
@@ -104,6 +106,9 @@ class Tracker:
                 box, score = self.obj_detect.predict_boxes(track.pos,
                                                            box_head=track.box_head,
                                                            box_predictor=track.box_predictor)
+                if plot_compare:
+                    box_no_finetune, score_no_finetune = self.obj_detect.predict_boxes(track.pos)
+                    plot_compare_bounding_boxes(box, box_no_finetune, blob['img'], 1)
                 scores.append(score)
                 bbox = clip_boxes_to_image(box, blob['img'].shape[-2:])
                 pos.append(bbox)
@@ -499,7 +504,9 @@ class Track(object):
 
         return training_boxes
 
-    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image, epochs=100, plot=False):
+    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image, epochs=20, plot=False):
+        global plotter
+        plotter = VisdomLinePlotter()
 
         optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()), lr=0.0001)
         criterion = torch.nn.SmoothL1Loss()
@@ -519,7 +526,7 @@ class Track(object):
             roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
 
         if plot:
-            ax = plt.subplots(2, 5)
+            ax = plt.subplots(2, 2)
         for i in range(epochs):
 
             # feed pooled features to top model
@@ -530,9 +537,8 @@ class Track(object):
             _, bbox_pred = box_predictor(pooled_feat)
 
             pred_boxes = bbox_pred_decoder(bbox_pred, proposals)[:, 1, :]
-            if np.mod(i, 10) == 0 and plot:
-                ax = plt.subplot(2, 5, int(1 + i/10))
-                plt.subplot(2, 5, int(1 + i/10))
+            if np.mod(i, 5) == 0 and plot:
+                ax = plt.subplot(2, 2, int(1 + i/5))
                 plot_bounding_boxes(self.im_info, scaled_gt_box.unsqueeze(0)*self.scale, image, pred_boxes * self.scale, ax)
 
             optimizer.zero_grad()
@@ -540,6 +546,7 @@ class Track(object):
             loss.backward()
             optimizer.step()
             print('Finished epoch {} --- Loss {}'.format(i, loss.item()))
+            plotter.plot('loss', 'train', 'Class Loss', i, loss.item())
 
         plt.show()
         self.box_predictor = box_predictor

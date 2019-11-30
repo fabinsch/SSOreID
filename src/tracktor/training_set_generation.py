@@ -1,9 +1,4 @@
 import torch
-import numpy
-from Cython.Includes import numpy
-import numpy as np
-from matplotlib import pyplot
-import matplotlib.pyplot as plt
 
 
 def get_random_scaling_displacement(batch_size, max_displacement, min_scale, max_scale):
@@ -47,26 +42,3 @@ def replicate_and_randomize_boxes(gt_pos, batch_size, max_displacement=0.5, min_
     return transform_to_x1y1x2y2(training_boxes_xywh)
 
 
-def plot_bounding_boxes(im_info, gt_pos, image, proposals, ax=None):
-    num_proposals = len(proposals)
-    h, w = im_info
-    image = image.squeeze()
-    image = image.permute(1, 2, 0)
-    if ax is None:
-        fig, ax = plt.subplots(1)
-    ax.imshow(image, cmap='gist_gray_r')
-    gt_pos_np = gt_pos.numpy()
-    ax.add_patch(
-        plt.Rectangle((gt_pos_np[0, 0], gt_pos_np[0, 1]),
-                      gt_pos_np[0, 2] - gt_pos_np[0, 0],
-                      gt_pos_np[0, 3] - gt_pos_np[0, 1], fill=False,
-                      linewidth=1.3, color='red')
-    )
-    for i in range(num_proposals):
-        ax.add_patch(
-            plt.Rectangle((proposals[i, 0], proposals[i, 1]),
-                          proposals[i, 2] - proposals[i, 0],
-                          proposals[i, 3] - proposals[i, 1], fill=False,
-                          linewidth=1.3, color='blue')
-        )
-    #plt.show()
