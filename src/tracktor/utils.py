@@ -321,7 +321,10 @@ def warp_pos(pos, warp_matrix):
     p2 = torch.Tensor([pos[0, 2], pos[0, 3], 1]).view(3, 1)
     p1_n = torch.mm(warp_matrix, p1).view(1, 2)
     p2_n = torch.mm(warp_matrix, p2).view(1, 2)
-    return torch.cat((p1_n, p2_n), 1).view(1, -1).cuda()
+    warp = torch.cat((p1_n, p2_n), 1).view(1, -1)
+    if torch.cuda.is_available():
+        warp = warp.cuda()
+    return warp
 
 
 def get_mot_accum(results, seq):

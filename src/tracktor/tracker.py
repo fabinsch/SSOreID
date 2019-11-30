@@ -1,4 +1,4 @@
-from collections import deque
+from collections import deque, OrderedDict
 
 import numpy as np
 import torch
@@ -75,7 +75,8 @@ class Tracker:
         for i in range(num_new):
             track = Track(new_det_pos[i].view(1, -1), new_det_scores[i], self.track_num + i,
                           new_det_features[i].view(1, -1), self.inactive_patience, self.max_features_num,
-                          self.motion_model_cfg['n_steps'] if self.motion_model_cfg['n_steps'] > 0 else 1, image.size())
+                          self.motion_model_cfg['n_steps'] if self.motion_model_cfg['n_steps'] > 0 else 1,
+                          image.size()[1:3], self.obj_detect.image_size)
 
             track.generate_training_set(image, plot=False)
             box_head_copy = TwoMLPHead(self.obj_detect.backbone.out_channels *
@@ -88,8 +89,10 @@ class Tracker:
             if torch.cuda.is_available():
                 box_head_copy = box_head_copy.cuda()
                 box_predictor_copy = box_predictor_copy.cuda()
-            track.finetune_detector(box_head_copy, self.obj_detect._PyramidRoI_Feat,
-                                    box_predictor_copy, self.obj_detect.mrcnn_feature_maps, new_det_pos[i])
+            track.finetune_detector(box_head_copy, self.obj_detect.roi_heads.box_roi_pool,
+                                    box_predictor_copy, self.obj_detect.fpn_features, new_det_pos[i],
+                                    self.obj_detect.roi_heads.box_coder.decode)
+            self.tracks.append(track)
 
         self.track_num += num_new
 
@@ -99,7 +102,7 @@ class Tracker:
         pos = self.get_pos()
 
         # regress
-        boxes, scores = self.obj_detect.predict_boxes(blob['img'], pos)
+        boxes, scores = self.obj_detect.predict_boxes(pos)
         pos = clip_boxes_to_image(boxes, blob['img'].shape[-2:])
 
         s = []
@@ -110,8 +113,8 @@ class Tracker:
                 self.tracks_to_inactive([t])
             else:
                 s.append(scores[i])
-                # t.prev_pos = t.pos
-                t.pos = pos[i].view(1, -1)
+            # t.prev_pos = t.pos
+            t.pos = pos[i].view(1, -1)
 
         scores_of_active_tracks = torch.Tensor(s[::-1])
         if torch.cuda.is_available():
@@ -241,7 +244,8 @@ class Tracker:
             im2_gray = cv2.cvtColor(im2, cv2.COLOR_RGB2GRAY)
             warp_matrix = np.eye(2, 3, dtype=np.float32)
             criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, self.number_of_iterations, self.termination_eps)
-            cc, warp_matrix = cv2.findTransformECC(im1_gray, im2_gray, warp_matrix, self.warp_mode, criteria)
+            cc, warp_matrix = cv2.findTransformECC(im1_gray, im2_gray, warp_matrix, self.warp_mode, criteria, inputMask=None,
+                                                   gaussFiltSize=1)
             warp_matrix = torch.from_numpy(warp_matrix)
 
             for t in self.tracks:
@@ -427,7 +431,8 @@ class Tracker:
 class Track(object):
     """This class contains all necessary for every individual track."""
 
-    def __init__(self, pos, score, track_id, features, inactive_patience, max_features_num, mm_steps, im_info):
+    def __init__(self, pos, score, track_id, features, inactive_patience, max_features_num, mm_steps, im_info,
+                 transformed_image_size):
         self.id = track_id
         self.pos = pos
         self.score = score
@@ -438,10 +443,11 @@ class Track(object):
         self.max_features_num = max_features_num
         self.last_pos = deque([pos.clone()], maxlen=mm_steps + 1)
         self.last_v = torch.Tensor([])
+        self.transformed_image_size = transformed_image_size
         self.gt_id = None
         self.im_info = im_info
-        self.RCNN_bbox_pred = None
-        self.head_to_tail = None
+        self.box_predictor = None
+        self.box_head = None
 
     def has_positive_area(self):
         return self.pos[0, 2] > self.pos[0, 0] and self.pos[0, 3] > self.pos[0, 1]
@@ -473,12 +479,12 @@ class Track(object):
         if torch.cuda.is_available():
             gt_pos = gt_pos.cuda()
             random_displaced_bboxes = random_displaced_bboxes.cuda()
-        self.training_boxes = clip_boxes(random_displaced_bboxes, self.im_info[1:3])
+        self.training_boxes = clip_boxes(random_displaced_bboxes, self.im_info)
 
         if plot:
             rectangles = self.training_boxes.numpy()
             num_rectangles = len(rectangles)
-            h, w = self.im_info[1:3]
+            h, w = self.im_info
             image = image.squeeze()
             image = image.permute(1,2,0)
             fig, ax = plt.subplots(1)
@@ -500,64 +506,43 @@ class Track(object):
 
             plt.show()
 
-    def finetune_detector(self, RCNN_bbox_pred, PyramidRoI_Feat, RCNN_top, mrcnn_feature_maps, gt_box, epochs=10):
-        optimizer = torch.optim.Adam(list(RCNN_bbox_pred.parameters()) + list(RCNN_top.parameters()), lr=0.0001)
+    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, epochs=10):
+
+
+        optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()), lr=0.0001)
         criterion = torch.nn.SmoothL1Loss()
 
-        rois = self.training_boxes
-        with torch.no_grad():
-            padding = torch.zeros(rois.size(0), 1)
-            if torch.cuda.is_available():
-                padding = padding.cuda()
-            rois_padd = torch.cat((padding, rois), 1)
-            if torch.cuda.is_available():
-                rois.cuda()
-                rois_padd = rois_padd.cuda()
+        if isinstance(fpn_features, torch.Tensor):
+            fpn_features = OrderedDict([(0, fpn_features)])
 
-            roi_pool_feat = PyramidRoI_Feat(
-                mrcnn_feature_maps, rois_padd, self.im_info)
+        # proposals, proposal_losses = self.rpn(images, features, targets)
+        from torchvision.models.detection.transform import resize_boxes
+        boxes = resize_boxes(
+            self.training_boxes, self.im_info, self.transformed_image_size[0])
+        proposals = [boxes]
+
+        with torch.no_grad():
+            roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
 
         for i in range(epochs):
 
             # feed pooled features to top model
-            pooled_feat = RCNN_top(roi_pool_feat)
+            pooled_feat = box_head(roi_pool_feat)
             pooled_feat = pooled_feat.squeeze()
 
             # compute bbox offset
-            bbox_pred = RCNN_bbox_pred(pooled_feat)
+            _, bbox_pred = box_predictor(pooled_feat)
 
-            if fpn_cfg.TEST.BBOX_REG:
-                # Apply bounding-box regression deltas
-                box_deltas = bbox_pred.data
-                n_classes = 2
-                if fpn_cfg.TRAIN.BBOX_NORMALIZE_TARGETS_PRECOMPUTED:
-                    # Optionally normalize targets by a precomputed mean and stdev
-                    bbox_stds = torch.FloatTensor(fpn_cfg.TRAIN.BBOX_NORMALIZE_STDS)
-                    bbox_means = torch.FloatTensor(fpn_cfg.TRAIN.BBOX_NORMALIZE_MEANS)
-                    if torch.cuda.is_available():
-                        bbox_stds = bbox_stds.cuda()
-                        bbox_means = bbox_means.cuda()
-                    if fpn_cfg.CLASS_AGNOSTIC_BBX_REG:
-                        box_deltas = box_deltas.view(-1, 4) * bbox_stds + bbox_means
-                        box_deltas = box_deltas.view(1, -1, 4)
-                    else:
-                        box_deltas = box_deltas.view(-1, 4) * bbox_stds + bbox_means
-                        box_deltas = box_deltas.view(1, -1, 4 * n_classes)
+            pred_boxes = bbox_pred_decoder(bbox_pred, proposals)
 
-            box_deltas = box_deltas.squeeze(dim=0)
-
-            if torch.cuda.is_available():
-                box_deltas = box_deltas.cuda()
-
-            boxes = bbox_transform_inv(rois, bbox_pred)[:, 4:]
 
             optimizer.zero_grad()
-            loss = criterion(boxes, gt_box)
+            loss = criterion(pred_boxes, gt_box)
             loss.backward()
             optimizer.step()
             print('Finished epoch {} --- Loss {}'.format(i, loss.item()))
 
         # TODO plot bounding boxes after training
 
-        self.RCNN_bbox_pred = RCNN_bbox_pred
-        self.RCNN_top = RCNN_top
+        self.box_predictor = box_predictor
+        self.box_head = box_head
