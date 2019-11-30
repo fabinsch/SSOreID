@@ -1,4 +1,3 @@
-import os
 from collections import deque
 
 import numpy as np
@@ -6,11 +5,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
-from scipy.spatial.distance import cdist
 from torch.autograd import Variable
 
 import cv2
 
+from tracktor.training_set_generation import replicate_and_randomize_boxes
 from .utils import bbox_overlaps, bbox_transform_inv, clip_boxes
 from helper.csrc.wrapper.nms import nms
 
@@ -18,7 +17,6 @@ import matplotlib
 if not torch.cuda.is_available():
 	matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 from fpn.model.utils.config import cfg as fpn_cfg
 
 class Tracker():
@@ -540,13 +538,13 @@ class Track(object):
 		dist = F.pairwise_distance(features, test_features)
 		return dist
 
-	def generate_training_set(self, image, plot=False):
+	def generate_training_set(self, image, batch_size=8, plot=False):
 		gt_pos = self.pos
-		random_displacement = 3*torch.randn(5, 4)
+		random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos, batch_size=8)
+
 		if torch.cuda.is_available():
-			random_displacement = random_displacement.cuda()
 			gt_pos = gt_pos.cuda()
-		random_displaced_bboxes = gt_pos.repeat(5, 1) + random_displacement
+			random_displaced_bboxes = random_displaced_bboxes.cuda()
 		self.training_boxes = clip_boxes(random_displaced_bboxes, self.im_info[0][:2])
 
 		if plot:
@@ -554,8 +552,10 @@ class Track(object):
 			num_rectangles = len(rectangles)
 			h, w, scale = self.im_info[0][:3]
 			image = image.squeeze()
-			image = image[:, :, (2, 1, 0)]
+			image = image[:, :, (2, 1, 0)]/80
+			print(torch.max(torch.max(torch.max(image))))
 			fig, ax = plt.subplots(1)
+			print(image)
 			ax.imshow(image, cmap='gist_gray_r')
 			gt_pos_np = gt_pos.numpy()
 			ax.add_patch(
@@ -573,7 +573,6 @@ class Track(object):
 				)
 
 			plt.show()
-
 
 	def finetune_detector(self, RCNN_bbox_pred, PyramidRoI_Feat, RCNN_top, mrcnn_feature_maps, gt_box, epochs=10):
 		optimizer = torch.optim.Adam(list(RCNN_bbox_pred.parameters()) + list(RCNN_top.parameters()), lr=0.0001)
