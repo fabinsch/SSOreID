@@ -78,7 +78,6 @@ class Tracker:
 
 
             if self.finetune_appearance_models:
-                track.generate_training_set(image, plot=False)
                 box_head_copy = TwoMLPHead(self.obj_detect.backbone.out_channels *
                                            self.obj_detect.roi_heads.box_roi_pool.output_size[0] ** 2,
                                            representation_size=1024)
