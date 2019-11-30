@@ -90,7 +90,7 @@ class Tracker:
                     box_predictor_copy = box_predictor_copy.cuda()
                 track.finetune_detector(box_head_copy, self.obj_detect.roi_heads.box_roi_pool,
                                         box_predictor_copy, self.obj_detect.fpn_features, new_det_pos[i],
-                                        self.obj_detect.roi_heads.box_coder.decode, image)
+                                        self.obj_detect.roi_heads.box_coder.decode, self.obj_detect.image)
             self.tracks.append(track)
 
         self.track_num += num_new
@@ -461,6 +461,7 @@ class Track(object):
         self.im_info = im_info
         self.box_predictor = None
         self.box_head = None
+        self.scale = self.im_info[0] / self.transformed_image_size[0][0]
 
     def has_positive_area(self):
         return self.pos[0, 2] > self.pos[0, 0] and self.pos[0, 3] > self.pos[0, 1]
@@ -500,11 +501,11 @@ class Track(object):
 
         return training_boxes
 
-    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image, epochs=100, plot=False):
+    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image, epochs=100, plot=True):
 
         optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()), lr=0.0001)
         criterion = torch.nn.SmoothL1Loss()
-
+        scaled_gt_box = gt_box / self.scale
         training_boxes = self.generate_training_set(batch_size=8, image=image, plot=plot)
 
         if isinstance(fpn_features, torch.Tensor):
@@ -534,10 +535,10 @@ class Track(object):
             if np.mod(i, 10) == 0 and plot:
                 ax = plt.subplot(2, 5, int(1 + i/10))
                 plt.subplot(2, 5, int(1 + i/10))
-                plot_bounding_boxes(self.im_info, gt_box.unsqueeze(0), image, pred_boxes, ax)
+                plot_bounding_boxes(self.im_info, scaled_gt_box.unsqueeze(0), image, pred_boxes, ax)
 
             optimizer.zero_grad()
-            loss = criterion(pred_boxes, gt_box)
+            loss = criterion(pred_boxes, scaled_gt_box)
             loss.backward()
             optimizer.step()
             print('Finished epoch {} --- Loss {}'.format(i, loss.item()))

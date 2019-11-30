@@ -80,5 +80,5 @@ class FRCNN_FPN(FasterRCNN):
 
         img, _ = self.transform(img, targets)
         self.image_size = img.image_sizes
-
+        self.image = img.tensors[0]
         self.fpn_features = self.backbone(img.tensors)
