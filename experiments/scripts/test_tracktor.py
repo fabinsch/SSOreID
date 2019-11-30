@@ -95,7 +95,7 @@ def main(tracktor, siamese, _config, _log, _run):
             continue
 
         start = time.time()
-        # TODO take only first 8 seconds of 09 sequence
+        # TODO take only first 8 seconds of 09 sequence == 118th frame
 
         _log.info(f"Tracking: {seq}")
 
@@ -104,6 +104,8 @@ def main(tracktor, siamese, _config, _log, _run):
             if len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
                 tracker.step(frame)
                 num_frames += 1
+                if num_frames == 118:
+                    break
         results = tracker.get_results()
 
         time_total += time.time() - start
