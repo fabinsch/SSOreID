@@ -8,6 +8,9 @@ from torch.autograd import Variable
 from scipy.optimize import linear_sum_assignment
 import cv2
 
+from tracktor.training_set_generation import replicate_and_randomize_boxes
+from .utils import bbox_overlaps, bbox_transform_inv, clip_boxes
+from helper.csrc.wrapper.nms import nms
 from .utils import bbox_overlaps, warp_pos, get_center, get_height, get_width, make_pos
 
 from torchvision.ops.boxes import clip_boxes_to_image, nms
@@ -470,43 +473,43 @@ class Track(object):
         self.last_pos.clear()
         self.last_pos.append(self.pos.clone())
 
-    def generate_training_set(self, image, plot=False):
-        gt_pos = self.pos
-        random_displacement = 3 * torch.randn(5, 4)
-        if torch.cuda.is_available():
-            random_displacement = random_displacement.cuda()
-            gt_pos = gt_pos.cuda()
-        random_displaced_bboxes = gt_pos.repeat(5, 1) + random_displacement
-        self.training_boxes = clip_boxes_to_image(random_displaced_bboxes, self.im_info[0][:2])
+	def generate_training_set(self, image, batch_size=8, plot=False):
+		gt_pos = self.pos
+		random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos, batch_size=8)
 
-        if plot:
-            rectangles = self.training_boxes.numpy()
-            num_rectangles = len(rectangles)
-            h, w, scale = self.im_info[0][:3]
-            image = image.squeeze()
-            image = image[:, :, (2, 1, 0)]
-            fig, ax = plt.subplots(1)
-            ax.imshow(image, cmap='gist_gray_r')
-            gt_pos_np = gt_pos.numpy()
-            ax.add_patch(
-                plt.Rectangle((gt_pos_np[0, 0], gt_pos_np[0, 1]),
-                              gt_pos_np[0, 2] - gt_pos_np[0, 0],
-                              gt_pos_np[0, 3] - gt_pos_np[0, 1], fill=False,
-                              linewidth=1.3 * scale, color='blue')
-            )
-            for i in range(num_rectangles):
-                ax.add_patch(
-                    plt.Rectangle((rectangles[i, 0], rectangles[i, 1]),
-                                  rectangles[i, 2] - rectangles[i, 0],
-                                  rectangles[i, 3] - rectangles[i, 1], fill=False,
-                                  linewidth=1.3 * scale, color='blue')
-                )
+		if torch.cuda.is_available():
+			gt_pos = gt_pos.cuda()
+			random_displaced_bboxes = random_displaced_bboxes.cuda()
+		self.training_boxes = clip_boxes(random_displaced_bboxes, self.im_info[0][:2])
 
-            plt.show()
+		if plot:
+			rectangles = self.training_boxes.numpy()
+			num_rectangles = len(rectangles)
+			h, w, scale = self.im_info[0][:3]
+			image = image.squeeze()
+			image = image[:, :, (2, 1, 0)]/80
+			fig, ax = plt.subplots(1)
+			ax.imshow(image, cmap='gist_gray_r')
+			gt_pos_np = gt_pos.numpy()
+			ax.add_patch(
+                        plt.Rectangle((gt_pos_np[0, 0], gt_pos_np[0, 1]),
+									  gt_pos_np[0, 2] - gt_pos_np[0, 0],
+									  gt_pos_np[0, 3] - gt_pos_np[0, 1], fill=False,
+                            linewidth=1.3*scale, color='blue')
+                    )
+			for i in range(num_rectangles):
+				ax.add_patch(
+					plt.Rectangle((rectangles[i, 0], rectangles[i, 1]),
+								  rectangles[i, 2] - rectangles[i, 0],
+								  rectangles[i, 3] - rectangles[i, 1], fill=False,
+								  linewidth=1.3 * scale, color='blue')
+				)
 
-    def finetune_detector(self, RCNN_bbox_pred, PyramidRoI_Feat, RCNN_top, mrcnn_feature_maps, gt_box, epochs=10):
-        optimizer = torch.optim.Adam(list(RCNN_bbox_pred.parameters()) + list(RCNN_top.parameters()), lr=0.0001)
-        criterion = torch.nn.SmoothL1Loss()
+			plt.show()
+
+	def finetune_detector(self, RCNN_bbox_pred, PyramidRoI_Feat, RCNN_top, mrcnn_feature_maps, gt_box, epochs=10):
+		optimizer = torch.optim.Adam(list(RCNN_bbox_pred.parameters()) + list(RCNN_top.parameters()), lr=0.0001)
+		criterion = torch.nn.SmoothL1Loss()
 
         rois = self.training_boxes
         with torch.no_grad():
