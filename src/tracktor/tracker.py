@@ -499,7 +499,7 @@ class Track(object):
 
         return training_boxes
 
-    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image, epochs=100, plot=False):
+    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image, epochs=10, plot=False):
 
         optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()), lr=0.0001)
         criterion = torch.nn.SmoothL1Loss()

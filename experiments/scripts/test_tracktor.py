@@ -90,9 +90,7 @@ def main(tracktor, siamese, _config, _log, _run):
     for seq in dataset:
         tracker.reset()
         sequence_string = str(seq)
-        if '09' not in sequence_string:
-            print("Skipping {}".format(sequence_string))
-            continue
+        print(sequence_string)
 
         start = time.time()
 
@@ -103,8 +101,7 @@ def main(tracktor, siamese, _config, _log, _run):
             if len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
                 tracker.step(frame)
                 num_frames += 1
-                if num_frames == 118:
-                    break
+
         results = tracker.get_results()
 
         time_total += time.time() - start
