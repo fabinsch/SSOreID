@@ -4,12 +4,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 from scipy.optimize import linear_sum_assignment
 import cv2
 
-from tracktor.training_set_generation import replicate_and_randomize_boxes
-from .utils import bbox_overlaps, bbox_transform_inv, clip_boxes
+from tracktor.training_set_generation import replicate_and_randomize_boxes, plot_bounding_boxes
+from .utils import clip_boxes
 from helper.csrc.wrapper.nms import nms
 from .utils import bbox_overlaps, warp_pos, get_center, get_height, get_width, make_pos
 
@@ -17,11 +16,10 @@ from torchvision.ops.boxes import clip_boxes_to_image, nms
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHead
 
 import matplotlib
-
+import matplotlib.pyplot as plt
 if not torch.cuda.is_available():
     matplotlib.use('TkAgg')
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+
 
 class Tracker:
     """The main tracking file, here is where magic happens."""
@@ -78,7 +76,6 @@ class Tracker:
                           self.motion_model_cfg['n_steps'] if self.motion_model_cfg['n_steps'] > 0 else 1,
                           image.size()[1:3], self.obj_detect.image_size)
 
-            track.generate_training_set(image, plot=False)
             box_head_copy = TwoMLPHead(self.obj_detect.backbone.out_channels *
                                        self.obj_detect.roi_heads.box_roi_pool.output_size[0] ** 2,
                                        representation_size=1024)
@@ -91,11 +88,10 @@ class Tracker:
                 box_predictor_copy = box_predictor_copy.cuda()
             track.finetune_detector(box_head_copy, self.obj_detect.roi_heads.box_roi_pool,
                                     box_predictor_copy, self.obj_detect.fpn_features, new_det_pos[i],
-                                    self.obj_detect.roi_heads.box_coder.decode)
+                                    self.obj_detect.roi_heads.box_coder.decode, image)
             self.tracks.append(track)
 
         self.track_num += num_new
-
 
     def regress_tracks(self, blob):
         """Regress the position of the tracks and also checks their scores."""
@@ -472,45 +468,27 @@ class Track(object):
         self.last_pos.clear()
         self.last_pos.append(self.pos.clone())
 
-    def generate_training_set(self, image, batch_size=8, plot=False):
+    def generate_training_set(self, batch_size=8, plot=False, image=None):
         gt_pos = self.pos
-        random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos, batch_size=8)
+        random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos, batch_size=batch_size)
 
         if torch.cuda.is_available():
             gt_pos = gt_pos.cuda()
             random_displaced_bboxes = random_displaced_bboxes.cuda()
-        self.training_boxes = clip_boxes(random_displaced_bboxes, self.im_info)
+
+        training_boxes = clip_boxes(random_displaced_bboxes, self.im_info)
 
         if plot:
-            rectangles = self.training_boxes.numpy()
-            num_rectangles = len(rectangles)
-            h, w = self.im_info
-            image = image.squeeze()
-            image = image.permute(1,2,0)
-            fig, ax = plt.subplots(1)
-            ax.imshow(image, cmap='gist_gray_r')
-            gt_pos_np = gt_pos.numpy()
-            ax.add_patch(
-                        plt.Rectangle((gt_pos_np[0, 0], gt_pos_np[0, 1]),
-                                      gt_pos_np[0, 2] - gt_pos_np[0, 0],
-                                      gt_pos_np[0, 3] - gt_pos_np[0, 1], fill=False,
-                            linewidth=1.3, color='blue')
-                    )
-            for i in range(num_rectangles):
-                ax.add_patch(
-                    plt.Rectangle((rectangles[i, 0], rectangles[i, 1]),
-                                  rectangles[i, 2] - rectangles[i, 0],
-                                  rectangles[i, 3] - rectangles[i, 1], fill=False,
-                                  linewidth=1.3, color='blue')
-                )
+            plot_bounding_boxes(self.im_info, gt_pos, image, training_boxes.numpy())
 
-            plt.show()
+        return training_boxes
 
-    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, epochs=10):
-
+    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image, epochs=100, plot=False):
 
         optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()), lr=0.0001)
         criterion = torch.nn.SmoothL1Loss()
+
+        training_boxes = self.generate_training_set(batch_size=8, image=image, plot=True)
 
         if isinstance(fpn_features, torch.Tensor):
             fpn_features = OrderedDict([(0, fpn_features)])
@@ -518,12 +496,13 @@ class Track(object):
         # proposals, proposal_losses = self.rpn(images, features, targets)
         from torchvision.models.detection.transform import resize_boxes
         boxes = resize_boxes(
-            self.training_boxes, self.im_info, self.transformed_image_size[0])
+            training_boxes, self.im_info, self.transformed_image_size[0])
         proposals = [boxes]
 
         with torch.no_grad():
             roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
 
+        ax = plt.subplots(2, 5)
         for i in range(epochs):
 
             # feed pooled features to top model
@@ -533,8 +512,11 @@ class Track(object):
             # compute bbox offset
             _, bbox_pred = box_predictor(pooled_feat)
 
-            pred_boxes = bbox_pred_decoder(bbox_pred, proposals)
-
+            pred_boxes = bbox_pred_decoder(bbox_pred, proposals)[:, 1, :]
+            if np.mod(i, 10) == 0 and plot:
+                ax = plt.subplot(2, 5, int(1 + i/10))
+                plt.subplot(2, 5, int(1 + i/10))
+                plot_bounding_boxes(self.im_info, gt_box.unsqueeze(0), image, pred_boxes, ax)
 
             optimizer.zero_grad()
             loss = criterion(pred_boxes, gt_box)
@@ -543,6 +525,6 @@ class Track(object):
             print('Finished epoch {} --- Loss {}'.format(i, loss.item()))
 
         # TODO plot bounding boxes after training
-
+        plt.show()
         self.box_predictor = box_predictor
         self.box_head = box_head
