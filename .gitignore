@@ -31,3 +31,4 @@ __pycache__
 adlcv_env
 build
 results
+training_set/*
