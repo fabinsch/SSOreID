@@ -489,9 +489,9 @@ class Track(object):
         self.last_pos.clear()
         self.last_pos.append(self.pos.clone())
 
-    def generate_training_set(self, batch_size=8, plot=False, image=None):
+    def generate_training_set(self, batch_size=8, plot=True, image=None):
         gt_pos = self.pos
-        random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos, batch_size=batch_size)
+        random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos, batch_size=batch_size, max_displacement=0.15, min_scale=0.8, max_scale=1.2)
 
         if torch.cuda.is_available():
             gt_pos = gt_pos.cuda()
@@ -509,7 +509,7 @@ class Track(object):
         optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()), lr=0.0001)
         criterion = torch.nn.SmoothL1Loss()
         scaled_gt_box = gt_box / self.scale
-        training_boxes = self.generate_training_set(batch_size=8, image=image, plot=plot)
+        training_boxes = self.generate_training_set(batch_size=32, image=image, plot=plot)
 
         if isinstance(fpn_features, torch.Tensor):
             fpn_features = OrderedDict([(0, fpn_features)])
@@ -549,6 +549,6 @@ class Track(object):
             if False:
                 plotter.plot('loss', 'train', 'Class Loss', i, loss.item())
 
-        plt.show()
+        plt.savefig('./training_set/training_progress.png')
         self.box_predictor = box_predictor
         self.box_head = box_head

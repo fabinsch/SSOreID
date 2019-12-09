@@ -75,7 +75,7 @@ def plot_bounding_boxes(im_info, gt_pos, image, proposals, ax=None):
     )
 
     plt.axis('off')
-    #plt.show()
+    plt.savefig('./training_set/training_boxes.png', dpi=180)
 
 def parse_ground_truth(frame, file_path='/home/carolin/ADLCV/tracking_wo_bnw/data/MOT17/train/MOT17-09-FRCNN/gt/gt.txt'):
     dets = pd.read_csv(file_path, header=None, sep=',')
