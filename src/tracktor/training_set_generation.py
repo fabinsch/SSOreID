@@ -35,7 +35,7 @@ def transform_to_x1y1x2y2(training_boxes_xywh):
     return training_boxes
 
 
-def replicate_and_randomize_boxes(gt_pos, batch_size, max_displacement=0.5, min_scale=0.5, max_scale=2):
+def replicate_and_randomize_boxes(gt_pos, batch_size, max_displacement=0.1, min_scale=0.8, max_scale=1.2):
     gt_pos_xywh = transform_to_xywh(gt_pos)
     factors = get_random_scaling_displacement(batch_size, max_displacement=max_displacement, min_scale=min_scale, max_scale=max_scale)
     training_boxes_xywh = apply_random_factors(gt_pos_xywh, factors)

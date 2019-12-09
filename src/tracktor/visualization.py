@@ -60,19 +60,20 @@ def plot_bounding_boxes(im_info, gt_pos, image, proposals, ax=None):
         fig, ax = plt.subplots(1)
     ax.imshow(image, cmap='gist_gray_r')
     gt_pos_np = gt_pos.numpy()
-    ax.add_patch(
-        plt.Rectangle((gt_pos_np[0, 0], gt_pos_np[0, 1]),
-                      gt_pos_np[0, 2] - gt_pos_np[0, 0],
-                      gt_pos_np[0, 3] - gt_pos_np[0, 1], fill=False,
-                      linewidth=0.9, color='salmon')
-    )
     for i in range(num_proposals):
         ax.add_patch(
             plt.Rectangle((proposals[i, 0], proposals[i, 1]),
                           proposals[i, 2] - proposals[i, 0],
                           proposals[i, 3] - proposals[i, 1], fill=False,
-                          linewidth=0.9, color='cyan')
+                          linewidth=0.9, color='yellow')
         )
+    ax.add_patch(
+        plt.Rectangle((gt_pos_np[0, 0], gt_pos_np[0, 1]),
+                      gt_pos_np[0, 2] - gt_pos_np[0, 0],
+                      gt_pos_np[0, 3] - gt_pos_np[0, 1], fill=False,
+                      linewidth=1.5, color='salmon')
+    )
+
     plt.axis('off')
     #plt.show()
 
