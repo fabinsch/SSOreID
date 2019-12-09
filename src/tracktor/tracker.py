@@ -14,6 +14,7 @@ from tracktor.utils import bbox_overlaps, warp_pos, get_center, get_height, get_
 
 from torchvision.ops.boxes import clip_boxes_to_image, nms
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHead
+from torchvision.models.detection.transform import resize_boxes
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -489,9 +490,9 @@ class Track(object):
         self.last_pos.clear()
         self.last_pos.append(self.pos.clone())
 
-    def generate_training_set(self, batch_size=8, plot=True, image=None):
+    def generate_training_set(self, iteration, batch_size=8, plot=True, image=None):
         gt_pos = self.pos
-        random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos, batch_size=batch_size, max_displacement=0.15, min_scale=0.8, max_scale=1.2)
+        random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos, batch_size=batch_size, max_displacement=0.2, min_scale=0.8, max_scale=1.2)
 
         if torch.cuda.is_available():
             gt_pos = gt_pos.cuda()
@@ -500,34 +501,39 @@ class Track(object):
         training_boxes = clip_boxes(random_displaced_bboxes, self.im_info)
 
         if plot:
-            plot_bounding_boxes(self.im_info, gt_pos, image, training_boxes.numpy())
+            plot_bounding_boxes(self.im_info, gt_pos, image, training_boxes.numpy(), iteration)
 
         return training_boxes
 
-    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image, epochs=20, plot=True):
+    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image, iterations=7, plot=False, visdom=False, validate=False):
 
-        optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()), lr=0.0001)
+        optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()), lr=1e-5)
         criterion = torch.nn.SmoothL1Loss()
         scaled_gt_box = gt_box / self.scale
-        training_boxes = self.generate_training_set(batch_size=32, image=image, plot=plot)
-
         if isinstance(fpn_features, torch.Tensor):
             fpn_features = OrderedDict([(0, fpn_features)])
 
-        # proposals, proposal_losses = self.rpn(images, features, targets)
-        from torchvision.models.detection.transform import resize_boxes
-        boxes = resize_boxes(
-            training_boxes, self.im_info, self.transformed_image_size[0])
-        proposals = [boxes]
+        if validate:
+            validation_boxes = self.generate_training_set(-1, batch_size=16, image=image, plot=False)
+            validation_boxes_resized = resize_boxes(
+                validation_boxes, self.im_info, self.transformed_image_size[0])
+            proposals_val = [validation_boxes_resized]
+            roi_pool_feat_val = box_roi_pool(fpn_features, proposals_val, self.im_info)
 
-        with torch.no_grad():
-            roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
-
-        if False:
+        if visdom:
             global plotter
             plotter = VisdomLinePlotter()
 
-        for i in range(epochs):
+        for i in range(iterations):
+
+            training_boxes = self.generate_training_set(i, batch_size=16, image=image, plot=plot)
+
+            boxes = resize_boxes(
+                training_boxes, self.im_info, self.transformed_image_size[0])
+            proposals = [boxes]
+
+            with torch.no_grad():
+                roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
 
             # feed pooled features to top model
             pooled_feat = box_head(roi_pool_feat)
@@ -537,16 +543,23 @@ class Track(object):
             _, bbox_pred = box_predictor(pooled_feat)
 
             pred_boxes = bbox_pred_decoder(bbox_pred, proposals)[:, 1, :]
-            if np.mod(i, 5) == 0 and plot:
+            if np.mod(i, 3) == 0 and validate:
+                pooled_feat_val = box_head(roi_pool_feat_val)
+                pooled_feat_val = pooled_feat_val.squeeze()
+                _, bbox_pred_val = box_predictor(pooled_feat_val)
+                pred_boxes_val = bbox_pred_decoder(bbox_pred_val, proposals_val)[:, 1, :]
                 ax = plt.subplot(2, 2, int(1 + i/5))
-                plot_bounding_boxes(self.im_info, scaled_gt_box.unsqueeze(0)*self.scale, image, pred_boxes * self.scale, ax)
+                plot_bounding_boxes(self.im_info, scaled_gt_box.unsqueeze(0)*self.scale, image, pred_boxes_val * self.scale, i, ax)
+                val_loss = criterion(pred_boxes_val, scaled_gt_box)
+                print('\nFinished iteration {} --- Validation Loss {}\n'.format(i, val_loss.item()))
 
             optimizer.zero_grad()
             loss = criterion(pred_boxes, scaled_gt_box)
             loss.backward()
             optimizer.step()
-            print('Finished epoch {} --- Loss {}'.format(i, loss.item()))
-            if False:
+            print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
+
+            if visdom:
                 plotter.plot('loss', 'train', 'Class Loss', i, loss.item())
 
         plt.savefig('./training_set/training_progress.png')
