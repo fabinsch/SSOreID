@@ -562,6 +562,7 @@ class Track(object):
             if visdom:
                 plotter.plot('loss', 'train', 'Class Loss', i, loss.item())
 
-        plt.savefig('./training_set/training_progress.png')
+        if plot:
+            plt.savefig('./training_set/training_progress.png')
         self.box_predictor = box_predictor
         self.box_head = box_head
