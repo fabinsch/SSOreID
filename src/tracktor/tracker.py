@@ -97,7 +97,7 @@ class Tracker:
 
         self.track_num += num_new
 
-    def regress_tracks(self, blob, plot_compare=True):
+    def regress_tracks(self, blob, plot_compare=False):
         """Regress the position of the tracks and also checks their scores."""
         if self.finetune_appearance_models:
             scores = []
