@@ -65,5 +65,15 @@ tracktor:
     reid_sim_threshold: 2.0
     # How much IoU do track and image need to be considered for matching
     reid_iou_threshold: 0.2
-    # Train appearance models for each track
-    finetune_appearance_models: True
+    # Train finetuned bounding box predictor for each track
+    finetuning:
+      enabled: True
+      # Number of iterations each predictor is tuned
+      iterations: 31
+      # Learning rate for the finetuning
+      learning_rate: 5e-4
+      # number of rois generated per batch for training
+      batch_size: 16
+      # Factor by which the bounding box upper right coordinate is maximally displaced.
+      max_displacement: 0.1
+      validate: False
