@@ -58,21 +58,33 @@ def main(tracktor, siamese, _config, _log, _run):
     _log.info("Initializing object detector.")
 
     obj_detect = FRCNN_FPN(num_classes=2)
+#<<<<<<< HEAD
     if torch.cuda.is_available():
         obj_detect_state_dict = torch.load(_config['tracktor']['obj_detect_model'])
     else:
         obj_detect_state_dict = torch.load(_config['tracktor']['obj_detect_model'], map_location=torch.device('cpu'))
     obj_detect.load_state_dict(obj_detect_state_dict)
+#=======
+#    obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
+#                               map_location=lambda storage, loc: storage))
+
+#>>>>>>> 2cd332feb7dc7535f7ad6efee78f44ea9c823e90
     obj_detect.eval()
     if torch.cuda.is_available():
         obj_detect.cuda()
 
     # reid
+#<<<<<<< HEAD
     reid_network = resnet50(pretrained=False, **siamese['cnn'])
     if torch.cuda.is_available():
         reid_network.load_state_dict(torch.load(tracktor['reid_weights']))
     else:
         reid_network.load_state_dict(torch.load(tracktor['reid_weights'], map_location=torch.device('cpu')))
+#=======
+#    reid_network = resnet50(pretrained=False, **reid['cnn'])
+#    reid_network.load_state_dict(torch.load(tracktor['reid_weights'],
+#                                 map_location=lambda storage, loc: storage))
+#>>>>>>> 2cd332feb7dc7535f7ad6efee78f44ea9c823e90
     reid_network.eval()
     if torch.cuda.is_available():
         reid_network.cuda()
