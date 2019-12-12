@@ -20,8 +20,8 @@ import matplotlib
 import matplotlib.pyplot as plt
 if not torch.cuda.is_available():
     matplotlib.use('TkAgg')
-import visdom
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class Tracker:
     """The main tracking file, here is where magic happens."""
@@ -43,10 +43,10 @@ class Tracker:
         self.reid_iou_threshold = tracker_cfg['reid_iou_threshold']
         self.do_align = tracker_cfg['do_align']
         self.motion_model_cfg = tracker_cfg['motion_model']
-        self.finetune_appearance_models = tracker_cfg['finetune_appearance_models']
         self.warp_mode = eval(tracker_cfg['warp_mode'])
         self.number_of_iterations = tracker_cfg['number_of_iterations']
         self.termination_eps = tracker_cfg['termination_eps']
+        self.finetuning_config = tracker_cfg['finetuning']
 
         self.tracks = []
         self.inactive_tracks = []
@@ -79,27 +79,34 @@ class Tracker:
                           image.size()[1:3], self.obj_detect.image_size)
 
 
-            if self.finetune_appearance_models:
+            if self.finetuning_config["enabled"]:
                 box_head_copy = TwoMLPHead(self.obj_detect.backbone.out_channels *
                                            self.obj_detect.roi_heads.box_roi_pool.output_size[0] ** 2,
-                                           representation_size=1024)
-                box_predictor_copy = FastRCNNPredictor(1024, 2)
+                                           representation_size=1024).to(device)
+                box_predictor_copy = FastRCNNPredictor(1024, 2).to(device)
 
                 box_head_copy.load_state_dict(self.obj_detect.roi_heads.box_head.state_dict())
                 box_predictor_copy.load_state_dict(self.obj_detect.roi_heads.box_predictor.state_dict())
-                if torch.cuda.is_available():
-                    box_head_copy = box_head_copy.cuda()
-                    box_predictor_copy = box_predictor_copy.cuda()
-                track.finetune_detector(box_head_copy, self.obj_detect.roi_heads.box_roi_pool,
-                                        box_predictor_copy, self.obj_detect.fpn_features, new_det_pos[i],
-                                        self.obj_detect.roi_heads.box_coder.decode, image)
+                print(self.obj_detect.roi_heads.box_predictor.state_dict())
+                track.finetune_detector(box_head_copy,
+                                        self.obj_detect.roi_heads.box_roi_pool,
+                                        box_predictor_copy,
+                                        self.obj_detect.fpn_features,
+                                        new_det_pos[i],
+                                        self.obj_detect.roi_heads.box_coder.decode, image,
+                                        int(self.finetuning_config["iterations"]),
+                                        float(self.finetuning_config["learning_rate"]),
+                                        int(self.finetuning_config["batch_size"]),
+                                        float(self.finetuning_config["max_displacement"]),
+                                        validate=self.finetuning_config["validate"],
+                                        plot=False)
             self.tracks.append(track)
 
         self.track_num += num_new
 
     def regress_tracks(self, blob, plot_compare=False):
         """Regress the position of the tracks and also checks their scores."""
-        if self.finetune_appearance_models:
+        if self.finetuning_config["enabled"]:
             scores = []
             pos = []
             for i, track in enumerate(self.tracks):
@@ -132,9 +139,8 @@ class Tracker:
             # t.prev_pos = t.pos
             t.pos = pos[i].view(1, -1)
 
-        scores_of_active_tracks = torch.Tensor(s[::-1])
-        if torch.cuda.is_available():
-            scores_of_active_tracks = scores_of_active_tracks.cuda()
+        scores_of_active_tracks = torch.Tensor(s[::-1]).to(device)
+
         return scores_of_active_tracks
 
 
@@ -173,9 +179,8 @@ class Tracker:
 
     def reid(self, blob, new_det_pos, new_det_scores):
         """Tries to ReID inactive tracks with provided detections."""
-        zeros = torch.zeros(0)
-        if torch.cuda.is_available():
-            zeros = zeros.cuda()
+        zeros = torch.zeros(0).to(device)
+
         new_det_features = [zeros for _ in range(len(new_det_pos))]
 
         if self.do_reid:
@@ -221,21 +226,15 @@ class Tracker:
                 for t in remove_inactive:
                     self.inactive_tracks.remove(t)
 
-                keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long()
-                if torch.cuda.is_available():
-                    keep = keep.cuda()
+                keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
                 if keep.nelement() > 0:
                     new_det_pos = new_det_pos[keep]
                     new_det_scores = new_det_scores[keep]
                     new_det_features = new_det_features[keep]
                 else:
-                    new_det_pos = torch.zeros(0)
-                    new_det_scores = torch.zeros(0)
-                    new_det_features = torch.zeros(0)
-                    if torch.cuda.is_available():
-                        new_det_pos = new_det_pos.cuda()
-                        new_det_scores = new_det_scores.cuda()
-                        new_det_features = new_det_features.cuda()
+                    new_det_pos = torch.zeros(0).to(device)
+                    new_det_scores = torch.zeros(0).to(device)
+                    new_det_features = torch.zeros(0).to(device)
 
         return new_det_pos, new_det_scores, new_det_features
 
@@ -352,9 +351,7 @@ class Tracker:
         ##################
 
         num_tracks = 0
-        nms_inp_reg = torch.zeros(0)
-        if torch.cuda.is_available():
-            nms_inp_reg = nms_inp_reg.cuda()
+        nms_inp_reg = torch.zeros(0).to(device)
 
         if len(self.tracks):
             # align
@@ -490,79 +487,93 @@ class Track(object):
         self.last_pos.clear()
         self.last_pos.append(self.pos.clone())
 
-    def generate_training_set(self, iteration, batch_size=8, plot=True, image=None):
-        gt_pos = self.pos
-        random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos, batch_size=batch_size, max_displacement=0.2, min_scale=0.8, max_scale=1.2)
-
-        if torch.cuda.is_available():
-            gt_pos = gt_pos.cuda()
-            random_displaced_bboxes = random_displaced_bboxes.cuda()
+    def generate_training_set(self, max_displacement, batch_size=8, plot=False, plot_args=None):
+        gt_pos = self.pos.to(device)
+        # displacement should be the realistic displacement of the bounding box from t-frame to the t+1-frame.
+        # TODO implement check that the randomly generated box has largest IoU with gt_pos compared to all other
+        # detections.
+        random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos,
+                                                                batch_size=batch_size,
+                                                                max_displacement=max_displacement,
+                                                                min_scale=0.8,
+                                                                max_scale=1.2).to(device)
 
         training_boxes = clip_boxes(random_displaced_bboxes, self.im_info)
 
-        if plot:
-            plot_bounding_boxes(self.im_info, gt_pos, image, training_boxes.numpy(), iteration)
+        if plot and plot_args:
+            plot_bounding_boxes(self.im_info, gt_pos, plot_args[0], training_boxes.numpy(), plot_args[1], plot_args[2])
 
         return training_boxes
 
-    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image, iterations=7, plot=False, visdom=False, validate=False):
+    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image,
+                          iterations, learning_rate, batch_size, max_displacement, plot=False, visdom=False, validate=False):
 
-        optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()), lr=1e-5)
+        optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()), lr=learning_rate)
         criterion = torch.nn.SmoothL1Loss()
-        scaled_gt_box = gt_box / self.scale
+
         if isinstance(fpn_features, torch.Tensor):
             fpn_features = OrderedDict([(0, fpn_features)])
 
+        iterations_per_validation = 10
         if validate:
-            validation_boxes = self.generate_training_set(-1, batch_size=16, image=image, plot=False)
+            batch_size_val = 32
+            validation_boxes = self.generate_training_set(max_displacement,
+                                                          batch_size=batch_size_val,
+                                                          plot=True,
+                                                          plot_args=(image, "val", self.id)).to(device)
             validation_boxes_resized = resize_boxes(
                 validation_boxes, self.im_info, self.transformed_image_size[0])
             proposals_val = [validation_boxes_resized]
             roi_pool_feat_val = box_roi_pool(fpn_features, proposals_val, self.im_info)
-
-        if visdom:
-            global plotter
             plotter = VisdomLinePlotter()
 
         for i in range(iterations):
 
-            training_boxes = self.generate_training_set(i, batch_size=16, image=image, plot=plot)
+            training_boxes = self.generate_training_set(max_displacement,
+                                                        batch_size=batch_size,
+                                                        plot=plot,
+                                                        plot_args=(image, i, self.id)).to(device)
 
             boxes = resize_boxes(
                 training_boxes, self.im_info, self.transformed_image_size[0])
+            scaled_gt_box = resize_boxes(
+                gt_box.unsqueeze(0), self.im_info, self.transformed_image_size[0]).squeeze(0)
             proposals = [boxes]
 
             with torch.no_grad():
                 roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
-
-            # feed pooled features to top model
-            pooled_feat = box_head(roi_pool_feat)
-            pooled_feat = pooled_feat.squeeze()
+                # feed pooled features to top model
+                pooled_feat = box_head(roi_pool_feat)
 
             # compute bbox offset
             _, bbox_pred = box_predictor(pooled_feat)
 
-            pred_boxes = bbox_pred_decoder(bbox_pred, proposals)[:, 1, :]
-            if np.mod(i, 3) == 0 and validate:
+            pred_boxes = bbox_pred_decoder(bbox_pred, proposals)
+            pred_boxes = pred_boxes[:, 1:].squeeze(dim=1)
+
+            if np.mod(i, iterations_per_validation) == 0 and validate:
                 pooled_feat_val = box_head(roi_pool_feat_val)
-                pooled_feat_val = pooled_feat_val.squeeze()
                 _, bbox_pred_val = box_predictor(pooled_feat_val)
-                pred_boxes_val = bbox_pred_decoder(bbox_pred_val, proposals_val)[:, 1, :]
-                ax = plt.subplot(2, 2, int(1 + i/5))
-                plot_bounding_boxes(self.im_info, scaled_gt_box.unsqueeze(0)*self.scale, image, pred_boxes_val * self.scale, i, ax)
-                val_loss = criterion(pred_boxes_val, scaled_gt_box)
-                print('\nFinished iteration {} --- Validation Loss {}\n'.format(i, val_loss.item()))
+                pred_boxes_val = bbox_pred_decoder(bbox_pred_val, proposals_val)
+                pred_boxes_val = pred_boxes_val[:, 1:].squeeze(dim=1)
+                #plot_bounding_boxes(self.im_info,
+                #                    gt_box.unsqueeze(0),
+                #                    image,
+                #                    resize_boxes(pred_boxes_val, self.transformed_image_size[0], self.im_info),
+                #                    i,
+                #                    self.id,
+                #                    validate=True)
+                val_loss = criterion(pred_boxes_val, scaled_gt_box.repeat(batch_size_val, 1))
+                plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
 
             optimizer.zero_grad()
-            loss = criterion(pred_boxes, scaled_gt_box)
+            loss = criterion(pred_boxes, scaled_gt_box.repeat(batch_size, 1))
             loss.backward()
             optimizer.step()
             print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
 
             if visdom:
                 plotter.plot('loss', 'train', 'Class Loss', i, loss.item())
-
-        if plot:
-            plt.savefig('./training_set/training_progress.png')
+        print(box_predictor.state_dict())
         self.box_predictor = box_predictor
         self.box_head = box_head

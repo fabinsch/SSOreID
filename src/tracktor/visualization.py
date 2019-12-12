@@ -51,37 +51,34 @@ class VisdomLinePlotter(object):
             self.viz.line(X=np.array([x]), Y=np.array([y]), env=self.env, win=self.plots[var_name], name=split_name, update = 'append')
 
 
-def plot_bounding_boxes(im_info, gt_pos, image, proposals, iteration, ax=None):
+def plot_bounding_boxes(im_info, gt_pos, image, proposals, iteration, id, validate=False):
     num_proposals = len(proposals)
     h, w = im_info
     image = image.squeeze()
     image = image.permute(1, 2, 0)
-    plotting_training_progress = True
-    if ax is None:
-        fig, ax = plt.subplots(1)
-        plotting_training_progress = False
-    ax.imshow(image, cmap='gist_gray_r')
+    fig, ax = plt.subplots()
+    plt.imshow(image, cmap='gist_gray_r')
     gt_pos_np = gt_pos.numpy()
     for i in range(num_proposals):
         ax.add_patch(
             plt.Rectangle((proposals[i, 0], proposals[i, 1]),
                           proposals[i, 2] - proposals[i, 0],
                           proposals[i, 3] - proposals[i, 1], fill=False,
-                          linewidth=0.1, color='yellow')
+                          linewidth=0.2, color='yellow')
         )
     ax.add_patch(
         plt.Rectangle((gt_pos_np[0, 0], gt_pos_np[0, 1]),
                       gt_pos_np[0, 2] - gt_pos_np[0, 0],
                       gt_pos_np[0, 3] - gt_pos_np[0, 1], fill=False,
-                      linewidth=0.1, color='salmon')
+                      linewidth=0.2, color='salmon')
     )
 
     plt.axis('off')
-
-    if plotting_training_progress:
-        plt.savefig('./training_set/training_progress_{}.png'.format(iteration), dpi=800, bbox_inches='tight')
+    if not validate:
+        plt.savefig('./training_set/training_set_{}_{}.png'.format(id, iteration),
+                    dpi=800, bbox_inches='tight')
     else:
-        plt.savefig('./training_set/training_boxes_{}.png'.format(iteration), dpi=800, bbox_inches='tight')
+        plt.savefig('./training_set/training_progress_{}_{}.png'.format(id, iteration), dpi=800, bbox_inches='tight')
 
 def parse_ground_truth(frame, file_path='/home/carolin/ADLCV/tracking_wo_bnw/data/MOT17/train/MOT17-09-FRCNN/gt/gt.txt'):
     dets = pd.read_csv(file_path, header=None, sep=',')

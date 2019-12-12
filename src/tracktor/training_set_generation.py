@@ -1,5 +1,6 @@
 import torch
 
+torch.manual_seed(0)
 
 def get_random_scaling_displacement(batch_size, max_displacement, min_scale, max_scale):
     x_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_displacement, max_displacement)
