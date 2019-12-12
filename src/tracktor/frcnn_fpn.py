@@ -29,7 +29,6 @@ class FRCNN_FPN(FasterRCNN):
         if isinstance(self.fpn_features, torch.Tensor):
             self.fpn_features = OrderedDict([(0, self.fpn_features)])
 
-        # proposals, proposal_losses = self.rpn(images, features, targets)
         from torchvision.models.detection.transform import resize_boxes
         boxes = resize_boxes(
             boxes, self.original_image_size[0], self.image_size[0])
@@ -47,24 +46,6 @@ class FRCNN_FPN(FasterRCNN):
 
         pred_boxes = self.roi_heads.box_coder.decode(box_regression, proposals)
         pred_scores = F.softmax(class_logits, -1)
-
-        # score_thresh = self.roi_heads.score_thresh
-        # nms_thresh = self.roi_heads.nms_thresh
-
-        # self.roi_heads.score_thresh = self.roi_heads.nms_thresh = 1.0
-        # self.roi_heads.score_thresh = 0.0
-        # self.roi_heads.nms_thresh = 1.0
-        # detections, detector_losses = self.roi_heads(
-        #     features, [boxes.squeeze(dim=0)], images.image_sizes, targets)
-
-        # self.roi_heads.score_thresh = score_thresh
-        # self.roi_heads.nms_thresh = nms_thresh
-
-        # detections = self.transform.postprocess(
-        #     detections, images.image_sizes, original_image_sizes)
-
-        # detections = detections[0]
-        # return detections['boxes'].detach().cpu(), detections['scores'].detach().cpu()
 
         pred_boxes = pred_boxes[:, 1:].squeeze(dim=1).detach()
         pred_boxes = resize_boxes(
