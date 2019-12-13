@@ -87,7 +87,7 @@ class Tracker:
 
                 box_head_copy.load_state_dict(self.obj_detect.roi_heads.box_head.state_dict())
                 box_predictor_copy.load_state_dict(self.obj_detect.roi_heads.box_predictor.state_dict())
-                print(self.obj_detect.roi_heads.box_predictor.state_dict())
+
                 track.finetune_detector(box_head_copy,
                                         self.obj_detect.roi_heads.box_roi_pool,
                                         box_predictor_copy,
@@ -574,6 +574,5 @@ class Track(object):
 
             if visdom:
                 plotter.plot('loss', 'train', 'Class Loss', i, loss.item())
-        print(box_predictor.state_dict())
         self.box_predictor = box_predictor
         self.box_head = box_head

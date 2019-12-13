@@ -33,7 +33,7 @@ ex.add_named_config('oracle', 'experiments/cfgs/oracle_tracktor.yaml')
 
 
 @ex.automain
-def main(tracktor, siamese, _config, _log, _run):
+def main(tracktor, reid, _config, _log, _run):
     sacred.commands.print_config(_run)
 
     # set all seeds
@@ -75,7 +75,7 @@ def main(tracktor, siamese, _config, _log, _run):
 
     # reid
 #<<<<<<< HEAD
-    reid_network = resnet50(pretrained=False, **siamese['cnn'])
+    reid_network = resnet50(pretrained=False, **reid['cnn'])
     if torch.cuda.is_available():
         reid_network.load_state_dict(torch.load(tracktor['reid_weights']))
     else:
