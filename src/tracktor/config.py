@@ -19,18 +19,6 @@ __C.ROOT_DIR = osp.abspath(osp.join(osp.dirname(__file__), '..', '..'))
 # Data directory
 __C.DATA_DIR = osp.abspath(osp.join(__C.ROOT_DIR, 'data'))
 
-# Pixel mean values (BGR order) as a (1, 1, 3) array
-# We use the same pixel mean for all networks even though it's not exactly what
-# they were trained with
-__C.PIXEL_MEANS = np.array([[[102.9801, 115.9465, 122.7717]]])
-
-# Scale to use during testing (can NOT list multiple scales)
-# The scale is the pixel size of an image's shortest side
-__C.SCALES = (600,)
-
-# Max pixel size of the longest side of a scaled input image
-__C.MAX_SIZE = 1000
-
 def get_output_dir(module):
   """Return the directory where experimental artifacts are placed.
   If the directory does not exist, it is created.
