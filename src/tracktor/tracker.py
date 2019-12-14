@@ -108,6 +108,8 @@ class Tracker:
             pos = []
             for track in self.tracks:
                 # Regress with finetuned bbox head for each track
+                assert track.box_head is not None
+                assert track.box_predictor is not None
                 box, score = self.obj_detect.predict_boxes(track.pos,
                                                            box_head=track.box_head,
                                                            box_predictor=track.box_predictor)
@@ -504,8 +506,9 @@ class Track(object):
 
     def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image,
                           finetuning_config, plot=False):
-
-        optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()),
+        box_predictor.train()
+        box_head.train()
+        optimizer = torch.optim.Adam(list(box_predictor.parameters()),
                                      lr=float(finetuning_config["learning_rate"]))
         criterion = torch.nn.SmoothL1Loss()
 
@@ -525,6 +528,7 @@ class Track(object):
 
         for i in range(int(finetuning_config["iterations"])):
 
+            optimizer.zero_grad()
             training_boxes = self.generate_training_set(float(finetuning_config["max_displacement"]),
                                                         batch_size=int(finetuning_config["batch_size"]),
                                                         plot=plot,
@@ -562,7 +566,6 @@ class Track(object):
                 val_loss = criterion(pred_boxes_val, scaled_gt_box.repeat(int(finetuning_config["batch_size_val"]), 1))
                 plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
 
-            optimizer.zero_grad()
             loss = criterion(pred_boxes, scaled_gt_box.repeat(int(finetuning_config["batch_size"]), 1))
             loss.backward()
             optimizer.step()
@@ -570,3 +573,5 @@ class Track(object):
 
         self.box_predictor = box_predictor
         self.box_head = box_head
+        self.box_predictor.eval()
+        self.box_head.eval()
