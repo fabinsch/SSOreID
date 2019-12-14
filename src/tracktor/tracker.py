@@ -106,7 +106,7 @@ class Tracker:
         if self.finetuning_config["enabled"]:
             scores = []
             pos = []
-            for i, track in enumerate(self.tracks):
+            for track in self.tracks:
                 # Regress with finetuned bbox head for each track
                 box, score = self.obj_detect.predict_boxes(track.pos,
                                                            box_head=track.box_head,
