@@ -93,12 +93,9 @@ class Tracker:
                                         box_predictor_copy,
                                         self.obj_detect.fpn_features,
                                         new_det_pos[i],
-                                        self.obj_detect.roi_heads.box_coder.decode, image,
-                                        int(self.finetuning_config["iterations"]),
-                                        float(self.finetuning_config["learning_rate"]),
-                                        int(self.finetuning_config["batch_size"]),
-                                        float(self.finetuning_config["max_displacement"]),
-                                        validate=self.finetuning_config["validate"],
+                                        self.obj_detect.roi_heads.box_coder.decode,
+                                        image,
+                                        self.finetuning_config,
                                         plot=False)
             self.tracks.append(track)
 
@@ -506,19 +503,18 @@ class Track(object):
         return training_boxes
 
     def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image,
-                          iterations, learning_rate, batch_size, max_displacement, plot=False, visdom=False, validate=False):
+                          finetuning_config, plot=False):
 
-        optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()), lr=learning_rate)
+        optimizer = torch.optim.Adam(list(box_predictor.parameters()) + list(box_head.parameters()),
+                                     lr=float(finetuning_config["learning_rate"]))
         criterion = torch.nn.SmoothL1Loss()
 
         if isinstance(fpn_features, torch.Tensor):
             fpn_features = OrderedDict([(0, fpn_features)])
 
-        iterations_per_validation = 10
-        if validate:
-            batch_size_val = 32
-            validation_boxes = self.generate_training_set(max_displacement,
-                                                          batch_size=batch_size_val,
+        if finetuning_config["validate"]:
+            validation_boxes = self.generate_training_set(float(finetuning_config["max_displacement"]),
+                                                          batch_size=int(finetuning_config["batch_size_val"]),
                                                           plot=True,
                                                           plot_args=(image, "val", self.id)).to(device)
             validation_boxes_resized = resize_boxes(
@@ -527,10 +523,10 @@ class Track(object):
             roi_pool_feat_val = box_roi_pool(fpn_features, proposals_val, self.im_info)
             plotter = VisdomLinePlotter()
 
-        for i in range(iterations):
+        for i in range(int(finetuning_config["iterations"])):
 
-            training_boxes = self.generate_training_set(max_displacement,
-                                                        batch_size=batch_size,
+            training_boxes = self.generate_training_set(float(finetuning_config["max_displacement"]),
+                                                        batch_size=int(finetuning_config["batch_size"]),
                                                         plot=plot,
                                                         plot_args=(image, i, self.id)).to(device)
 
@@ -551,7 +547,7 @@ class Track(object):
             pred_boxes = bbox_pred_decoder(bbox_pred, proposals)
             pred_boxes = pred_boxes[:, 1:].squeeze(dim=1)
 
-            if np.mod(i, iterations_per_validation) == 0 and validate:
+            if np.mod(i, int(finetuning_config["interations_per_validation"])) == 0 and finetuning_config["validate"]:
                 pooled_feat_val = box_head(roi_pool_feat_val)
                 _, bbox_pred_val = box_predictor(pooled_feat_val)
                 pred_boxes_val = bbox_pred_decoder(bbox_pred_val, proposals_val)
@@ -563,16 +559,14 @@ class Track(object):
                 #                    i,
                 #                    self.id,
                 #                    validate=True)
-                val_loss = criterion(pred_boxes_val, scaled_gt_box.repeat(batch_size_val, 1))
+                val_loss = criterion(pred_boxes_val, scaled_gt_box.repeat(int(finetuning_config["batch_size_val"]), 1))
                 plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
 
             optimizer.zero_grad()
-            loss = criterion(pred_boxes, scaled_gt_box.repeat(batch_size, 1))
+            loss = criterion(pred_boxes, scaled_gt_box.repeat(int(finetuning_config["batch_size"]), 1))
             loss.backward()
             optimizer.step()
             print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
 
-            if visdom:
-                plotter.plot('loss', 'train', 'Class Loss', i, loss.item())
         self.box_predictor = box_predictor
         self.box_head = box_head

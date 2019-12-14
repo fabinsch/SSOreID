@@ -67,7 +67,7 @@ tracktor:
     reid_iou_threshold: 0.2
     # Train finetuned bounding box predictor for each track
     finetuning:
-      enabled: False
+      enabled: True
       # Number of iterations each predictor is tuned
       iterations: 31
       # Learning rate for the finetuning
@@ -76,4 +76,8 @@ tracktor:
       batch_size: 16
       # Factor by which the bounding box upper right coordinate is maximally displaced.
       max_displacement: 0.1
+      # Have a validation set randomly generated
       validate: True
+      # Evaluate validation set every ith iteration
+      interations_per_validation: 1
+      batch_size_val: 32
