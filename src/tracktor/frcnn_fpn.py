@@ -36,10 +36,10 @@ class FRCNN_FPN(FasterRCNN):
 
         box_features = self.roi_heads.box_roi_pool(
             self.fpn_features, proposals, self.image_size)
-        if not box_head:
+        if box_head is None:
             box_head = self.roi_heads.box_head
         box_features = box_head(box_features)
-        if not box_predictor:
+        if box_predictor is None:
             box_predictor = self.roi_heads.box_predictor
         class_logits, box_regression = box_predictor(
             box_features)

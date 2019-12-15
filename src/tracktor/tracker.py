@@ -47,6 +47,9 @@ class Tracker:
         self.number_of_iterations = tracker_cfg['number_of_iterations']
         self.termination_eps = tracker_cfg['termination_eps']
         self.finetuning_config = tracker_cfg['finetuning']
+        if self.finetuning_config["enabled"]:
+            self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
+            self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
 
         self.tracks = []
         self.inactive_tracks = []
@@ -78,15 +81,14 @@ class Tracker:
                           self.motion_model_cfg['n_steps'] if self.motion_model_cfg['n_steps'] > 0 else 1,
                           image.size()[1:3], self.obj_detect.image_size)
 
-
             if self.finetuning_config["enabled"]:
                 box_head_copy = TwoMLPHead(self.obj_detect.backbone.out_channels *
                                            self.obj_detect.roi_heads.box_roi_pool.output_size[0] ** 2,
                                            representation_size=1024).to(device)
                 box_predictor_copy = FastRCNNPredictor(1024, 2).to(device)
 
-                box_head_copy.load_state_dict(self.obj_detect.roi_heads.box_head.state_dict())
-                box_predictor_copy.load_state_dict(self.obj_detect.roi_heads.box_predictor.state_dict())
+                box_head_copy.load_state_dict(self.bbox_head_weights)
+                box_predictor_copy.load_state_dict(self.bbox_predictor_weights)
 
                 track.finetune_detector(box_head_copy,
                                         self.obj_detect.roi_heads.box_roi_pool,
@@ -101,6 +103,22 @@ class Tracker:
 
         self.track_num += num_new
 
+    #@staticmethod
+    #def compare_weights(m1, m2):
+    #    for p1, p2 in zip(m1.parameters(), m2.parameters()):
+    #        if p1.data.ne(p2.data).sum() > 0:
+     #           return False
+     #   return True
+    @staticmethod
+    def compare_models(m1, m2):
+        models_differ = 0
+        for key_item_1, key_item_2 in zip(m1.state_dict().items(), m2.state_dict().items()):
+            if torch.equal(key_item_1[1], key_item_2[1]):
+                continue
+            else:
+                return False
+        return True
+
     def regress_tracks(self, blob, plot_compare=False):
         """Regress the position of the tracks and also checks their scores."""
         if self.finetuning_config["enabled"]:
@@ -110,9 +128,13 @@ class Tracker:
                 # Regress with finetuned bbox head for each track
                 assert track.box_head is not None
                 assert track.box_predictor is not None
+                assert self.compare_models(track.box_head, self.obj_detect.roi_heads.box_head)
+                assert not self.compare_models(track.box_predictor, self.obj_detect.roi_heads.box_predictor)
+
                 box, score = self.obj_detect.predict_boxes(track.pos,
                                                            box_head=track.box_head,
                                                            box_predictor=track.box_predictor)
+
                 if plot_compare:
                     box_no_finetune, score_no_finetune = self.obj_detect.predict_boxes(track.pos)
                     plot_compare_bounding_boxes(box, box_no_finetune, blob['img'])
