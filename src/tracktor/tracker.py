@@ -90,14 +90,14 @@ class Tracker:
                 box_head_copy.load_state_dict(self.bbox_head_weights)
                 box_predictor_copy.load_state_dict(self.bbox_predictor_weights)
 
-                track.finetune_detector(box_head_copy,
-                                        self.obj_detect.roi_heads.box_roi_pool,
-                                        box_predictor_copy,
+                track.finetune_detector(self.obj_detect.roi_heads.box_roi_pool,
                                         self.obj_detect.fpn_features,
                                         new_det_pos[i],
                                         self.obj_detect.roi_heads.box_coder.decode,
                                         image,
                                         self.finetuning_config,
+                                        box_head=box_head_copy,
+                                        box_predictor=box_predictor_copy,
                                         plot=False)
             self.tracks.append(track)
 
@@ -393,6 +393,19 @@ class Tracker:
 
                 self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
 
+                for i, track in enumerate(self.tracks):
+                    if i in keep:
+                        track.frames_since_active += 1
+                        if np.mod(track.frames_since_active, self.finetuning_config["finetuning_interval"])==0:
+                            track.finetune_detector(
+                                self.obj_detect.roi_heads.box_roi_pool,
+                                self.obj_detect.fpn_features,
+                                track.pos.squeeze(0),
+                                self.obj_detect.roi_heads.box_coder.decode,
+                                blob['img'][0],
+                                self.finetuning_config
+                            )
+
                 if keep.nelement() > 0:
                     if self.do_reid:
                         new_features = self.get_appearances(blob)
@@ -475,6 +488,7 @@ class Track(object):
         self.inactive_patience = inactive_patience
         self.max_features_num = max_features_num
         self.last_pos = deque([pos.clone()], maxlen=mm_steps + 1)
+        self.frames_since_active = 1
         self.last_v = torch.Tensor([])
         self.transformed_image_size = transformed_image_size
         self.gt_id = None
@@ -524,11 +538,17 @@ class Track(object):
 
         return training_boxes
 
-    def finetune_detector(self, box_head, box_roi_pool, box_predictor, fpn_features, gt_box, bbox_pred_decoder, image,
-                          finetuning_config, plot=False):
-        box_predictor.train()
-        box_head.train()
-        optimizer = torch.optim.Adam(list(box_predictor.parameters()),
+    def finetune_detector(self, box_roi_pool, fpn_features, gt_box, bbox_pred_decoder, image,
+                          finetuning_config, box_head=None, box_predictor=None, plot=False):
+        if box_head is not None:
+            self.box_head = box_head
+
+        if box_predictor is not None:
+            self.box_predictor = box_predictor
+
+        self.box_predictor.train()
+        self.box_head.train()
+        optimizer = torch.optim.Adam(list(self.box_predictor.parameters()),
                                      lr=float(finetuning_config["learning_rate"]))
         criterion = torch.nn.SmoothL1Loss()
 
@@ -563,17 +583,17 @@ class Track(object):
             with torch.no_grad():
                 roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
                 # feed pooled features to top model
-                pooled_feat = box_head(roi_pool_feat)
+                pooled_feat = self.box_head(roi_pool_feat)
 
             # compute bbox offset
-            _, bbox_pred = box_predictor(pooled_feat)
+            _, bbox_pred = self.box_predictor(pooled_feat)
 
             pred_boxes = bbox_pred_decoder(bbox_pred, proposals)
             pred_boxes = pred_boxes[:, 1:].squeeze(dim=1)
 
             if np.mod(i, int(finetuning_config["interations_per_validation"])) == 0 and finetuning_config["validate"]:
-                pooled_feat_val = box_head(roi_pool_feat_val)
-                _, bbox_pred_val = box_predictor(pooled_feat_val)
+                pooled_feat_val = self.box_head(roi_pool_feat_val)
+                _, bbox_pred_val = self.box_predictor(pooled_feat_val)
                 pred_boxes_val = bbox_pred_decoder(bbox_pred_val, proposals_val)
                 pred_boxes_val = pred_boxes_val[:, 1:].squeeze(dim=1)
                 #plot_bounding_boxes(self.im_info,
@@ -591,7 +611,5 @@ class Track(object):
             optimizer.step()
             print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
 
-        self.box_predictor = box_predictor
-        self.box_head = box_head
         self.box_predictor.eval()
         self.box_head.eval()
