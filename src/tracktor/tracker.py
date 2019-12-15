@@ -128,8 +128,6 @@ class Tracker:
                 # Regress with finetuned bbox head for each track
                 assert track.box_head is not None
                 assert track.box_predictor is not None
-                assert self.compare_models(track.box_head, self.obj_detect.roi_heads.box_head)
-                assert not self.compare_models(track.box_predictor, self.obj_detect.roi_heads.box_predictor)
 
                 box, score = self.obj_detect.predict_boxes(track.pos,
                                                            box_head=track.box_head,
