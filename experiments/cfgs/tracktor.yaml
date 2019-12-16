@@ -79,7 +79,7 @@ tracktor:
       finetune_repeatedly: False
       finetuning_interval: 10
       #Have a validation set randomly generated
-      validate: False
+      validate: True
       # Evaluate validation set every ith iteration
       interations_per_validation: 1
       batch_size_val: 32

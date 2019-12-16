@@ -5,6 +5,10 @@ torch.manual_seed(0)
 def get_random_scaling_displacement(batch_size, max_displacement, min_scale, max_scale):
     avg_scale = (min_scale + max_scale) / 2
     correction_offset = (avg_scale - 1) / 2
+    print(min_scale, max_scale, correction_offset)
+
+    correction_offset = 0
+
     x_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_displacement, max_displacement) + correction_offset
     y_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_displacement, max_displacement) + correction_offset
     width_scaling_factor = torch.empty(size=(batch_size, 1)).uniform_(min_scale, max_scale)
@@ -36,8 +40,8 @@ def transform_to_x1y1x2y2(training_boxes_xywh):
     return training_boxes
 
 
-def replicate_and_randomize_boxes(gt_pos, batch_size, max_shift=10):
+def replicate_and_randomize_boxes(gt_pos, batch_size, max_displacement=0.1, min_scale=0.8, max_scale=1.2):
     gt_pos_xywh = transform_to_xywh(gt_pos)
-    factors = get_random_scaling_displacement(batch_size, max_shift=max_shift)
+    factors = get_random_scaling_displacement(batch_size, max_displacement=max_displacement, min_scale=min_scale, max_scale=max_scale)
     training_boxes_xywh = apply_random_factors(gt_pos_xywh, factors)
     return transform_to_x1y1x2y2(training_boxes_xywh)
