@@ -2,13 +2,16 @@ import torch
 
 torch.manual_seed(0)
 
-def get_random_scaling_displacement(batch_size, max_shift):
-    x_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift, max_shift)
-    y_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift, max_shift)
-    width_scaling_factor = torch.empty(size=(batch_size, 1)).uniform_(-max_shift, max_shift)
-    height_scaling_factor = torch.empty(size=(batch_size, 1)).uniform_(-max_shift, max_shift)
+def get_random_scaling_displacement(batch_size, max_displacement, min_scale, max_scale):
+    avg_scale = (min_scale + max_scale) / 2
+    correction_offset = (avg_scale - 1) / 2
+    x_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_displacement, max_displacement) + correction_offset
+    y_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_displacement, max_displacement) + correction_offset
+    width_scaling_factor = torch.empty(size=(batch_size, 1)).uniform_(min_scale, max_scale)
+    height_scaling_factor = torch.empty(size=(batch_size, 1)).uniform_(min_scale, max_scale)
 
     return (x_displacement, y_displacement, width_scaling_factor, height_scaling_factor)
+
 
 
 def transform_to_xywh(gt_pos):
