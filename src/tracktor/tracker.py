@@ -527,9 +527,7 @@ class Track(object):
         # displacement should be the realistic displacement of the bounding box from t-frame to the t+1-frame.
         # TODO implement check that the randomly generated box has largest IoU with gt_pos compared to all other
         # detections.
-        random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos,
-                                                                batch_size=batch_size,
-                                                                max_shift=max_shift).to(device)
+        random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos, batch_size=batch_size, max_displacement=0.1, min_scale=0.8, max_scale=1.2).to(device)
 
         training_boxes = clip_boxes(random_displaced_bboxes, self.im_info)
 
