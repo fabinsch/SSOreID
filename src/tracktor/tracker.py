@@ -522,12 +522,16 @@ class Track(object):
         self.last_pos.clear()
         self.last_pos.append(self.pos.clone())
 
-    def generate_training_set(self, max_shift, batch_size=8, plot=False, plot_args=None):
+    def generate_training_set(self, max_displacement, batch_size=8, plot=False, plot_args=None):
         gt_pos = self.pos.to(device)
         # displacement should be the realistic displacement of the bounding box from t-frame to the t+1-frame.
         # TODO implement check that the randomly generated box has largest IoU with gt_pos compared to all other
         # detections.
-        random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos, batch_size=batch_size, max_displacement=0.1, min_scale=0.8, max_scale=1.2).to(device)
+        random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos,
+                                                                batch_size=batch_size,
+                                                                max_displacement=max_displacement,
+                                                                min_scale=0.8,
+                                                                max_scale=1.2).to(device)
 
         training_boxes = clip_boxes(random_displaced_bboxes, self.im_info)
 
@@ -554,7 +558,7 @@ class Track(object):
             fpn_features = OrderedDict([(0, fpn_features)])
 
         if finetuning_config["validate"]:
-            validation_boxes = self.generate_training_set(float(finetuning_config["max_shift"]),
+            validation_boxes = self.generate_training_set(float(finetuning_config["max_displacement"]),
                                                           batch_size=int(finetuning_config["batch_size_val"]),
                                                           plot=True,
                                                           plot_args=(image, "val", self.id)).to(device)
@@ -567,7 +571,7 @@ class Track(object):
         for i in range(int(finetuning_config["iterations"])):
 
             optimizer.zero_grad()
-            training_boxes = self.generate_training_set(float(finetuning_config["max_shift"]),
+            training_boxes = self.generate_training_set(float(finetuning_config["max_displacement"]),
                                                         batch_size=int(finetuning_config["batch_size"]),
                                                         plot=plot,
                                                         plot_args=(image, i, self.id)).to(device)

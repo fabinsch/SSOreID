@@ -69,17 +69,17 @@ tracktor:
     finetuning:
       enabled: True
       # Number of iterations each predictor is tuned
-      iterations: 2
+      iterations: 10
       # Learning rate for the finetuning
       learning_rate: 5e-4
       # number of rois generated per batch for training
       batch_size: 16
       # number of pixels each bounding box is shifted randomly at max in x y w h direction
-      max_shift: 10
+      max_displacement: 0.05
       finetune_repeatedly: False
       finetuning_interval: 10
       #Have a validation set randomly generated
-      validate: True
+      validate: False
       # Evaluate validation set every ith iteration
       interations_per_validation: 1
       batch_size_val: 32
