@@ -1,0 +1,7 @@
+tracktor:
+  'tracker':
+    'finetuning':
+      'iterations': 2
+      'learning_rate': 5e-4
+      'max_displacement': 0.2
+  'output_subdir': '1'

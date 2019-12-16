@@ -1,0 +1,8 @@
+tracktor:
+  'tracker':
+    'finetuning':
+      'iterations': 2
+      'finetune_repeatedly': True
+      'finetuning_interval': 30
+      'max_displacement': 0.2
+  'output_subdir': '1'

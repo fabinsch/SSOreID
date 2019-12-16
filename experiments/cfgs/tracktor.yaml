@@ -27,7 +27,7 @@ tracktor:
   dataset: mot17_09_FRCNN17
   # [start percentage, end percentage], e.g., [0.0, 0.5] for train and [0.75, 1.0] for val split.
   frame_split: [0.0, 1.0]
-
+  output_dir_appendix: ''
   tracker:
     # FRCNN score threshold for detections
     detection_person_thresh: 0.5
@@ -71,11 +71,11 @@ tracktor:
       # Number of iterations each predictor is tuned
       iterations: 2
       # Learning rate for the finetuning
-      learning_rate: 5e-4
+      learning_rate: 5e-5
       # number of rois generated per batch for training
-      batch_size: 16
+      batch_size: 128
       # number of pixels each bounding box is shifted randomly at max in x y w h direction
-      max_shift: 10
+      max_displacement: 0.1
       finetune_repeatedly: False
       finetuning_interval: 10
       #Have a validation set randomly generated
