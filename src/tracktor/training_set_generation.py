@@ -2,6 +2,7 @@ import torch
 from torchvision.ops.boxes import box_iou
 
 torch.manual_seed(0)
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def get_random_scaling_displacement(batch_size, max_displacement, min_scale, max_scale):
     x_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_displacement, max_displacement)
@@ -39,7 +40,7 @@ def replicate_and_randomize_boxes(gt_pos, batch_size, max_displacement=0.1, min_
     gt_pos_xywh = transform_to_xywh(gt_pos)
     factors = get_random_scaling_displacement(batch_size, max_displacement=max_displacement, min_scale=min_scale, max_scale=max_scale)
     training_boxes_xywh = apply_random_factors(gt_pos_xywh, factors)
-    transformed_box = transform_to_x1y1x2y2(training_boxes_xywh)
-    iou = box_iou(transformed_box, gt_pos)
+    transformed_box = transform_to_x1y1x2y2(training_boxes_xywh).to(device)
+    iou = box_iou(transformed_box, gt_pos.to(device))
     assert(iou[iou<=0.5].size()[0]==0)
     return transformed_box
