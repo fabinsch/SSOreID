@@ -74,10 +74,11 @@ tracktor:
       learning_rate: 5e-4
       # number of rois generated per batch for training
       batch_size: 16
-      # Factor by which the bounding box upper right coordinate is maximally displaced.
-      max_displacement: 0.1
-      # Have a validation set randomly generated
+      # number of pixels each bounding box is shifted randomly at max in x y w h direction
+      max_shift: 10
+      finetune_repeatedly: False
       finetuning_interval: 10
+      #Have a validation set randomly generated
       validate: False
       # Evaluate validation set every ith iteration
       interations_per_validation: 1
