@@ -98,7 +98,7 @@ class Tracker:
                                         self.finetuning_config,
                                         box_head=box_head_copy,
                                         box_predictor=box_predictor_copy,
-                                        plot=True)
+                                        plot=False)
             self.tracks.append(track)
 
         self.track_num += num_new
@@ -527,7 +527,11 @@ class Track(object):
         # displacement should be the realistic displacement of the bounding box from t-frame to the t+1-frame.
         # TODO implement check that the randomly generated box has largest IoU with gt_pos compared to all other
         # detections.
-        random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos, batch_size=batch_size, max_displacement=max_displacement, min_scale=0.8, max_scale=1.2).to(device)
+        random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos,
+                                                                batch_size=batch_size,
+                                                                max_displacement=max_displacement,
+                                                                min_scale=0.8,
+                                                                max_scale=1.2).to(device)
 
         training_boxes = clip_boxes(random_displaced_bboxes, self.im_info)
 
@@ -547,7 +551,8 @@ class Track(object):
         self.box_predictor.train()
         self.box_head.train()
         optimizer = torch.optim.Adam(list(self.box_predictor.parameters()),
-                                     lr=float(finetuning_config["learning_rate"]))
+                                     lr=float(finetuning_config["learning_rate"]) if box_head is not None
+                                     else float(finetuning_config["finetuning_interval_learning_rate"]))
         criterion = torch.nn.SmoothL1Loss()
 
         if isinstance(fpn_features, torch.Tensor):
