@@ -551,7 +551,8 @@ class Track(object):
         self.box_predictor.train()
         self.box_head.train()
         optimizer = torch.optim.Adam(list(self.box_predictor.parameters()),
-                                     lr=float(finetuning_config["learning_rate"]))
+                                     lr=float(finetuning_config["learning_rate"]) if box_head is not None
+                                     else float(finetuning_config["finetuning_interval_learning_rate"]))
         criterion = torch.nn.SmoothL1Loss()
 
         if isinstance(fpn_features, torch.Tensor):
