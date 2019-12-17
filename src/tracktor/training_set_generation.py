@@ -21,7 +21,7 @@ def transform_to_xywh(gt_pos):
 def apply_random_factors(gt_pos_xywh, random_factors):
     batch_size = random_factors[0].size()[0]
     training_boxes_xywh = gt_pos_xywh.repeat(batch_size, 1)
-    training_boxes_xywh[:, 0:1] = training_boxes_xywh[:, 0:1] + (random_factors[0] - 0.5 *(random_factors[2] - 1)) * training_boxes_xywh[:, 2:3] * 1.8
+    training_boxes_xywh[:, 0:1] = training_boxes_xywh[:, 0:1] + (random_factors[0]*1.8 - 0.5 * (random_factors[2] - 1)) * training_boxes_xywh[:, 2:3]
     training_boxes_xywh[:, 1:2] = training_boxes_xywh[:, 1:2] + (random_factors[1] - 0.5 *(random_factors[3] - 1)) * training_boxes_xywh[:, 3:4]
     training_boxes_xywh[:, 2:3] = training_boxes_xywh[:, 2:3] * random_factors[2]
     training_boxes_xywh[:, 3:4] = training_boxes_xywh[:, 3:4] * random_factors[3]
