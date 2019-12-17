@@ -130,6 +130,8 @@ def main(tracktor, reid, _config, _log, _run):
 
     _log.info(f"Tracking runtime for all sequences (without evaluation or image writing): "
               f"{time_total:.1f} s ({num_frames / time_total:.1f} Hz)")
+
     if mot_accums:
-        evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt], generate_overall=True)
+        summary = evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt], generate_overall=True)
+        summary.to_pickle("all_results_{}.pkl".format(tracktor['output_subdir']))
 
