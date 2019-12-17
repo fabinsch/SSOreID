@@ -3,6 +3,7 @@ import time
 from os import path as osp
 
 import numpy as np
+import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
@@ -51,7 +52,7 @@ def main(tracktor, reid, _config, _log, _run):
     np.random.seed(tracktor['seed'])
     torch.backends.cudnn.deterministic = True
 
-    output_dir = osp.join(get_output_dir(tracktor['module_name']), tracktor['name'], tracktor['output_dir_appendix'])
+    output_dir = osp.join(get_output_dir(tracktor['module_name']), tracktor['name'], tracktor['output_subdir'])
     sacred_config = osp.join(output_dir, 'sacred_config.yaml')
 
     if not osp.exists(output_dir):
@@ -121,6 +122,7 @@ def main(tracktor, reid, _config, _log, _run):
             mot_accums.append(get_mot_accum(results, seq))
 
         _log.info(f"Writing predictions to: {output_dir}")
+
         seq.write_results(results, output_dir)
 
 
@@ -129,6 +131,8 @@ def main(tracktor, reid, _config, _log, _run):
 
     _log.info(f"Tracking runtime for all sequences (without evaluation or image writing): "
               f"{time_total:.1f} s ({num_frames / time_total:.1f} Hz)")
+
     if mot_accums:
-        evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt], generate_overall=True)
+        summary = evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt], generate_overall=True)
+        summary.to_pickle("all_results_{}.pkl".format(tracktor['output_subdir']))
 
