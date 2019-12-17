@@ -51,7 +51,7 @@ def main(tracktor, reid, _config, _log, _run):
     np.random.seed(tracktor['seed'])
     torch.backends.cudnn.deterministic = True
 
-    output_dir = osp.join(get_output_dir(tracktor['module_name']), tracktor['name'], tracktor['output_dir_appendix'])
+    output_dir = osp.join(get_output_dir(tracktor['module_name']), tracktor['name'], tracktor['output_subdir'])
     sacred_config = osp.join(output_dir, 'sacred_config.yaml')
 
     if not osp.exists(output_dir):
@@ -121,6 +121,7 @@ def main(tracktor, reid, _config, _log, _run):
             mot_accums.append(get_mot_accum(results, seq))
 
         _log.info(f"Writing predictions to: {output_dir}")
+
         seq.write_results(results, output_dir)
 
 

@@ -1,7 +1,7 @@
 tracktor:
   'tracker':
     'finetuning':
-      'iterations': 2
-      'finetune_repeatedly': True
-      'finetuning_interval': 30
-  'output_subdir': '1'
+      'iterations': 5
+      'learning_rate': 1e-4
+      max_displacement: 0.05
+  'output_subdir': '3'
