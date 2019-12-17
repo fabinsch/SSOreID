@@ -3,7 +3,7 @@ import time
 from os import path as osp
 
 import numpy as np
-from pandas import pd
+import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
