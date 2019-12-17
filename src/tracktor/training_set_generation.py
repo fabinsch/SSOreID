@@ -21,7 +21,7 @@ def transform_to_xywh(gt_pos):
 def apply_random_factors(gt_pos_xywh, random_factors):
     batch_size = random_factors[0].size()[0]
     training_boxes_xywh = gt_pos_xywh.repeat(batch_size, 1)
-    training_boxes_xywh[:, 0:1] = training_boxes_xywh[:, 0:1] + (random_factors[0] - 0.5 *(random_factors[2] - 1)) * training_boxes_xywh[:, 2:3] * 1.8
+    training_boxes_xywh[:, 0:1] = training_boxes_xywh[:, 0:1] + (random_factors[0] - 0.5 *(random_factors[2] - 1)) * training_boxes_xywh[:, 2:3]
     training_boxes_xywh[:, 1:2] = training_boxes_xywh[:, 1:2] + (random_factors[1] - 0.5 *(random_factors[3] - 1)) * training_boxes_xywh[:, 3:4]
     training_boxes_xywh[:, 2:3] = training_boxes_xywh[:, 2:3] * random_factors[2]
     training_boxes_xywh[:, 3:4] = training_boxes_xywh[:, 3:4] * random_factors[3]
@@ -42,5 +42,5 @@ def replicate_and_randomize_boxes(gt_pos, batch_size, max_displacement=0.1, min_
     training_boxes_xywh = apply_random_factors(gt_pos_xywh, factors)
     transformed_box = transform_to_x1y1x2y2(training_boxes_xywh).to(device)
     iou = box_iou(transformed_box, gt_pos.to(device))
-    assert(iou[iou<=0.5].size()[0]==0)
+    #assert(iou[iou<=0.5].size()[0]==0)
     return transformed_box
