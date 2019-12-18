@@ -8,7 +8,7 @@ def get_random_scaling_displacement(batch_size, max_displacement, min_scale, max
     x_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_displacement, max_displacement)
     y_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_displacement, max_displacement)
     width_scaling_factor = torch.empty(size=(batch_size, 1)).uniform_(min_scale, max_scale)
-    height_scaling_factor = torch.empty(size=(batch_size, 1)).uniform_(min_scale, max_scale)
+    height_scaling_factor = torch.empty(size=(batch_size, 1)).uniform_(1 - 0.5 * (1 - min_scale), 1 + 0.5 * (max_scale - 1))
 
     return (x_displacement, y_displacement, width_scaling_factor, height_scaling_factor)
 
