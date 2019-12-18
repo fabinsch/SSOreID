@@ -33,7 +33,7 @@ ex.add_named_config('oracle', 'experiments/cfgs/oracle_tracktor.yaml')
 
 
 @ex.automain
-def main(tracktor, reid, _config, _log, _run):
+def main(tracktor, siamese, _config, _log, _run):
     sacred.commands.print_config(_run)
 
     # set all seeds
@@ -58,17 +58,21 @@ def main(tracktor, reid, _config, _log, _run):
     _log.info("Initializing object detector.")
 
     obj_detect = FRCNN_FPN(num_classes=2)
-    obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
-                               map_location=lambda storage, loc: storage))
-
+    if torch.cuda.is_available():
+        obj_detect_state_dict = torch.load(_config['tracktor']['obj_detect_model'])
+    else:
+        obj_detect_state_dict = torch.load(_config['tracktor']['obj_detect_model'], map_location=torch.device('cpu'))
+    obj_detect.load_state_dict(obj_detect_state_dict)
     obj_detect.eval()
     if torch.cuda.is_available():
         obj_detect.cuda()
 
     # reid
-    reid_network = resnet50(pretrained=False, **reid['cnn'])
-    reid_network.load_state_dict(torch.load(tracktor['reid_weights'],
-                                 map_location=lambda storage, loc: storage))
+    reid_network = resnet50(pretrained=False, **siamese['cnn'])
+    if torch.cuda.is_available():
+        reid_network.load_state_dict(torch.load(tracktor['reid_weights']))
+    else:
+        reid_network.load_state_dict(torch.load(tracktor['reid_weights'], map_location=torch.device('cpu')))
     reid_network.eval()
     if torch.cuda.is_available():
         reid_network.cuda()
@@ -85,8 +89,9 @@ def main(tracktor, reid, _config, _log, _run):
     dataset = Datasets(tracktor['dataset'])
     for seq in dataset:
         tracker.reset()
-
+       
         start = time.time()
+        # TODO take only first 8 seconds of 09 sequence
 
         _log.info(f"Tracking: {seq}")
 
@@ -95,7 +100,6 @@ def main(tracktor, reid, _config, _log, _run):
             if len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
                 tracker.step(frame)
                 num_frames += 1
-
         results = tracker.get_results()
 
         time_total += time.time() - start
