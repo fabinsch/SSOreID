@@ -569,6 +569,7 @@ class Track(object):
             roi_pool_feat_val = box_roi_pool(fpn_features, proposals_val, self.im_info)
             plotter = VisdomLinePlotter()
 
+
         for i in range(int(finetuning_config["iterations"])):
 
             optimizer.zero_grad()

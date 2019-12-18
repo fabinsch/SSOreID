@@ -32,6 +32,10 @@ ex.add_named_config('cfg3', 'experiments/cfgs/hp_search/cfg3.yaml')
 ex.add_named_config('cfg4', 'experiments/cfgs/hp_search/cfg4.yaml')
 ex.add_named_config('cfg5', 'experiments/cfgs/hp_search/cfg5.yaml')
 ex.add_named_config('cfg6', 'experiments/cfgs/hp_search/cfg6.yaml')
+ex.add_named_config('cfg7', 'experiments/cfgs/hp_search/cfg7.yaml')
+ex.add_named_config('cfg8', 'experiments/cfgs/hp_search/cfg8.yaml')
+ex.add_named_config('cfg9', 'experiments/cfgs/hp_search/cfg9.yaml')
+ex.add_named_config('cfg10', 'experiments/cfgs/hp_search/cfg10.yaml')
 
 ########### DEFAULT################
 
