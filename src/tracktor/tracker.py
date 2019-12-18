@@ -98,7 +98,7 @@ class Tracker:
                                         self.finetuning_config,
                                         box_head=box_head_copy,
                                         box_predictor=box_predictor_copy,
-                                        plot=False)
+                                        plot=True)
             self.tracks.append(track)
 
         self.track_num += num_new
@@ -568,6 +568,7 @@ class Track(object):
             proposals_val = [validation_boxes_resized]
             roi_pool_feat_val = box_roi_pool(fpn_features, proposals_val, self.im_info)
             plotter = VisdomLinePlotter()
+
 
         for i in range(int(finetuning_config["iterations"])):
 
