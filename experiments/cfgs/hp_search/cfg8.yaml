@@ -1,6 +1,7 @@
 tracktor:
   'tracker':
     'finetuning':
+      'enabled': True
       'iterations': 3
       max_displacement: 0.01
   'output_subdir': '8'
