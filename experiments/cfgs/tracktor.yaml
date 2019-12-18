@@ -72,7 +72,7 @@ tracktor:
       # Learning rate for the finetuning
       learning_rate: 5e-5
       # number of rois generated per batch for training
-      batch_size: 16
+      batch_size: 128
       # number of pixels each bounding box is shifted randomly at max in x y w h direction
       max_displacement: 0.05
       finetune_repeatedly: False

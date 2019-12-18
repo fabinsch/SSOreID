@@ -98,7 +98,7 @@ class Tracker:
                                         self.finetuning_config,
                                         box_head=box_head_copy,
                                         box_predictor=box_predictor_copy,
-                                        plot=True)
+                                        plot=False)
             self.tracks.append(track)
 
         self.track_num += num_new

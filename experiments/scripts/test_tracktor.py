@@ -114,7 +114,6 @@ def main(tracktor, reid, _config, _log, _run):
         _log.info(f"Writing predictions to: {output_dir}")
         seq.write_results(results, output_dir)
 
-
         if tracktor['write_images']:
             plot_sequence(results, seq, osp.join(output_dir, tracktor['dataset'], str(seq)))
 
