@@ -3,7 +3,6 @@ import time
 from os import path as osp
 
 import numpy as np
-import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
@@ -26,18 +25,6 @@ from tracktor.utils import interpolate, plot_sequence, get_mot_accum, evaluate_m
 ex = Experiment()
 
 ex.add_config('experiments/cfgs/tracktor.yaml')
-ex.add_named_config('cfg1', 'experiments/cfgs/hp_search/cfg1.yaml')
-ex.add_named_config('cfg2', 'experiments/cfgs/hp_search/cfg2.yaml')
-ex.add_named_config('cfg3', 'experiments/cfgs/hp_search/cfg3.yaml')
-ex.add_named_config('cfg4', 'experiments/cfgs/hp_search/cfg4.yaml')
-ex.add_named_config('cfg5', 'experiments/cfgs/hp_search/cfg5.yaml')
-ex.add_named_config('cfg6', 'experiments/cfgs/hp_search/cfg6.yaml')
-ex.add_named_config('cfg7', 'experiments/cfgs/hp_search/cfg7.yaml')
-ex.add_named_config('cfg8', 'experiments/cfgs/hp_search/cfg8.yaml')
-ex.add_named_config('cfg9', 'experiments/cfgs/hp_search/cfg9.yaml')
-ex.add_named_config('cfg10', 'experiments/cfgs/hp_search/cfg10.yaml')
-
-########### DEFAULT################
 
 # hacky workaround to load the corresponding configs and not having to har
 # dcode paths here
@@ -46,8 +33,7 @@ ex.add_named_config('oracle', 'experiments/cfgs/oracle_tracktor.yaml')
 
 
 @ex.automain
-def main(tracktor, reid, _config, _log, _run):
-
+def main(tracktor, siamese, _config, _log, _run):
     sacred.commands.print_config(_run)
 
     # set all seeds
@@ -56,7 +42,7 @@ def main(tracktor, reid, _config, _log, _run):
     np.random.seed(tracktor['seed'])
     torch.backends.cudnn.deterministic = True
 
-    output_dir = osp.join(get_output_dir(tracktor['module_name']), tracktor['name'], tracktor['output_subdir'])
+    output_dir = osp.join(get_output_dir(tracktor['module_name']), tracktor['name'])
     sacred_config = osp.join(output_dir, 'sacred_config.yaml')
 
     if not osp.exists(output_dir):
@@ -72,17 +58,21 @@ def main(tracktor, reid, _config, _log, _run):
     _log.info("Initializing object detector.")
 
     obj_detect = FRCNN_FPN(num_classes=2)
-    obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
-                               map_location=lambda storage, loc: storage))
-
+    if torch.cuda.is_available():
+        obj_detect_state_dict = torch.load(_config['tracktor']['obj_detect_model'])
+    else:
+        obj_detect_state_dict = torch.load(_config['tracktor']['obj_detect_model'], map_location=torch.device('cpu'))
+    obj_detect.load_state_dict(obj_detect_state_dict)
     obj_detect.eval()
     if torch.cuda.is_available():
         obj_detect.cuda()
 
     # reid
-    reid_network = resnet50(pretrained=False, **reid['cnn'])
-    reid_network.load_state_dict(torch.load(tracktor['reid_weights'],
-                                 map_location=lambda storage, loc: storage))
+    reid_network = resnet50(pretrained=False, **siamese['cnn'])
+    if torch.cuda.is_available():
+        reid_network.load_state_dict(torch.load(tracktor['reid_weights']))
+    else:
+        reid_network.load_state_dict(torch.load(tracktor['reid_weights'], map_location=torch.device('cpu')))
     reid_network.eval()
     if torch.cuda.is_available():
         reid_network.cuda()
@@ -99,8 +89,9 @@ def main(tracktor, reid, _config, _log, _run):
     dataset = Datasets(tracktor['dataset'])
     for seq in dataset:
         tracker.reset()
-
+       
         start = time.time()
+        # TODO take only first 8 seconds of 09 sequence
 
         _log.info(f"Tracking: {seq}")
 
@@ -109,7 +100,6 @@ def main(tracktor, reid, _config, _log, _run):
             if len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
                 tracker.step(frame)
                 num_frames += 1
-
         results = tracker.get_results()
 
         time_total += time.time() - start
@@ -126,17 +116,12 @@ def main(tracktor, reid, _config, _log, _run):
             mot_accums.append(get_mot_accum(results, seq))
 
         _log.info(f"Writing predictions to: {output_dir}")
-
         seq.write_results(results, output_dir)
-
 
         if tracktor['write_images']:
             plot_sequence(results, seq, osp.join(output_dir, tracktor['dataset'], str(seq)))
 
     _log.info(f"Tracking runtime for all sequences (without evaluation or image writing): "
               f"{time_total:.1f} s ({num_frames / time_total:.1f} Hz)")
-
     if mot_accums:
-        summary = evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt], generate_overall=True)
-        summary.to_pickle("../../output/finetuning_results/all_results_{}.pkl".format(tracktor['output_subdir']))
-
+        evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt], generate_overall=True)
