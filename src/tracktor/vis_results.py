@@ -10,7 +10,7 @@ array = np.array([])
 res = pd.DataFrame()
 
 for f in file_names:
-    df = pd.read_pickle("all_results_{}.pkl".format(f))
+    df = pd.read_pickle("output/finetuning_results/all_results_{}.pkl".format(f))
     #for sequence in sequences:
     res = res.append(df.loc[sequences, metrics_to_plot])
 
