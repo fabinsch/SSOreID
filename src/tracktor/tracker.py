@@ -393,11 +393,10 @@ class Tracker:
 
                 self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
 
-
-                if self.finetuning_config["finetune_repeatedly"]:
-                    for i, track in enumerate(self.tracks):
-                        if i in keep:
-                            track.frames_since_active += 1
+                for i, track in enumerate(self.tracks):
+                    if i in keep:
+                        track.frames_since_active += 1
+                        if self.finetuning_config["finetune_repeatedly"]:
                             if np.mod(track.frames_since_active, self.finetuning_config["finetuning_interval"])==0:
                                 track.finetune_detector(
                                     self.obj_detect.roi_heads.box_roi_pool,
@@ -407,6 +406,25 @@ class Tracker:
                                     blob['img'][0],
                                     self.finetuning_config
                                 )
+                        if self.finetuning_config["validation_over_time"]:
+                            if np.mod(track.frames_since_active, self.finetuning_config["finetuning_interval"]) == 0:
+                                for checkpoint, models in track.checkpoints.items():
+                                    test_rois = track.generate_training_set(self.finetuning_config["max_displacement"], batch_size=128)
+                                    box_pred_val, _ = self.obj_detect.predict_boxes(test_rois[:, 0:4],
+                                                                                                  box_head=models[0],
+                                                                                                  box_predictor=models[1])
+                                    plot_bounding_boxes(blob['img'][0].size()[1:3],
+                                        track.pos,
+                                        blob['img'][0],
+                                        box_pred_val,
+                                        i,
+                                        track.id,
+                                        validate=True)
+                                    criterion_regressor = torch.nn.SmoothL1Loss()
+                                    loss = criterion_regressor(box_pred_val,
+                                                     track.pos.repeat(128, 1))
+                                    track.plotter.plot('loss', 'val {}'.format(checkpoint), 'Class Loss track {}'.format(i),
+                                                       track.frames_since_active, loss.item())
 
                 if keep.nelement() > 0:
                     if self.do_reid:
@@ -498,6 +516,8 @@ class Track(object):
         self.box_predictor = None
         self.box_head = None
         self.scale = self.im_info[0] / self.transformed_image_size[0][0]
+        self.plotter = VisdomLinePlotter()
+        self.checkpoints = dict()
 
     def has_positive_area(self):
         return self.pos[0, 2] > self.pos[0, 0] and self.pos[0, 3] > self.pos[0, 1]
@@ -569,8 +589,13 @@ class Track(object):
             roi_pool_feat_val = box_roi_pool(fpn_features, proposals_val, self.im_info)
             plotter = VisdomLinePlotter()
 
+        self.checkpoints[0] = [box_head, box_predictor]
 
         for i in range(int(finetuning_config["iterations"])):
+
+            if finetuning_config["validation_over_time"]:
+                if np.mod(i+1, finetuning_config["checkpoint_interval"]) == 0:
+                    self.checkpoints[i+1] = [box_head, box_predictor]
 
             optimizer.zero_grad()
             training_boxes = self.generate_training_set(float(finetuning_config["max_displacement"]),
