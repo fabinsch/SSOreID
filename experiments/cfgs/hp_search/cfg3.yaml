@@ -1,6 +1,7 @@
 tracktor:
   'tracker':
     'finetuning':
+      'enabled': True
       'iterations': 6
       'learning_rate': 1e-4
       max_displacement: 0.03
