@@ -1,6 +1,6 @@
 tracktor:
   'tracker':
-    'finetuning'
+    'finetuning':
       'enabled': True
       'iterations': 1
       max_displacement: 0.01
