@@ -581,7 +581,7 @@ class Track(object):
                 self.plotter = VisdomLinePlotter()
             validation_boxes = self.generate_training_set(float(finetuning_config["max_displacement"]),
                                                           batch_size=int(finetuning_config["batch_size_val"]),
-                                                          plot=True,
+                                                          plot=plot,
                                                           plot_args=(image, "val", self.id)).to(device)
             validation_boxes_resized = resize_boxes(
                 validation_boxes, self.im_info, self.transformed_image_size[0])
