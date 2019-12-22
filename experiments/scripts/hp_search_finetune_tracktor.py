@@ -139,7 +139,7 @@ def main(tracktor, reid, _config, _log, _run):
 
     if mot_accums:
         summary = evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt], generate_overall=True)
-        summary.to_pickle("../../output/finetuning_results/results_{}_{}_{}_{}_{}.pkl".format(tracktor['output_subdir'],
+        summary.to_pickle("output/finetuning_results/results_{}_{}_{}_{}_{}.pkl".format(tracktor['output_subdir'],
                                                                                            tracktor['tracker']['finetuning']['max_displacement'],
                                                                                            tracktor['tracker']['finetuning']['batch_size'],
                                                                                            tracktor['tracker']['finetuning']['learning_rate'],
