@@ -407,7 +407,7 @@ class Tracker:
                                     self.finetuning_config
                                 )
                         if self.finetuning_config["validation_over_time"]:
-                            if np.mod(track.frames_since_active, self.finetuning_config["finetuning_interval"]) == 0:
+                            if np.mod(track.frames_since_active, self.finetuning_config["validation_interval"]) == 0:
                                 for checkpoint, models in track.checkpoints.items():
                                     test_rois = track.generate_training_set(self.finetuning_config["max_displacement"], batch_size=128)
                                     box_pred_val, _ = self.obj_detect.predict_boxes(test_rois[:, 0:4],
@@ -620,7 +620,7 @@ class Track(object):
             pred_boxes = bbox_pred_decoder(bbox_pred, proposals)
             pred_boxes = pred_boxes[:, 1:].squeeze(dim=1)
 
-            if np.mod(i, int(finetuning_config["interations_per_validation"])) == 0 and finetuning_config["validate"]:
+            if np.mod(i, int(finetuning_config["iterations_per_validation"])) == 0 and finetuning_config["validate"]:
                 pooled_feat_val = self.box_head(roi_pool_feat_val)
                 _, bbox_pred_val = self.box_predictor(pooled_feat_val)
                 pred_boxes_val = bbox_pred_decoder(bbox_pred_val, proposals_val)

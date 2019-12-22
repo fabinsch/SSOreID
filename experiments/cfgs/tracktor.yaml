@@ -75,11 +75,19 @@ tracktor:
       batch_size: 128
       # number of pixels each bounding box is shifted randomly at max in x y w h direction
       max_displacement: 0.05
+      # Finetune not only at the beginning of each track but repeatedly over the next frames
       finetune_repeatedly: False
+      # Finetune on every t mod k frames
       finetuning_interval: 50
+      # Learning rate for repeated finetuning for each track
       finetuning_interval_learning_rate: 5e-5
       #Have a validation set randomly generated
       validate: False
       # Evaluate validation set every ith iteration
-      interations_per_validation: 1
+      iterations_per_validation: 1
+      # Number of samples used for each iteration of validation
       batch_size_val: 32
+      # Validate performance of finetuned bbox predictor on the consecutive frames
+      validation_over_time: False
+      # Validate every t mod k frames
+      validation_interval: 5
