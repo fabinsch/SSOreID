@@ -2,7 +2,7 @@ tracktor:
   'tracker':
     'finetuning':
       'enabled': True
-      'iterations': 8
+      'iterations': 4
       'learning_rate': 1e-4
-      max_displacement: 0.03
+      max_displacement: 0.08
   'output_subdir': '4'
