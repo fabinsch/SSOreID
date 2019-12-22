@@ -4,43 +4,28 @@ from torchvision.ops.boxes import box_iou
 torch.manual_seed(0)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-def get_random_scaling_displacement(batch_size, max_displacement, min_scale, max_scale):
-    x_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_displacement, max_displacement)
-    y_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_displacement, max_displacement)
-    width_scaling_factor = torch.empty(size=(batch_size, 1)).uniform_(min_scale, max_scale)
-    height_scaling_factor = torch.empty(size=(batch_size, 1)).uniform_(1 - 0.5 * (1 - min_scale), 1 + 0.5 * (max_scale - 1))
+def get_random_scaling_displacement(batch_size, max_shift_x):
+    x1_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift_x, max_shift_x)
+    y1_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift_x, max_shift_x)
+    x2_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift_x, max_shift_x)
+    y2_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift_x, max_shift_x)
 
-    return (x_displacement, y_displacement, width_scaling_factor, height_scaling_factor)
+    return (x1_displacement, y1_displacement, x2_displacement, y2_displacement)
 
-
-
-def transform_to_xywh(gt_pos):
-    gt_pos_xywh = torch.tensor([gt_pos[0, 0], gt_pos[0, 1], gt_pos[0, 2] - gt_pos[0, 0], gt_pos[0, 3] - gt_pos[0, 1]])
-    return gt_pos_xywh
-
-def apply_random_factors(gt_pos_xywh, random_factors):
+def apply_random_factors(gt_pos, random_factors):
     batch_size = random_factors[0].size()[0]
-    training_boxes_xywh = gt_pos_xywh.repeat(batch_size, 1)
-    training_boxes_xywh[:, 0:1] = training_boxes_xywh[:, 0:1] + (random_factors[0]*1.8 - 0.5 * (random_factors[2] - 1)) * training_boxes_xywh[:, 2:3]
-    training_boxes_xywh[:, 1:2] = training_boxes_xywh[:, 1:2] + (random_factors[1] - 0.5 *(random_factors[3] - 1)) * training_boxes_xywh[:, 3:4]
-    training_boxes_xywh[:, 2:3] = training_boxes_xywh[:, 2:3] * random_factors[2]
-    training_boxes_xywh[:, 3:4] = training_boxes_xywh[:, 3:4] * random_factors[3]
+    training_boxes_xywh = gt_pos.repeat(batch_size, 1)
+    training_boxes_xywh[:, 0:1] = training_boxes_xywh[:, 0:1] + random_factors[0]
+    training_boxes_xywh[:, 1:2] = training_boxes_xywh[:, 1:2] + random_factors[1]
+    training_boxes_xywh[:, 2:3] = training_boxes_xywh[:, 2:3] + random_factors[2]
+    training_boxes_xywh[:, 3:4] = training_boxes_xywh[:, 3:4] + random_factors[3]
 
     return training_boxes_xywh
 
-
-def transform_to_x1y1x2y2(training_boxes_xywh):
-    training_boxes = training_boxes_xywh
-    training_boxes[:, 2] = training_boxes_xywh[:, 0] + training_boxes_xywh[:, 2]
-    training_boxes[:, 3] = training_boxes_xywh[:, 1] + training_boxes_xywh[:, 3]
-    return training_boxes
-
-
-def replicate_and_randomize_boxes(gt_pos, batch_size, max_displacement=0.1, min_scale=0.8, max_scale=1.2):
-    gt_pos_xywh = transform_to_xywh(gt_pos)
-    factors = get_random_scaling_displacement(batch_size, max_displacement=max_displacement, min_scale=min_scale, max_scale=max_scale)
-    training_boxes_xywh = apply_random_factors(gt_pos_xywh, factors)
-    transformed_box = transform_to_x1y1x2y2(training_boxes_xywh).to(device)
-    iou = box_iou(transformed_box, gt_pos.to(device))
+def replicate_and_randomize_boxes(gt_pos, batch_size, max_displacement=0.2):
+    smallest_edge = min(abs(gt_pos[0,0]-gt_pos[0,2]), abs(gt_pos[0,1]-gt_pos[0,3]))
+    factors = get_random_scaling_displacement(batch_size, max_shift_x=smallest_edge * max_displacement)
+    training_boxes = apply_random_factors(gt_pos, factors).to(device)
+    iou = box_iou(training_boxes, gt_pos.to(device))
     assert(iou[iou<=0.5].size()[0]==0)
-    return transformed_box
+    return training_boxes

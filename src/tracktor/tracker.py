@@ -549,9 +549,7 @@ class Track(object):
         # detections.
         random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos,
                                                                 batch_size=batch_size,
-                                                                max_displacement=max_displacement,
-                                                                min_scale=0.8,
-                                                                max_scale=1.2).to(device)
+                                                                max_displacement=max_displacement).to(device)
 
         training_boxes = clip_boxes(random_displaced_bboxes, self.im_info)
 
@@ -583,7 +581,7 @@ class Track(object):
                 self.plotter = VisdomLinePlotter()
             validation_boxes = self.generate_training_set(float(finetuning_config["max_displacement"]),
                                                           batch_size=int(finetuning_config["batch_size_val"]),
-                                                          plot=plot,
+                                                          plot=True,
                                                           plot_args=(image, "val", self.id)).to(device)
             validation_boxes_resized = resize_boxes(
                 validation_boxes, self.im_info, self.transformed_image_size[0])
