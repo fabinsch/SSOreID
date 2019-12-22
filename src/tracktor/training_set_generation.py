@@ -5,10 +5,10 @@ torch.manual_seed(0)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def get_random_scaling_displacement(batch_size, max_shift_x):
-    x1_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift_x, max_shift_x)
-    y1_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift_x, max_shift_x)
-    x2_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift_x, max_shift_x)
-    y2_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift_x, max_shift_x)
+    x1_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift_x, max_shift_x).to(device)
+    y1_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift_x, max_shift_x).to(device)
+    x2_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift_x, max_shift_x).to(device)
+    y2_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift_x, max_shift_x).to(device)
 
     return (x1_displacement, y1_displacement, x2_displacement, y2_displacement)
 
@@ -25,7 +25,7 @@ def apply_random_factors(gt_pos, random_factors):
 def replicate_and_randomize_boxes(gt_pos, batch_size, max_displacement=0.2):
     smallest_edge = min(abs(gt_pos[0,0]-gt_pos[0,2]), abs(gt_pos[0,1]-gt_pos[0,3]))
     factors = get_random_scaling_displacement(batch_size, max_shift_x=smallest_edge * max_displacement)
-    training_boxes = apply_random_factors(gt_pos.to(device), factors).to(device)
+    training_boxes = apply_random_factors(gt_pos, factors)
     #iou = box_iou(training_boxes, gt_pos.to(device))
     #assert(iou[iou<=0.5].size()[0]==0)
-    return training_boxes
+    return training_boxes.to(device)
