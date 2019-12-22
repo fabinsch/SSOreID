@@ -516,7 +516,7 @@ class Track(object):
         self.box_predictor = None
         self.box_head = None
         self.scale = self.im_info[0] / self.transformed_image_size[0][0]
-        self.plotter = VisdomLinePlotter()
+        self.plotter = None
         self.checkpoints = dict()
 
     def has_positive_area(self):
@@ -579,6 +579,8 @@ class Track(object):
             fpn_features = OrderedDict([(0, fpn_features)])
 
         if finetuning_config["validate"]:
+            if not self.plotter:
+                self.plotter = VisdomLinePlotter()
             validation_boxes = self.generate_training_set(float(finetuning_config["max_displacement"]),
                                                           batch_size=int(finetuning_config["batch_size_val"]),
                                                           plot=plot,
