@@ -28,4 +28,4 @@ def replicate_and_randomize_boxes(gt_pos, batch_size, max_displacement=0.2):
     training_boxes = apply_random_factors(gt_pos, factors).to(device)
     iou = box_iou(training_boxes, gt_pos.to(device))
     assert(iou[iou<=0.5].size()[0]==0)
-    return training_boxes
+    return training_boxes.to(device)
