@@ -148,7 +148,7 @@ class Tracker:
             boxes, scores = self.obj_detect.predict_boxes(pos)
             pos = clip_boxes_to_image(boxes, blob['img'].shape[-2:])
 
-        if frame==526 or frame == 527 or frame == 528:
+        if frame==526 or frame == 527 or frame == 528 or frame == 529:
             print([track.id for track in self.tracks])
             print(scores)
             if frame == 528:
@@ -398,12 +398,12 @@ class Tracker:
                     print(box_iou(*[t.pos for t in self.tracks if t.id in [2, 0]]))
                 # nms here if tracks overlap
                 keep = nms(self.get_pos(), person_scores, self.regression_nms_thresh)
-                if frame == 526 or frame == 527 or frame == 528:
+                if frame == 526 or frame == 527 or frame == 528 or frame == 529:
                     print(keep)
                     print(box_iou(*[t.pos for t in self.tracks if t.id in [15, 25]]))
                 self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
 
-                if frame == 526 or frame == 527 or frame == 528:
+                if frame == 526 or frame == 527 or frame == 528 or frame == 529:
                     print([track.id for track in self.tracks])
 
                 for i, track in enumerate(self.tracks):
