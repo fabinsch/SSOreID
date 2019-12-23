@@ -6,9 +6,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 import cv2
+from torchvision.ops import box_iou
 
 from tracktor.training_set_generation import replicate_and_randomize_boxes
-from tracktor.visualization import plot_compare_bounding_boxes, VisdomLinePlotter, plot_bounding_boxes
+from tracktor.visualization import plot_compare_bounding_boxes, VisdomLinePlotter, plot_bounding_boxes, \
+    parse_ground_truth
 from tracktor.utils import clip_boxes
 from tracktor.utils import bbox_overlaps, warp_pos, get_center, get_height, get_width, make_pos
 
@@ -326,7 +328,7 @@ class Tracker:
                     self.motion_step(t)
 
 
-    def step(self, blob):
+    def step(self, blob, frame=1):
         """This function should be called every timestep to perform tracking with a blob
         containing the image information.
         """
@@ -397,7 +399,7 @@ class Tracker:
                     if i in keep:
                         track.frames_since_active += 1
                         if self.finetuning_config["finetune_repeatedly"]:
-                            if np.mod(track.frames_since_active, self.finetuning_config["finetuning_interval"])==0:
+                            if np.mod(track.frames_since_active, self.finetuning_config["finetuning_interval"]) == 0:
                                 track.finetune_detector(
                                     self.obj_detect.roi_heads.box_roi_pool,
                                     self.obj_detect.fpn_features,
@@ -413,16 +415,23 @@ class Tracker:
                                     box_pred_val, _ = self.obj_detect.predict_boxes(test_rois[:, 0:4],
                                                                                                   box_head=models[0],
                                                                                                   box_predictor=models[1])
-                                    plot_bounding_boxes(blob['img'][0].size()[1:3],
-                                        track.pos,
-                                        blob['img'][0],
-                                        box_pred_val,
-                                        i,
-                                        track.id,
-                                        validate=True)
+                                    # plot_bounding_boxes(blob['img'][0].size()[1:3],
+                                    #     track.pos,
+                                    #     blob['img'][0],
+                                    #     box_pred_val,
+                                    #     frame,
+                                    #     track.id,
+                                    #     validate=True)
+
+                                    annotated_boxes = parse_ground_truth(frame).type(torch.FloatTensor)
+                                    index_likely_bounding_box = np.argmax(box_iou(track.pos, annotated_boxes))
+
+                                    annotated_likely_ground_truth_bounding_box = annotated_boxes[index_likely_bounding_box, :]
+
                                     criterion_regressor = torch.nn.SmoothL1Loss()
+
                                     loss = criterion_regressor(box_pred_val,
-                                                     track.pos.repeat(128, 1))
+                                                     annotated_likely_ground_truth_bounding_box.repeat(128, 1))
                                     track.plotter.plot('loss', 'val {}'.format(checkpoint), 'Class Loss track {}'.format(i),
                                                        track.frames_since_active, loss.item())
 
@@ -576,7 +585,7 @@ class Track(object):
         if isinstance(fpn_features, torch.Tensor):
             fpn_features = OrderedDict([(0, fpn_features)])
 
-        if finetuning_config["validate"]:
+        if finetuning_config["validation_over_time"]:
             if not self.plotter:
                 self.plotter = VisdomLinePlotter()
             validation_boxes = self.generate_training_set(float(finetuning_config["max_displacement"]),

@@ -93,7 +93,7 @@ def main(tracktor, reid, _config, _log, _run):
         data_loader = DataLoader(seq, batch_size=1, shuffle=False)
         for i, frame in enumerate(tqdm(data_loader)):
             if len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
-                tracker.step(frame)
+                tracker.step(frame, i)
                 num_frames += 1
 
         results = tracker.get_results()
