@@ -400,7 +400,9 @@ class Tracker:
                 keep = nms(self.get_pos(), person_scores, self.regression_nms_thresh)
                 if frame == 526 or frame == 527 or frame == 528 or frame == 529:
                     print(keep)
-                    print(box_iou(*[t.pos for t in self.tracks if t.id in [15, 25]]))
+                    boxes = [t.pos for t in self.tracks if t.id in [15, 25]]
+                    if len(boxes) == 2:
+                        print(box_iou(*boxes))
                 self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
 
                 if frame == 526 or frame == 527 or frame == 528 or frame == 529:
