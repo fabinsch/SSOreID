@@ -88,7 +88,7 @@ tracktor:
       # Number of samples used for each iteration of validation
       batch_size_val: 32
       # Validate performance of finetuned bbox predictor on the consecutive frames
-      validation_over_time: True
+      validation_over_time: False
       # Validate every t mod k frames
       validation_interval: 5
       checkpoint_interval: 5
