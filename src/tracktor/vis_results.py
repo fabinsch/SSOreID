@@ -6,7 +6,7 @@ file_names = ["all_results_baseline", "results_1_0.15_128_1e-4_4", "results_2_0.
               "results_3_0.12_128_1e-4_4", "results_4_0.08_128_1e-4_4", "results_5_0.1_128_5e-5_4",
               "results_6_0.1_16_1e-4_4"]
 metrics_to_plot = ["idf1", "mota", "num_misses", "num_false_positives", "num_switches"]
-sequences = ["OVERALL", "MOT17-13-FRCNN"]
+sequences = ["OVERALL", "MOT17-04-FRCNN"]
 
 array = np.array([])
 res = pd.DataFrame()

@@ -387,6 +387,12 @@ class Tracker:
             # regress
             person_scores = self.regress_tracks(blob)
 
+            if frame == 525 or frame == 526 or frame == 527:
+                print([track.id for track in self.tracks])
+                print(person_scores)
+                if frame == 527:
+                    input("HI")
+
             if len(self.tracks):
                 # create nms input
 
