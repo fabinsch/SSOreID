@@ -400,6 +400,10 @@ class Tracker:
 
                 self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
 
+                if frame == 526 or frame == 527 or frame == 528:
+                    print([track.id for track in self.tracks])
+                    print(scores)
+
                 for i, track in enumerate(self.tracks):
                     if i in keep:
                         track.frames_since_active += 1
