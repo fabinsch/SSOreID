@@ -425,8 +425,10 @@ class Tracker:
                                         validate=True)
                                     print(track.pos)
                                     print(box_pred_val[0, :])
-                                    annotated_boxes = parse_ground_truth(frame)
+                                    annotated_boxes = parse_ground_truth(frame).type(torch.FloatTensor)
+                                    print(annotated_boxes)
                                     index_likely_bounding_box = np.argmax(box_iou(track.pos, annotated_boxes))
+
                                     annotated_ground_truth_bounding_box = annotated_boxes[index_likely_bounding_box, :]
                                     input(annotated_ground_truth_bounding_box)
 
