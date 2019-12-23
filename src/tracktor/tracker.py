@@ -121,7 +121,7 @@ class Tracker:
                 return False
         return True
 
-    def regress_tracks(self, blob, plot_compare=False):
+    def regress_tracks(self, blob, plot_compare=False, frame=None):
         """Regress the position of the tracks and also checks their scores."""
         if self.finetuning_config["enabled"]:
             scores = []
@@ -143,11 +143,16 @@ class Tracker:
                 pos.append(bbox)
             scores = torch.cat(scores)
             pos = torch.cat(pos)
-
         else:
             pos = self.get_pos()
             boxes, scores = self.obj_detect.predict_boxes(pos)
             pos = clip_boxes_to_image(boxes, blob['img'].shape[-2:])
+
+        if frame==526 or frame == 527 or frame == 528:
+            print([track.id for track in self.tracks])
+            print(scores)
+            if frame == 528:
+                input("HI")
 
         s = []
         for i in range(len(self.tracks) - 1, -1, -1):
@@ -385,13 +390,7 @@ class Tracker:
                 self.tracks = [t for t in self.tracks if t.has_positive_area()]
 
             # regress
-            person_scores = self.regress_tracks(blob)
-
-            if frame == 525 or frame == 526 or frame == 527:
-                print([track.id for track in self.tracks])
-                print(person_scores)
-                if frame == 527:
-                    input("HI")
+            person_scores = self.regress_tracks(blob, frame=frame)
 
             if len(self.tracks):
                 # create nms input
