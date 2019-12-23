@@ -423,21 +423,16 @@ class Tracker:
                                         frame,
                                         track.id,
                                         validate=True)
-                                    print(track.pos)
-                                    print(box_pred_val[0, :])
+
                                     annotated_boxes = parse_ground_truth(frame).type(torch.FloatTensor)
-                                    print(annotated_boxes)
                                     index_likely_bounding_box = np.argmax(box_iou(track.pos, annotated_boxes))
 
-                                    annotated_ground_truth_bounding_box = annotated_boxes[index_likely_bounding_box, :]
-                                    input(annotated_ground_truth_bounding_box)
-
-
+                                    annotated_likely_ground_truth_bounding_box = annotated_boxes[index_likely_bounding_box, :]
 
                                     criterion_regressor = torch.nn.SmoothL1Loss()
 
                                     loss = criterion_regressor(box_pred_val,
-                                                     track.pos.repeat(128, 1))
+                                                     annotated_likely_ground_truth_bounding_box.repeat(128, 1))
                                     track.plotter.plot('loss', 'val {}'.format(checkpoint), 'Class Loss track {}'.format(i),
                                                        track.frames_since_active, loss.item())
 

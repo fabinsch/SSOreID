@@ -81,8 +81,8 @@ def plot_bounding_boxes(im_info, gt_pos, image, proposals, iteration, id, valida
     for gt_bbox in parse_ground_truth(iteration)[:1]:
         ax.add_patch(
             plt.Rectangle((gt_bbox[0], gt_bbox[1]),
-                          gt_bbox[2],
-                          gt_bbox[3], fill=False,
+                          gt_bbox[2] - gt_bbox[0],
+                          gt_bbox[3] - gt_bbox[1], fill=False,
                           linewidth=0.9, color='white')
         )
 
@@ -97,12 +97,18 @@ def plot_bounding_boxes(im_info, gt_pos, image, proposals, iteration, id, valida
 def parse_ground_truth(frame,
                        file_path='/home/carolin/ADLCV/tracking_wo_bnw/data/MOT17/train/MOT17-09-FRCNN/gt/gt.txt'):
     dets = pd.read_csv(file_path, header=None, sep=',')
-    bounding_boxes = []
+    bounding_boxes_xywh = []
     for i, det in dets.iterrows():
         if int(det[0]) == frame:
-            bounding_boxes.append(np.array([det[2], det[3], det[4], det[5]]))
+            bounding_boxes_xywh.append(np.array([det[2], det[3], det[4], det[5]]))
 
-    bounding_boxes_xywh_torch = torch.tensor(np.array(bounding_boxes))
-    return bounding_boxes_xywh_torch
+    bounding_boxes_x1x2_torch = torch.tensor(transform_to_x1y1x2y2(np.array(bounding_boxes_xywh)))
+    return bounding_boxes_x1x2_torch
 
+
+def transform_to_x1y1x2y2(training_boxes_xywh):
+    training_boxes = training_boxes_xywh
+    training_boxes[:, 2] = training_boxes_xywh[:, 0] + training_boxes_xywh[:, 2]
+    training_boxes[:, 3] = training_boxes_xywh[:, 1] + training_boxes_xywh[:, 3]
+    return training_boxes
 
