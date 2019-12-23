@@ -396,7 +396,6 @@ class Tracker:
                 self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
 
                 for i, track in enumerate(self.tracks):
-                    print("Track {}: {}".format(i, track.plotter))
                     if i in keep:
                         track.frames_since_active += 1
                         if self.finetuning_config["finetune_repeatedly"]:
@@ -416,13 +415,13 @@ class Tracker:
                                     box_pred_val, _ = self.obj_detect.predict_boxes(test_rois[:, 0:4],
                                                                                                   box_head=models[0],
                                                                                                   box_predictor=models[1])
-                                    plot_bounding_boxes(blob['img'][0].size()[1:3],
-                                        track.pos,
-                                        blob['img'][0],
-                                        box_pred_val,
-                                        frame,
-                                        track.id,
-                                        validate=True)
+                                    # plot_bounding_boxes(blob['img'][0].size()[1:3],
+                                    #     track.pos,
+                                    #     blob['img'][0],
+                                    #     box_pred_val,
+                                    #     frame,
+                                    #     track.id,
+                                    #     validate=True)
 
                                     annotated_boxes = parse_ground_truth(frame).type(torch.FloatTensor)
                                     index_likely_bounding_box = np.argmax(box_iou(track.pos, annotated_boxes))
