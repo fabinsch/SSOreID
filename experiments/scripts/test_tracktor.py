@@ -21,7 +21,28 @@ from tracktor.oracle_tracker import OracleTracker
 from tracktor.tracker import Tracker
 from tracktor.reid.resnet import resnet50
 from tracktor.utils import interpolate, plot_sequence, get_mot_accum, evaluate_mot_accums
+##################################################
 
+
+
+
+
+
+
+# Deprecated please use hp_search_finetune_tracktor.py
+
+
+
+
+
+
+
+
+
+
+
+
+#########################################################
 ex = Experiment()
 
 ex.add_config('experiments/cfgs/tracktor.yaml')
