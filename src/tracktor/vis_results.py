@@ -10,15 +10,18 @@ sequences = ["OVERALL", "MOT17-04-FRCNN"]
 
 array = np.array([])
 res = pd.DataFrame()
-
 for f in file_names:
     df = pd.read_pickle("../../output/finetuning_results/{}.pkl".format(f))
     #for sequence in sequences:
     res = res.append(df.loc[sequences, metrics_to_plot])
 
-for seq in sequences:
+index_baseline = 0
+
+for seq_index, seq in enumerate(sequences):
     for i, column_name in enumerate(res.keys()):
-        plt.subplot(2, 3, i+1)
-        plt.title("{}#{}".format(seq, column_name))
-        plt.plot(file_names, res.loc[seq, column_name], marker='o', markerfacecolor="yellow", markersize=6, color='skyblue', linewidth=4)
+        plt.subplot(3, 2, i + 1)
+        print(res.loc[seq, column_name])
+        plt.title("{}#{}".format(seq[6:8] if "MOT" in seq else seq, column_name))
+        plt.plot(list(range(1, len(file_names))), res.loc[seq, column_name][1:], marker='o', markerfacecolor="yellow", markersize=6, color='skyblue', linewidth=4)
+        plt.axhline(y=res.loc[seq, column_name].iloc[index_baseline], color='r', linestyle='-')
     plt.show()
