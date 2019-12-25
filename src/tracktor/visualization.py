@@ -77,14 +77,14 @@ def plot_bounding_boxes(im_info, gt_pos, image, proposals, iteration, id, valida
                       gt_pos_np[0, 3] - gt_pos_np[0, 1], fill=False,
                       linewidth=0.2, color='salmon')
     )
-
+    """
     for gt_bbox in parse_ground_truth(iteration)[:1]:
         ax.add_patch(
             plt.Rectangle((gt_bbox[0], gt_bbox[1]),
                           gt_bbox[2] - gt_bbox[0],
                           gt_bbox[3] - gt_bbox[1], fill=False,
                           linewidth=0.9, color='white')
-        )
+        )"""
 
     plt.axis('off')
     if not validate:
@@ -93,10 +93,8 @@ def plot_bounding_boxes(im_info, gt_pos, image, proposals, iteration, id, valida
     else:
         plt.savefig('./training_set/training_progress_{}_{}.png'.format(id, iteration), dpi=800, bbox_inches='tight')
 
-
-def parse_ground_truth(frame,
-                       file_path='/home/carolin/ADLCV/tracking_wo_bnw/data/MOT17/train/MOT17-09-FRCNN/gt/gt.txt'):
-    dets = pd.read_csv(file_path, header=None, sep=',')
+# TODO change file path!!
+def parse_ground_truth(frame, dets):
     bounding_boxes_xywh = []
     for i, det in dets.iterrows():
         if int(det[0]) == frame:
