@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 import cv2
 from torchvision.ops import box_iou
+import pandas as pd
 
 from tracktor.training_set_generation import replicate_and_randomize_boxes
 from tracktor.visualization import plot_compare_bounding_boxes, VisdomLinePlotter, plot_bounding_boxes, \
@@ -52,6 +53,9 @@ class Tracker:
         if self.finetuning_config["enabled"]:
             self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
             self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
+        if self.finetuning_config["validation_over_time"]:
+            # TODO make loading dependent on the sequence being currently evaluated and reset ground truth after end of sequence
+            self.ground_truth = pd.read_csv('/home/azmkuu/Desktop/tracking_wo_bnw/data/MOT17Labels/train/MOT17-04-FRCNN/gt/gt.txt', header=None, sep=',')
 
         self.tracks = []
         self.inactive_tracks = []
@@ -84,13 +88,8 @@ class Tracker:
                           image.size()[1:3], self.obj_detect.image_size)
 
             if self.finetuning_config["enabled"]:
-                box_head_copy = TwoMLPHead(self.obj_detect.backbone.out_channels *
-                                           self.obj_detect.roi_heads.box_roi_pool.output_size[0] ** 2,
-                                           representation_size=1024).to(device)
-                box_predictor_copy = FastRCNNPredictor(1024, 2).to(device)
-
-                box_head_copy.load_state_dict(self.bbox_head_weights)
-                box_predictor_copy.load_state_dict(self.bbox_predictor_weights)
+                box_head_copy = self.get_box_head()
+                box_predictor_copy = self.get_box_predictor()
 
                 track.finetune_detector(self.obj_detect.roi_heads.box_roi_pool,
                                         self.obj_detect.fpn_features,
@@ -98,19 +97,25 @@ class Tracker:
                                         self.obj_detect.roi_heads.box_coder.decode,
                                         image,
                                         self.finetuning_config,
-                                        box_head=box_head_copy,
-                                        box_predictor=box_predictor_copy,
+                                        box_head_copy,
+                                        box_predictor_copy,
                                         plot=False)
             self.tracks.append(track)
 
         self.track_num += num_new
 
-    #@staticmethod
-    #def compare_weights(m1, m2):
-    #    for p1, p2 in zip(m1.parameters(), m2.parameters()):
-    #        if p1.data.ne(p2.data).sum() > 0:
-     #           return False
-     #   return True
+    def get_box_predictor(self):
+        box_predictor = FastRCNNPredictor(1024, 2).to(device)
+        box_predictor.load_state_dict(self.bbox_predictor_weights)
+        return box_predictor
+
+    def get_box_head(self):
+        box_head =  TwoMLPHead(self.obj_detect.backbone.out_channels *
+                                   self.obj_detect.roi_heads.box_roi_pool.output_size[0] ** 2,
+                                   representation_size=1024).to(device)
+        box_head.load_state_dict(self.bbox_head_weights)
+        return box_head
+
     @staticmethod
     def compare_models(m1, m2):
         models_differ = 0
@@ -394,18 +399,25 @@ class Tracker:
 
                 self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
 
+                if self.finetuning_config["validation_over_time"]:
+                    annotated_boxes = parse_ground_truth(frame, self.ground_truth).type(torch.FloatTensor)
+
                 for i, track in enumerate(self.tracks):
                     if i in keep:
                         track.frames_since_active += 1
                         if self.finetuning_config["finetune_repeatedly"]:
                             if np.mod(track.frames_since_active, self.finetuning_config["finetuning_interval"]) == 0:
+                                box_head_copy = self.get_box_head()
+                                box_predictor_copy = self.get_box_predictor()
                                 track.finetune_detector(
                                     self.obj_detect.roi_heads.box_roi_pool,
                                     self.obj_detect.fpn_features,
                                     track.pos.squeeze(0),
                                     self.obj_detect.roi_heads.box_coder.decode,
                                     blob['img'][0],
-                                    self.finetuning_config
+                                    self.finetuning_config,
+                                    box_head_copy,
+                                    box_predictor_copy
                                 )
                         if self.finetuning_config["validation_over_time"]:
                             if np.mod(track.frames_since_active, self.finetuning_config["validation_interval"]) == 0:
@@ -414,17 +426,7 @@ class Tracker:
                                     box_pred_val, _ = self.obj_detect.predict_boxes(test_rois[:, 0:4],
                                                                                                   box_head=models[0],
                                                                                                   box_predictor=models[1])
-                                    # plot_bounding_boxes(blob['img'][0].size()[1:3],
-                                    #     track.pos,
-                                    #     blob['img'][0],
-                                    #     box_pred_val,
-                                    #     frame,
-                                    #     track.id,
-                                    #     validate=True)
-
-                                    annotated_boxes = parse_ground_truth(frame).type(torch.FloatTensor)
                                     index_likely_bounding_box = np.argmax(box_iou(track.pos, annotated_boxes))
-
                                     annotated_likely_ground_truth_bounding_box = annotated_boxes[index_likely_bounding_box, :]
 
                                     criterion_regressor = torch.nn.SmoothL1Loss()
@@ -567,24 +569,20 @@ class Track(object):
         return training_boxes
 
     def finetune_detector(self, box_roi_pool, fpn_features, gt_box, bbox_pred_decoder, image,
-                          finetuning_config, box_head=None, box_predictor=None, plot=False):
-        if box_head is not None:
-            self.box_head = box_head
-
-        if box_predictor is not None:
-            self.box_predictor = box_predictor
+                          finetuning_config, box_head, box_predictor, plot=False):
+        self.box_head = box_head
+        self.box_predictor = box_predictor
 
         self.box_predictor.train()
         self.box_head.train()
         optimizer = torch.optim.Adam(list(self.box_predictor.parameters()),
-                                     lr=float(finetuning_config["learning_rate"]) if box_head is not None
-                                     else float(finetuning_config["finetuning_interval_learning_rate"]))
+                                     lr=float(finetuning_config["learning_rate"]))
         criterion = torch.nn.SmoothL1Loss()
 
         if isinstance(fpn_features, torch.Tensor):
             fpn_features = OrderedDict([(0, fpn_features)])
 
-        if finetuning_config["validation_over_time"]:
+        if finetuning_config["validate"]:
             if not self.plotter:
                 self.plotter = VisdomLinePlotter()
             validation_boxes = self.generate_training_set(float(finetuning_config["max_displacement"]),
@@ -602,6 +600,9 @@ class Track(object):
         for i in range(int(finetuning_config["iterations"])):
 
             if finetuning_config["validation_over_time"]:
+                if not self.plotter:
+                    self.plotter = VisdomLinePlotter()
+                    print("Making Plotter")
                 if np.mod(i+1, finetuning_config["checkpoint_interval"]) == 0:
                     self.checkpoints[i+1] = [box_head, box_predictor]
 

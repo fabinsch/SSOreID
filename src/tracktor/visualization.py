@@ -93,7 +93,6 @@ def plot_bounding_boxes(im_info, gt_pos, image, proposals, iteration, id, valida
     else:
         plt.savefig('./training_set/training_progress_{}_{}.png'.format(id, iteration), dpi=800, bbox_inches='tight')
 
-# TODO change file path!!
 def parse_ground_truth(frame, dets):
     bounding_boxes_xywh = []
     for i, det in dets.iterrows():
