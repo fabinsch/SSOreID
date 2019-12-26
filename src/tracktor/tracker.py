@@ -2,11 +2,9 @@ from collections import deque, OrderedDict
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 import cv2
-from torchvision.ops import box_iou
 import pandas as pd
 
 from tracktor.training_set_generation import replicate_and_randomize_boxes
@@ -20,7 +18,6 @@ from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHe
 from torchvision.models.detection.transform import resize_boxes
 
 import matplotlib
-import matplotlib.pyplot as plt
 if not torch.cuda.is_available():
     matplotlib.use('TkAgg')
 
@@ -118,7 +115,6 @@ class Tracker:
 
     @staticmethod
     def compare_models(m1, m2):
-        models_differ = 0
         for key_item_1, key_item_2 in zip(m1.state_dict().items(), m2.state_dict().items()):
             if torch.equal(key_item_1[1], key_item_2[1]):
                 continue
@@ -375,9 +371,6 @@ class Tracker:
         # Predict tracks #
         ##################
 
-        num_tracks = 0
-        nms_inp_reg = torch.zeros(0).to(device)
-
         if len(self.tracks):
             # align
             if self.do_align:
@@ -409,6 +402,7 @@ class Tracker:
                             if np.mod(track.frames_since_active, self.finetuning_config["finetuning_interval"]) == 0:
                                 box_head_copy = self.get_box_head()
                                 box_predictor_copy = self.get_box_predictor()
+
                                 track.finetune_detector(
                                     self.obj_detect.roi_heads.box_roi_pool,
                                     self.obj_detect.fpn_features,
