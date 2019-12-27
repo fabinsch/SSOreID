@@ -71,34 +71,38 @@ def main(tracktor, reid, _config, _log, _run):
     # object detection
     _log.info("Initializing object detector.")
 
-    obj_detect = FRCNN_FPN(num_classes=2)
-    obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
-                               map_location=lambda storage, loc: storage))
-
-    obj_detect.eval()
-    if torch.cuda.is_available():
-        obj_detect.cuda()
-
     # reid
     reid_network = resnet50(pretrained=False, **reid['cnn'])
     reid_network.load_state_dict(torch.load(tracktor['reid_weights'],
-                                 map_location=lambda storage, loc: storage))
+                                            map_location=lambda storage, loc: storage))
     reid_network.eval()
     if torch.cuda.is_available():
         reid_network.cuda()
-
-    # tracktor
-    if 'oracle' in tracktor:
-        tracker = OracleTracker(obj_detect, reid_network, tracktor['tracker'], tracktor['oracle'])
-    else:
-        tracker = Tracker(obj_detect, reid_network, tracktor['tracker'])
 
     time_total = 0
     num_frames = 0
     mot_accums = []
     dataset = Datasets(tracktor['dataset'])
+
     for seq in dataset:
-        tracker.reset()
+
+        if not "04" in str(seq) or not "02" in str(seq):
+            print("Skipping")
+            continue
+
+        obj_detect = FRCNN_FPN(num_classes=2)
+        obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
+                                              map_location=lambda storage, loc: storage))
+
+        obj_detect.eval()
+        if torch.cuda.is_available():
+            obj_detect.cuda()
+
+        # tracktor
+        if 'oracle' in tracktor:
+            tracker = OracleTracker(obj_detect, reid_network, tracktor['tracker'], tracktor['oracle'])
+        else:
+            tracker = Tracker(obj_detect, reid_network, tracktor['tracker'])
 
         start = time.time()
 
@@ -137,7 +141,7 @@ def main(tracktor, reid, _config, _log, _run):
               f"{time_total:.1f} s ({num_frames / time_total:.1f} Hz)")
 
     if mot_accums:
-        summary = evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt], generate_overall=True)
+        summary = evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt and "04" in str(s) or "02" in str(s)], generate_overall=True)
         summary.to_pickle("output/finetuning_results/results_{}_{}_{}_{}_{}.pkl".format(tracktor['output_subdir'],
                                                                                            tracktor['tracker']['finetuning']['max_displacement'],
                                                                                            tracktor['tracker']['finetuning']['batch_size'],
