@@ -71,13 +71,13 @@ def main(tracktor, reid, _config, _log, _run):
     # object detection
     _log.info("Initializing object detector.")
 
-    # reid
-    reid_network = resnet50(pretrained=False, **reid['cnn'])
-    reid_network.load_state_dict(torch.load(tracktor['reid_weights'],
-                                            map_location=lambda storage, loc: storage))
-    reid_network.eval()
+    obj_detect = FRCNN_FPN(num_classes=2)
+    obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
+                                          map_location=lambda storage, loc: storage))
+
+    obj_detect.eval()
     if torch.cuda.is_available():
-        reid_network.cuda()
+        obj_detect.cuda()
 
     time_total = 0
     num_frames = 0
@@ -85,18 +85,17 @@ def main(tracktor, reid, _config, _log, _run):
     dataset = Datasets(tracktor['dataset'])
 
     for seq in dataset:
-        print("04" in str(seq))
         if not "04" in str(seq) and not "02" in str(seq):
             print("Skipping")
             continue
 
-        obj_detect = FRCNN_FPN(num_classes=2)
-        obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
-                                              map_location=lambda storage, loc: storage))
-
-        obj_detect.eval()
+        # reid
+        reid_network = resnet50(pretrained=False, **reid['cnn'])
+        reid_network.load_state_dict(torch.load(tracktor['reid_weights'],
+                                                map_location=lambda storage, loc: storage))
+        reid_network.eval()
         if torch.cuda.is_available():
-            obj_detect.cuda()
+            reid_network.cuda()
 
         # tracktor
         if 'oracle' in tracktor:
