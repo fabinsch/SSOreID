@@ -71,14 +71,6 @@ def main(tracktor, reid, _config, _log, _run):
     # object detection
     _log.info("Initializing object detector.")
 
-    obj_detect = FRCNN_FPN(num_classes=2)
-    obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
-                                          map_location=lambda storage, loc: storage))
-
-    obj_detect.eval()
-    if torch.cuda.is_available():
-        obj_detect.cuda()
-
     time_total = 0
     num_frames = 0
     mot_accums = []
@@ -88,6 +80,14 @@ def main(tracktor, reid, _config, _log, _run):
         if not "04" in str(seq) and not "02" in str(seq):
             print("Skipping")
             continue
+
+        obj_detect = FRCNN_FPN(num_classes=2)
+        obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
+                                              map_location=lambda storage, loc: storage))
+
+        obj_detect.eval()
+        if torch.cuda.is_available():
+            obj_detect.cuda()
 
         # reid
         reid_network = resnet50(pretrained=False, **reid['cnn'])
@@ -109,6 +109,8 @@ def main(tracktor, reid, _config, _log, _run):
 
         data_loader = DataLoader(seq, batch_size=1, shuffle=False)
         for i, frame in enumerate(tqdm(data_loader)):
+            if i > 100:
+                break
             if len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
                 tracker.step(frame, i)
                 num_frames += 1
