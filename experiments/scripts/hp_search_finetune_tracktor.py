@@ -85,8 +85,8 @@ def main(tracktor, reid, _config, _log, _run):
     dataset = Datasets(tracktor['dataset'])
 
     for seq in dataset:
-
-        if not "04" in str(seq) or not "02" in str(seq):
+        print("04" in str(seq))
+        if not "04" in str(seq) and not "02" in str(seq):
             print("Skipping")
             continue
 
