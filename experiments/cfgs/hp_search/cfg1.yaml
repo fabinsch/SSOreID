@@ -4,6 +4,7 @@ tracktor:
     'finetuning':
       'enabled': True
       'iterations': 6
-      'learning_rate': 5e-4
-      max_displacement: 0.12
+      'learning_rate': 5e-5
+      max_displacement: 0
+      'validation_over_time': False
   'output_subdir': '1'
