@@ -52,7 +52,8 @@ class Tracker:
             self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
         if self.finetuning_config["validation_over_time"]:
             # TODO make loading dependent on the sequence being currently evaluated and reset ground truth after end of sequence
-            self.ground_truth = pd.read_csv('/home/azmkuu/Desktop/tracking_wo_bnw/data/MOT17Labels/train/MOT17-04-FRCNN/gt/gt.txt', header=None, sep=',')
+            self.ground_truth = pd.read_csv('./data/MOT17Labels/train/MOT17-04-FRCNN/gt/gt.txt', header=None, sep=',')
+            #self.ground_truth = pd.read_csv('/home/azmkuu/Desktop/tracking_wo_bnw/data/MOT17Labels/train/MOT17-04-FRCNN/gt/gt.txt', header=None, sep=',')
 
         self.tracks = []
         self.inactive_tracks = []
@@ -556,7 +557,8 @@ class Track(object):
     def finetune_detector(self, box_roi_pool, fpn_features, gt_box, bbox_pred_decoder, image,
                           finetuning_config, box_head, box_predictor, plot=False):
         self.box_head = box_head
-        self.box_predictor = box_predictor
+        self.box_predictor = FastRCNNPredictor(1024, 2).to(device)
+        self.box_predictor.load_state_dict(box_predictor.state_dict())
 
         self.box_predictor.train()
         self.box_head.train()
@@ -589,7 +591,10 @@ class Track(object):
                     self.plotter = VisdomLinePlotter()
                     print("Making Plotter")
                 if np.mod(i+1, finetuning_config["checkpoint_interval"]) == 0:
-                    self.checkpoints[i+1] = [box_head, box_predictor]
+                    self.box_predictor.eval()
+                    self.checkpoints[i+1] = [box_head, self.box_predictor]
+                    #input('Checkpoints are the same: {} {}'.format(i+1, Tracker.compare_weights(self.box_predictor, self.checkpoints[0][1])))
+                    self.box_predictor.train()
 
             optimizer.zero_grad()
             training_boxes = self.generate_training_set(float(finetuning_config["max_displacement"]),
@@ -630,9 +635,10 @@ class Track(object):
                 plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
 
             loss = criterion(pred_boxes, scaled_gt_box.repeat(int(finetuning_config["batch_size"]), 1))
+            print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
+
             loss.backward()
             optimizer.step()
-            print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
 
         self.box_predictor.eval()
         self.box_head.eval()
