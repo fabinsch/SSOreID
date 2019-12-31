@@ -6,5 +6,5 @@ tracktor:
       'iterations': 6
       'learning_rate': 5e-5
       max_displacement: 0
-      'validation_over_time': False
+      'validation_over_time': True
   'output_subdir': '1'
