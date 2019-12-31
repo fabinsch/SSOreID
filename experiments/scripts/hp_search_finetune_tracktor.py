@@ -45,6 +45,16 @@ ex.add_config(ex.configurations[0]._conf['tracktor']['reid_config'])
 ex.add_named_config('oracle', 'experiments/cfgs/oracle_tracktor.yaml')
 
 
+def compare_models(m1, m2):
+    for key_item_1, key_item_2 in zip(m1.state_dict().items(), m2.state_dict().items()):
+        if torch.equal(key_item_1[1], key_item_2[1]):
+            continue
+        else:
+            return False
+    return True
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 @ex.automain
 def main(tracktor, reid, _config, _log, _run):
 
@@ -71,6 +81,34 @@ def main(tracktor, reid, _config, _log, _run):
     # object detection
     _log.info("Initializing object detector.")
 
+    obj_detect = FRCNN_FPN(num_classes=2).to(device)
+    obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
+                                          map_location=lambda storage, loc: storage))
+
+    obj_detect.eval()
+
+    #obj_detect_copy = FRCNN_FPN(num_classes=2)
+    #obj_detect_copy.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
+    #                                map_location=lambda storage, loc: storage))
+    #obj_detect_copy.eval()
+
+    # reid
+    reid_network = resnet50(pretrained=False, **reid['cnn']).to(device)
+    reid_network.load_state_dict(torch.load(tracktor['reid_weights'],
+                                            map_location=lambda storage, loc: storage))
+    reid_network.eval()
+
+    #reid_network_copy = resnet50(pretrained=False, **reid['cnn'])
+    #reid_network_copy.load_state_dict(torch.load(tracktor['reid_weights'],
+    #                                        map_location=lambda storage, loc: storage))
+    #reid_network_copy.eval()
+
+    # tracktor
+    if 'oracle' in tracktor:
+        tracker = OracleTracker(obj_detect, reid_network, tracktor['tracker'], tracktor['oracle'])
+    else:
+        tracker = Tracker(obj_detect, reid_network, tracktor['tracker'])
+
     time_total = 0
     num_frames = 0
     mot_accums = []
@@ -81,27 +119,10 @@ def main(tracktor, reid, _config, _log, _run):
             print("Skipping")
             continue
 
-        obj_detect = FRCNN_FPN(num_classes=2)
-        obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
-                                              map_location=lambda storage, loc: storage))
+        #print("Reid network not changed? {}".format(compare_models(reid_network, tracker.reid_ne04twork)))
+        #print("Object detection network not changed? {}".format(compare_models(obj_detect_copy, tracker.obj_detect)))
 
-        obj_detect.eval()
-        if torch.cuda.is_available():
-            obj_detect.cuda()
-
-        # reid
-        reid_network = resnet50(pretrained=False, **reid['cnn'])
-        reid_network.load_state_dict(torch.load(tracktor['reid_weights'],
-                                                map_location=lambda storage, loc: storage))
-        reid_network.eval()
-        if torch.cuda.is_available():
-            reid_network.cuda()
-
-        # tracktor
-        if 'oracle' in tracktor:
-            tracker = OracleTracker(obj_detect, reid_network, tracktor['tracker'], tracktor['oracle'])
-        else:
-            tracker = Tracker(obj_detect, reid_network, tracktor['tracker'])
+        tracker.reset()
 
         start = time.time()
 
@@ -109,8 +130,6 @@ def main(tracktor, reid, _config, _log, _run):
 
         data_loader = DataLoader(seq, batch_size=1, shuffle=False)
         for i, frame in enumerate(tqdm(data_loader)):
-            if i > 100:
-                break
             if len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
                 tracker.step(frame, i)
                 num_frames += 1
@@ -132,7 +151,7 @@ def main(tracktor, reid, _config, _log, _run):
 
         _log.info(f"Writing predictions to: {output_dir}")
 
-        seq.write_results(results, output_dir)
+        #seq.write_results(results, output_dir)
 
 
         if tracktor['write_images']:
