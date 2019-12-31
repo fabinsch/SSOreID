@@ -113,15 +113,6 @@ class Tracker:
         box_head.load_state_dict(self.bbox_head_weights)
         return box_head
 
-    @staticmethod
-    def compare_models(m1, m2):
-        for key_item_1, key_item_2 in zip(m1.state_dict().items(), m2.state_dict().items()):
-            if torch.equal(key_item_1[1], key_item_2[1]):
-                continue
-            else:
-                return False
-        return True
-
     def regress_tracks(self, blob, plot_compare=False, frame=None):
         """Regress the position of the tracks and also checks their scores."""
         if self.finetuning_config["enabled"]:
