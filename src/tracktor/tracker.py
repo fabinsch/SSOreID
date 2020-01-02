@@ -18,8 +18,8 @@ from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHe
 from torchvision.models.detection.transform import resize_boxes
 
 import matplotlib
-if not torch.cuda.is_available():
-    matplotlib.use('TkAgg')
+#if not torch.cuda.is_available():
+#    matplotlib.use('TkAgg')
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
