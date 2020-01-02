@@ -119,52 +119,52 @@ def main(tracktor, reid, _config, _log, _run):
             print("Skipping")
             continue
 
-        #print("Reid network not changed? {}".format(compare_models(reid_network, tracker.reid_ne04twork)))
-        #print("Object detection network not changed? {}".format(compare_models(obj_detect_copy, tracker.obj_detect)))
+         #print("Reid network not changed? {}".format(compare_models(reid_network, tracker.reid_ne04twork)))
+         #print("Object detection network not changed? {}".format(compare_models(obj_detect_copy, tracker.obj_detect)))
 
-        tracker.reset()
+         tracker.reset()
 
-        start = time.time()
+         start = time.time()
 
-        _log.info(f"Tracking: {seq}")
+         _log.info(f"Tracking: {seq}")
 
-        data_loader = DataLoader(seq, batch_size=1, shuffle=False)
-        for i, frame in enumerate(tqdm(data_loader)):
-            if len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
-                tracker.step(frame, i)
-                num_frames += 1
+         data_loader = DataLoader(seq, batch_size=1, shuffle=False)
+         for i, frame in enumerate(tqdm(data_loader)):
+             if len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
+                 tracker.step(frame, i)
+                 num_frames += 1
 
-        results = tracker.get_results()
+         results = tracker.get_results()
 
-        time_total += time.time() - start
+         time_total += time.time() - start
 
-        _log.info(f"Tracks found: {len(results)}")
-        _log.info(f"Runtime for {seq}: {time.time() - start :.1f} s.")
+         _log.info(f"Tracks found: {len(results)}")
+         _log.info(f"Runtime for {seq}: {time.time() - start :.1f} s.")
 
-        if tracktor['interpolate']:
-            results = interpolate(results)
+         if tracktor['interpolate']:
+             results = interpolate(results)
 
-        if seq.no_gt:
-            _log.info(f"No GT data for evaluation available.")
-        else:
-            mot_accums.append(get_mot_accum(results, seq))
+         if seq.no_gt:
+             _log.info(f"No GT data for evaluation available.")
+         else:
+             mot_accums.append(get_mot_accum(results, seq))
 
-        _log.info(f"Writing predictions to: {output_dir}")
+         _log.info(f"Writing predictions to: {output_dir}")
 
-        #seq.write_results(results, output_dir)
+         #seq.write_results(results, output_dir)
 
 
-        if tracktor['write_images']:
-            plot_sequence(results, seq, osp.join(output_dir, tracktor['dataset'], str(seq)))
+         if tracktor['write_images']:
+             plot_sequence(results, seq, osp.join(output_dir, tracktor['dataset'], str(seq)))
 
     _log.info(f"Tracking runtime for all sequences (without evaluation or image writing): "
-              f"{time_total:.1f} s ({num_frames / time_total:.1f} Hz)")
+               f"{time_total:.1f} s ({num_frames / time_total:.1f} Hz)")
 
     if mot_accums:
         summary = evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt and "04" in str(s) or "02" in str(s)], generate_overall=True)
         summary.to_pickle("output/finetuning_results/results_{}_{}_{}_{}_{}.pkl".format(tracktor['output_subdir'],
                                                                                            tracktor['tracker']['finetuning']['max_displacement'],
-                                                                                           tracktor['tracker']['finetuning']['batch_size'],
-                                                                                           tracktor['tracker']['finetuning']['learning_rate'],
-                                                                                           tracktor['tracker']['finetuning']['iterations']))
+                                                                                            tracktor['tracker']['finetuning']['batch_size'],
+                                                                                            tracktor['tracker']['finetuning']['learning_rate'],
+                                                                                            tracktor['tracker']['finetuning']['iterations']))
 

@@ -1,5 +1,5 @@
 tracktor:
-  dataset: mot17_04_FRCNN17
+  dataset: mot17_train_FRCNN17
   'tracker':
     'finetuning':
       'enabled': True
