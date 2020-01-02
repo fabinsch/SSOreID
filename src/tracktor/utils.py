@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 import motmetrics as mm
 
-matplotlib.use('Agg')
+#matplotlib.use('Agg')
 
 # https://matplotlib.org/cycler/
 # get all colors with
