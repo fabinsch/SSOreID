@@ -115,9 +115,9 @@ def main(tracktor, reid, _config, _log, _run):
     dataset = Datasets(tracktor['dataset'])
 
     for seq in dataset:
-        # if not "04" in str(seq) and not "02" in str(seq):
-        #     print("Skipping")
-        #     continue
+         if not "04" in str(seq) and not "02" in str(seq):
+             print("Skipping")
+             continue
 
         #print("Reid network not changed? {}".format(compare_models(reid_network, tracker.reid_ne04twork)))
         #print("Object detection network not changed? {}".format(compare_models(obj_detect_copy, tracker.obj_detect)))
