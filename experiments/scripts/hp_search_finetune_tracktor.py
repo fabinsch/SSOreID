@@ -115,9 +115,9 @@ def main(tracktor, reid, _config, _log, _run):
     dataset = Datasets(tracktor['dataset'])
 
     for seq in dataset:
-         if not "04" in str(seq) and not "02" in str(seq):
-            print("Skipping")
-            continue
+         #if not "04" in str(seq) and not "02" in str(seq):
+         #   print("Skipping")
+         #   continue
 
          #print("Reid network not changed? {}".format(compare_models(reid_network, tracker.reid_ne04twork)))
          #print("Object detection network not changed? {}".format(compare_models(obj_detect_copy, tracker.obj_detect)))
@@ -161,7 +161,8 @@ def main(tracktor, reid, _config, _log, _run):
                f"{time_total:.1f} s ({num_frames / time_total:.1f} Hz)")
 
     if mot_accums:
-        summary = evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt and "04" in str(s) or "02" in str(s)], generate_overall=True)
+        summary = evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt], generate_overall=True)
+        #summary = evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt and "04" in str(s) or "02" in str(s)], generate_overall=True)
         summary.to_pickle("output/finetuning_results/results_{}_{}_{}_{}_{}.pkl".format(tracktor['output_subdir'],
                                                                                            tracktor['tracker']['finetuning']['max_displacement'],
                                                                                             tracktor['tracker']['finetuning']['batch_size'],
