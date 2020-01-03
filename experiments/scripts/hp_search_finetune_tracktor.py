@@ -26,16 +26,9 @@ ex = Experiment()
 
 ex.add_config('experiments/cfgs/tracktor.yaml')
 ex.add_named_config('cfg1', 'experiments/cfgs/hp_search/cfg1.yaml')
-ex.add_named_config('cfg2', 'experiments/cfgs/hp_search/cfg2.yaml')
-ex.add_named_config('cfg3', 'experiments/cfgs/hp_search/cfg3.yaml')
-ex.add_named_config('cfg4', 'experiments/cfgs/hp_search/cfg4.yaml')
-ex.add_named_config('cfg5', 'experiments/cfgs/hp_search/cfg5.yaml')
-ex.add_named_config('cfg6', 'experiments/cfgs/hp_search/cfg6.yaml')
-ex.add_named_config('cfg7', 'experiments/cfgs/hp_search/cfg7.yaml')
-ex.add_named_config('cfg8', 'experiments/cfgs/hp_search/cfg8.yaml')
-ex.add_named_config('cfg9', 'experiments/cfgs/hp_search/cfg9.yaml')
-ex.add_named_config('cfg10', 'experiments/cfgs/hp_search/cfg10.yaml')
-ex.add_named_config('cfg11', 'experiments/cfgs/hp_search/cfg11.yaml')
+ex.add_named_config('cfg_caro_ws', 'experiments/cfgs/hp_search/cfg_caro_ws.yaml')
+ex.add_named_config('cfg_caro_local', 'experiments/cfgs/hp_search/cfg_caro_local.yaml')
+
 
 ########### DEFAULT################
 

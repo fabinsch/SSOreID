@@ -1,0 +1,12 @@
+tracktor:
+  dataset: mot17_train_FRCNN17
+  'tracker':
+    'finetuning':
+      'enabled': True
+      'iterations': 6
+      'learning_rate': 1e-5
+      'max_displacement': 0.0
+      'validation_over_time': True
+      'batch_size': 128
+  'output_subdir': 'caro_local'
+#
