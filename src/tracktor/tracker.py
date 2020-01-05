@@ -558,8 +558,7 @@ class Track(object):
     def finetune_detector(self, box_roi_pool, fpn_features, gt_box, bbox_pred_decoder, image,
                           finetuning_config, box_head, box_predictor, plot=False):
         self.box_head = box_head
-        self.box_predictor = FastRCNNPredictor(1024, 2).to(device)
-        self.box_predictor.load_state_dict(box_predictor.state_dict())
+        self.box_predictor = box_predictor
 
         self.box_predictor.train()
         self.box_head.train()
@@ -583,7 +582,10 @@ class Track(object):
             roi_pool_feat_val = box_roi_pool(fpn_features, proposals_val, self.im_info)
             plotter = VisdomLinePlotter()
 
-        self.checkpoints[0] = [box_head, box_predictor]
+        save_state_box_predictor = FastRCNNPredictor(1024, 2).to(device)
+        save_state_box_predictor.load_state_dict(self.box_predictor.state_dict())
+
+        self.checkpoints[0] = [box_head, save_state_box_predictor]
 
         for i in range(int(finetuning_config["iterations"])):
 
@@ -593,7 +595,9 @@ class Track(object):
                     print("Making Plotter")
                 if np.mod(i+1, finetuning_config["checkpoint_interval"]) == 0:
                     self.box_predictor.eval()
-                    self.checkpoints[i+1] = [box_head, self.box_predictor]
+                    save_state_box_predictor = FastRCNNPredictor(1024, 2).to(device)
+                    save_state_box_predictor.load_state_dict(self.box_predictor.state_dict())
+                    self.checkpoints[i+1] = [box_head, save_state_box_predictor]
                     #input('Checkpoints are the same: {} {}'.format(i+1, Tracker.compare_weights(self.box_predictor, self.checkpoints[0][1])))
                     self.box_predictor.train()
 
