@@ -413,7 +413,7 @@ class Tracker:
                                                                                                   box_head=models[0],
                                                                                                   box_predictor=models[1])
                                     annotated_boxes = annotated_boxes.to(device)
-                                    index_likely_bounding_box = np.argmax(box_iou(track.pos, annotated_boxes))
+                                    index_likely_bounding_box = torch.argmax(box_iou(track.pos, annotated_boxes))
                                     annotated_likely_ground_truth_bounding_box = annotated_boxes[index_likely_bounding_box, :]
 
                                     criterion_regressor = torch.nn.SmoothL1Loss()
