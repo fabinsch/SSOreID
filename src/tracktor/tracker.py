@@ -565,10 +565,8 @@ class Track(object):
         positive_example_boxes = self.generate_training_set(self.pos,
                                                             max_displacement,
                                                             batch_size=num_positive_examples,
-                                                            plot=plot,
-                                                            plot_args=(image, -1, self.id)).to(device)
-        positive_example_boxes = resize_boxes(
-            positive_example_boxes, self.im_info, self.transformed_image_size[0])
+                                                            plot=plot).to(device)
+        positive_example_boxes = clip_boxes(positive_example_boxes, self.im_info)
         positive_example_boxes = torch.cat((positive_example_boxes, torch.ones([num_positive_examples, 1]).to(device)), dim=1)
         boxes = positive_example_boxes
         if additional_dets.size(0) != 0:
@@ -579,13 +577,13 @@ class Track(object):
                 negative_example_boxes = self.generate_training_set(additional_dets[i].view(1, -1),
                                                                     max_displacement,
                                                                     batch_size=num_negative_example,
-                                                                    plot=plot,
-                                                                    plot_args=(image, i, self.id)).to(device)
-                negative_example_boxes = resize_boxes(
-                    negative_example_boxes, self.im_info, self.transformed_image_size[0])
+                                                                    plot=plot).to(device)
+                negative_example_boxes = clip_boxes(negative_example_boxes, self.im_info)
                 negative_example_boxes = torch.cat(
                     (negative_example_boxes, torch.zeros([num_negative_example, 1]).to(device)), dim=1)
                 boxes = torch.cat((boxes, negative_example_boxes))
+        if plot:
+            plot_bounding_boxes(self.im_info, self.pos, image, boxes.numpy(), -1, self.id)
         return boxes[torch.randperm(boxes.size(0))]
 
 
@@ -597,7 +595,7 @@ class Track(object):
         self.box_predictor.train()
         self.box_head.train()
 
-        optimizer = torch.optim.Adam(list(self.box_predictor.parameters()),
+        optimizer = torch.optim.Adam(list(self.box_predictor.parameters()) + list(self.box_head.parameters()),
                                      lr=float(finetuning_config["learning_rate"]))
         criterion_regressor = torch.nn.SmoothL1Loss()
         criterion_classifier = torch.nn.CrossEntropyLoss()
@@ -608,16 +606,14 @@ class Track(object):
         if finetuning_config["validate"]:
             if not self.plotter:
                 self.plotter = VisdomLinePlotter()
-            validation_boxes = self.generate_training_set(self.pos,
-                                                          float(finetuning_config["max_displacement"]),
-                                                          batch_size=int(finetuning_config["batch_size_val"]),
-                                                          plot=plot,
-                                                          plot_args=(image, "val", self.id)).to(device)
-            validation_boxes_resized = resize_boxes(
-                validation_boxes, self.im_info, self.transformed_image_size[0])
+            validation_boxes = self.generate_training_set_with_negative_examples(float(finetuning_config["max_displacement"]),
+                                                          int(finetuning_config["batch_size_val"]),
+                                                        image,
+                                                          additional_dets,
+                                                          plot=plot).to(device)
+            validation_boxes_resized = resize_boxes(validation_boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
             proposals_val = [validation_boxes_resized]
             roi_pool_feat_val = box_roi_pool(fpn_features, proposals_val, self.im_info)
-            plotter = VisdomLinePlotter()
 
         save_state_box_predictor = FastRCNNPredictor(1024, 2).to(device)
         save_state_box_predictor.load_state_dict(self.box_predictor.state_dict())
@@ -642,18 +638,20 @@ class Track(object):
             optimizer.zero_grad()
 
             training_boxes = self.generate_training_set_with_negative_examples(float(finetuning_config["max_displacement"]),
-                                                              int(finetuning_config["batch_size"]),
-                                                              image,
-                                                              additional_dets)
-            print(training_boxes.size())
+                                                                              int(finetuning_config["batch_size"]),
+                                                                              image,
+                                                                              additional_dets)
+            training_boxes_resized = resize_boxes(training_boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
             scaled_gt_box = resize_boxes(
                 gt_box.unsqueeze(0), self.im_info, self.transformed_image_size[0]).squeeze(0)
-            proposals = [training_boxes[:, 0:4]]
+
+            proposals = [training_boxes_resized]
 
             with torch.no_grad():
                 roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
-                # feed pooled features to top model
-                pooled_feat = self.box_head(roi_pool_feat)
+
+            # feed pooled features to top model
+            pooled_feat = self.box_head(roi_pool_feat)
 
             # compute bbox offset
             class_logits, bbox_pred = self.box_predictor(pooled_feat)
@@ -664,14 +662,19 @@ class Track(object):
 
             if np.mod(i, int(finetuning_config["iterations_per_validation"])) == 0 and finetuning_config["validate"]:
                 pooled_feat_val = self.box_head(roi_pool_feat_val)
-                bbox_pred_scores, bbox_pred_val = self.box_predictor(pooled_feat_val)
-                class_logits_val = bbox_pred_decoder(bbox_pred_val, proposals_val)
+                class_logits_val, bbox_pred_val = self.box_predictor(pooled_feat_val)
+                pred_boxes_val = bbox_pred_decoder(bbox_pred_val, proposals_val)
                 pred_boxes_val = pred_boxes_val[:, 1:].squeeze(dim=1)
                 pred_scores_val = F.softmax(class_logits_val, -1)
-                val_loss_regressor = criterion_regressor(pred_boxes_val, scaled_gt_box.repeat(int(finetuning_config["batch_size_val"]), 1))
-                val_loss_classifier = criterion_classifier(pred_scores_val, validation_boxes[:, 5].to(torch.int64))
+                val_loss_regressor = criterion_regressor(pred_boxes_val[validation_boxes[:, 4]==1, :],
+                                                         scaled_gt_box.repeat(int(int(finetuning_config["batch_size_val"])/2), 1))
+                val_loss_classifier = criterion_classifier(pred_scores_val, validation_boxes[:, 4].to(torch.int64))
+                print(pred_scores_val)
+                print(validation_boxes[:, 4])
                 val_loss = val_loss_regressor + val_loss_classifier
-                plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
+                self.plotter.plot('loss', 'val cls', "Bbox Loss Track {}".format(self.id), i, val_loss_classifier.item())
+                self.plotter.plot('loss', 'val reg', "Bbox Loss Track {}".format(self.id), i , val_loss_regressor.item())
+                self.plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
 
             loss_regressor = criterion_regressor(pred_boxes[training_boxes[:, 4]==1, :], scaled_gt_box.repeat(int(int(finetuning_config["batch_size"])/2), 1))
             loss_classifier = criterion_classifier(pred_scores, training_boxes[:, 4].to(torch.int64))

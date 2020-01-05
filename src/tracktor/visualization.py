@@ -68,7 +68,7 @@ def plot_bounding_boxes(im_info, gt_pos, image, proposals, iteration, id, valida
             plt.Rectangle((proposals[i, 0], proposals[i, 1]),
                           proposals[i, 2] - proposals[i, 0],
                           proposals[i, 3] - proposals[i, 1], fill=False,
-                          linewidth=0.2, color='yellow')
+                          linewidth=0.2, color='yellow' if proposals[i, 4] == 1 else "red")
         )
 
     ax.add_patch(
