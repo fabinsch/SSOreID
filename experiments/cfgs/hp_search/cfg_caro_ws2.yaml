@@ -4,8 +4,8 @@ tracktor:
     'finetuning':
       'enabled': True
       'iterations': 6
-      'learning_rate': 1e-5
-      'max_displacement': 0.0
+      'learning_rate': 5e-5
+      'max_displacement': 0.001
       'validation_over_time': False
-  'output_subdir': '1'
-#
+      'batch_size': 1024
+  'output_subdir': 'caro_ws2'

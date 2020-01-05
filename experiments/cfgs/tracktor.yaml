@@ -79,8 +79,6 @@ tracktor:
       finetune_repeatedly: False
       # Finetune on every t mod k frames
       finetuning_interval: 50
-      # Learning rate for repeated finetuning for each track
-      finetuning_interval_learning_rate: 5e-5
       #Have a validation set randomly generated
       validate: False
       # Evaluate validation set every ith iteration

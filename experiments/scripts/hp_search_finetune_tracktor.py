@@ -26,16 +26,11 @@ ex = Experiment()
 
 ex.add_config('experiments/cfgs/tracktor.yaml')
 ex.add_named_config('cfg1', 'experiments/cfgs/hp_search/cfg1.yaml')
-ex.add_named_config('cfg2', 'experiments/cfgs/hp_search/cfg2.yaml')
-ex.add_named_config('cfg3', 'experiments/cfgs/hp_search/cfg3.yaml')
-ex.add_named_config('cfg4', 'experiments/cfgs/hp_search/cfg4.yaml')
-ex.add_named_config('cfg5', 'experiments/cfgs/hp_search/cfg5.yaml')
-ex.add_named_config('cfg6', 'experiments/cfgs/hp_search/cfg6.yaml')
-ex.add_named_config('cfg7', 'experiments/cfgs/hp_search/cfg7.yaml')
-ex.add_named_config('cfg8', 'experiments/cfgs/hp_search/cfg8.yaml')
-ex.add_named_config('cfg9', 'experiments/cfgs/hp_search/cfg9.yaml')
-ex.add_named_config('cfg10', 'experiments/cfgs/hp_search/cfg10.yaml')
-ex.add_named_config('cfg11', 'experiments/cfgs/hp_search/cfg11.yaml')
+ex.add_named_config('cfg_caro_ws1', 'experiments/cfgs/hp_search/cfg_caro_ws1.yaml')
+ex.add_named_config('cfg_caro_ws2', 'experiments/cfgs/hp_search/cfg_caro_ws2.yaml')
+ex.add_named_config('cfg_caro_ws3', 'experiments/cfgs/hp_search/cfg_caro_ws3.yaml')
+ex.add_named_config('cfg_caro_local', 'experiments/cfgs/hp_search/cfg_caro_local.yaml')
+
 
 ########### DEFAULT################
 
@@ -44,6 +39,7 @@ ex.add_named_config('cfg11', 'experiments/cfgs/hp_search/cfg11.yaml')
 ex.add_config(ex.configurations[0]._conf['tracktor']['reid_config'])
 ex.add_named_config('oracle', 'experiments/cfgs/oracle_tracktor.yaml')
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 @ex.automain
 def main(tracktor, reid, _config, _log, _run):
@@ -71,21 +67,17 @@ def main(tracktor, reid, _config, _log, _run):
     # object detection
     _log.info("Initializing object detector.")
 
-    obj_detect = FRCNN_FPN(num_classes=2)
+    obj_detect = FRCNN_FPN(num_classes=2).to(device)
     obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
-                               map_location=lambda storage, loc: storage))
+                                          map_location=lambda storage, loc: storage))
 
     obj_detect.eval()
-    if torch.cuda.is_available():
-        obj_detect.cuda()
 
     # reid
-    reid_network = resnet50(pretrained=False, **reid['cnn'])
+    reid_network = resnet50(pretrained=False, **reid['cnn']).to(device)
     reid_network.load_state_dict(torch.load(tracktor['reid_weights'],
-                                 map_location=lambda storage, loc: storage))
+                                            map_location=lambda storage, loc: storage))
     reid_network.eval()
-    if torch.cuda.is_available():
-        reid_network.cuda()
 
     # tracktor
     if 'oracle' in tracktor:
@@ -97,50 +89,51 @@ def main(tracktor, reid, _config, _log, _run):
     num_frames = 0
     mot_accums = []
     dataset = Datasets(tracktor['dataset'])
+
     for seq in dataset:
-        tracker.reset()
 
-        start = time.time()
+         tracker.reset()
 
-        _log.info(f"Tracking: {seq}")
+         start = time.time()
 
-        data_loader = DataLoader(seq, batch_size=1, shuffle=False)
-        for i, frame in enumerate(tqdm(data_loader)):
-            if len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
-                tracker.step(frame, i)
-                num_frames += 1
+         _log.info(f"Tracking: {seq}")
 
-        results = tracker.get_results()
+         data_loader = DataLoader(seq, batch_size=1, shuffle=False)
+         for i, frame in enumerate(tqdm(data_loader)):
+             if len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
+                 tracker.step(frame, i)
+                 num_frames += 1
 
-        time_total += time.time() - start
+         results = tracker.get_results()
 
-        _log.info(f"Tracks found: {len(results)}")
-        _log.info(f"Runtime for {seq}: {time.time() - start :.1f} s.")
+         time_total += time.time() - start
 
-        if tracktor['interpolate']:
-            results = interpolate(results)
+         _log.info(f"Tracks found: {len(results)}")
+         _log.info(f"Runtime for {seq}: {time.time() - start :.1f} s.")
 
-        if seq.no_gt:
-            _log.info(f"No GT data for evaluation available.")
-        else:
-            mot_accums.append(get_mot_accum(results, seq))
+         if tracktor['interpolate']:
+             results = interpolate(results)
 
-        _log.info(f"Writing predictions to: {output_dir}")
+         if seq.no_gt:
+             _log.info(f"No GT data for evaluation available.")
+         else:
+             mot_accums.append(get_mot_accum(results, seq))
 
-        seq.write_results(results, output_dir)
+         _log.info(f"Writing predictions to: {output_dir}")
 
+         seq.write_results(results, output_dir)
 
-        if tracktor['write_images']:
-            plot_sequence(results, seq, osp.join(output_dir, tracktor['dataset'], str(seq)))
+         if tracktor['write_images']:
+             plot_sequence(results, seq, osp.join(output_dir, tracktor['dataset'], str(seq)))
 
     _log.info(f"Tracking runtime for all sequences (without evaluation or image writing): "
-              f"{time_total:.1f} s ({num_frames / time_total:.1f} Hz)")
+               f"{time_total:.1f} s ({num_frames / time_total:.1f} Hz)")
 
     if mot_accums:
         summary = evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt], generate_overall=True)
         summary.to_pickle("output/finetuning_results/results_{}_{}_{}_{}_{}.pkl".format(tracktor['output_subdir'],
                                                                                            tracktor['tracker']['finetuning']['max_displacement'],
-                                                                                           tracktor['tracker']['finetuning']['batch_size'],
-                                                                                           tracktor['tracker']['finetuning']['learning_rate'],
-                                                                                           tracktor['tracker']['finetuning']['iterations']))
+                                                                                            tracktor['tracker']['finetuning']['batch_size'],
+                                                                                            tracktor['tracker']['finetuning']['learning_rate'],
+                                                                                            tracktor['tracker']['finetuning']['iterations']))
 

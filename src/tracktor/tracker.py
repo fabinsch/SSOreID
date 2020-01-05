@@ -18,8 +18,8 @@ from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHe
 from torchvision.models.detection.transform import resize_boxes
 
 import matplotlib
-if not torch.cuda.is_available():
-    matplotlib.use('TkAgg')
+#if not torch.cuda.is_available():
+#    matplotlib.use('TkAgg')
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -52,7 +52,8 @@ class Tracker:
             self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
         if self.finetuning_config["validation_over_time"]:
             # TODO make loading dependent on the sequence being currently evaluated and reset ground truth after end of sequence
-            self.ground_truth = pd.read_csv('/home/azmkuu/Desktop/tracking_wo_bnw/data/MOT17Labels/train/MOT17-04-FRCNN/gt/gt.txt', header=None, sep=',')
+            self.ground_truth = pd.read_csv('./data/MOT17Labels/train/MOT17-04-FRCNN/gt/gt.txt', header=None, sep=',')
+            #self.ground_truth = pd.read_csv('/home/azmkuu/Desktop/tracking_wo_bnw/data/MOT17Labels/train/MOT17-04-FRCNN/gt/gt.txt', header=None, sep=',')
 
         self.tracks = []
         self.inactive_tracks = []
@@ -112,15 +113,6 @@ class Tracker:
                                    representation_size=1024).to(device)
         box_head.load_state_dict(self.bbox_head_weights)
         return box_head
-
-    @staticmethod
-    def compare_models(m1, m2):
-        for key_item_1, key_item_2 in zip(m1.state_dict().items(), m2.state_dict().items()):
-            if torch.equal(key_item_1[1], key_item_2[1]):
-                continue
-            else:
-                return False
-        return True
 
     def regress_tracks(self, blob, plot_compare=False, frame=None):
         """Regress the position of the tracks and also checks their scores."""
@@ -420,7 +412,8 @@ class Tracker:
                                     box_pred_val, _ = self.obj_detect.predict_boxes(test_rois[:, 0:4],
                                                                                                   box_head=models[0],
                                                                                                   box_predictor=models[1])
-                                    index_likely_bounding_box = np.argmax(box_iou(track.pos, annotated_boxes))
+                                    annotated_boxes = annotated_boxes.to(device)
+                                    index_likely_bounding_box = torch.argmax(box_iou(track.pos, annotated_boxes))
                                     annotated_likely_ground_truth_bounding_box = annotated_boxes[index_likely_bounding_box, :]
 
                                     criterion_regressor = torch.nn.SmoothL1Loss()
@@ -589,7 +582,10 @@ class Track(object):
             roi_pool_feat_val = box_roi_pool(fpn_features, proposals_val, self.im_info)
             plotter = VisdomLinePlotter()
 
-        self.checkpoints[0] = [box_head, box_predictor]
+        save_state_box_predictor = FastRCNNPredictor(1024, 2).to(device)
+        save_state_box_predictor.load_state_dict(self.box_predictor.state_dict())
+
+        self.checkpoints[0] = [box_head, save_state_box_predictor]
 
         for i in range(int(finetuning_config["iterations"])):
 
@@ -598,7 +594,12 @@ class Track(object):
                     self.plotter = VisdomLinePlotter()
                     print("Making Plotter")
                 if np.mod(i+1, finetuning_config["checkpoint_interval"]) == 0:
-                    self.checkpoints[i+1] = [box_head, box_predictor]
+                    self.box_predictor.eval()
+                    save_state_box_predictor = FastRCNNPredictor(1024, 2).to(device)
+                    save_state_box_predictor.load_state_dict(self.box_predictor.state_dict())
+                    self.checkpoints[i+1] = [box_head, save_state_box_predictor]
+                    #input('Checkpoints are the same: {} {}'.format(i+1, Tracker.compare_weights(self.box_predictor, self.checkpoints[0][1])))
+                    self.box_predictor.train()
 
             optimizer.zero_grad()
             training_boxes = self.generate_training_set(float(finetuning_config["max_displacement"]),
@@ -639,9 +640,22 @@ class Track(object):
                 plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
 
             loss = criterion(pred_boxes, scaled_gt_box.repeat(int(finetuning_config["batch_size"]), 1))
+            print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
+
             loss.backward()
             optimizer.step()
-            print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
 
         self.box_predictor.eval()
         self.box_head.eval()
+
+#
+#                    idf1       idp       idr    recall  precision  num_unique_objects  mostly_tracked  partially_tracked  mostly_lost  num_false_positives  num_misses  num_switches  num_fragmentations      mota      motp
+#MOT17-02-FRCNN  0.458597  0.784569  0.323987  0.411980   0.997654                  62               8                 32           22                   18       10926            57                  65  0.407944  0.079305
+#MOT17-04-FRCNN  0.712063  0.904892  0.586980  0.647265   0.997828                  83              32                 29           22                   67       16775            21                  28  0.645415  0.095695
+#MOT17-05-FRCNN  0.633866  0.859832  0.501952  0.573804   0.982912                 133              32                 65           36                   69        2948            38                  60  0.558335  0.142563
+#MOT17-09-FRCNN  0.536235  0.681831  0.441878  0.641878   0.990438                  26              11                 13            2                   33        1907            23                  31  0.631362  0.086603
+#MOT17-10-FRCNN  0.653085  0.768088  0.568035  0.723810   0.978726                  57              28                 26            3                  202        3546            66                 119  0.702936  0.145639
+#MOT17-11-FRCNN  0.632742  0.770061  0.536986  0.690229   0.989818                  75              24                 33           18                   67        2923            26                  25  0.680373  0.081523
+#MOT17-13-FRCNN  0.726847  0.840207  0.640440  0.741797   0.973180                 110              59                 40           11                  238        3006            59                  84  0.716286  0.130974
+#OVERALL         0.650191  0.839572  0.530522  0.625716   0.990220                 546             194                238          114                  694       42031           290                 412  0.616953  0.105742
+#

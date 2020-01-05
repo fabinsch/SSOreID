@@ -6,6 +6,7 @@ tracktor:
       'iterations': 6
       'learning_rate': 1e-5
       'max_displacement': 0.0
-      'validation_over_time': False
-  'output_subdir': '1'
+      'validation_over_time': True
+      'batch_size': 128
+  'output_subdir': 'caro_local'
 #
