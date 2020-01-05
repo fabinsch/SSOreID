@@ -573,6 +573,7 @@ class Track(object):
             standard_batch_size_negative_example = int(np.floor(num_positive_examples / len(additional_dets)))
             first_negative_offset = num_positive_examples - (standard_batch_size_negative_example * additional_dets.size(0))
             for i in range(additional_dets.size(0)):
+                # TODO have a person not seen before in the validation set.
                 num_negative_example = standard_batch_size_negative_example if i != 0 else standard_batch_size_negative_example + first_negative_offset
                 negative_example_boxes = self.generate_training_set(additional_dets[i].view(1, -1),
                                                                     max_displacement,
@@ -608,7 +609,7 @@ class Track(object):
                 self.plotter = VisdomLinePlotter()
             validation_boxes = self.generate_training_set_with_negative_examples(float(finetuning_config["max_displacement"]),
                                                           int(finetuning_config["batch_size_val"]),
-                                                        image,
+                                                          image,
                                                           additional_dets,
                                                           plot=plot).to(device)
             validation_boxes_resized = resize_boxes(validation_boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
@@ -669,8 +670,6 @@ class Track(object):
                 val_loss_regressor = criterion_regressor(pred_boxes_val[validation_boxes[:, 4]==1, :],
                                                          scaled_gt_box.repeat(int(int(finetuning_config["batch_size_val"])/2), 1))
                 val_loss_classifier = criterion_classifier(pred_scores_val, validation_boxes[:, 4].to(torch.int64))
-                print(pred_scores_val)
-                print(validation_boxes[:, 4])
                 val_loss = val_loss_regressor + val_loss_classifier
                 self.plotter.plot('loss', 'val cls', "Bbox Loss Track {}".format(self.id), i, val_loss_classifier.item())
                 self.plotter.plot('loss', 'val reg', "Bbox Loss Track {}".format(self.id), i , val_loss_regressor.item())
