@@ -39,15 +39,6 @@ ex.add_named_config('cfg_caro_local', 'experiments/cfgs/hp_search/cfg_caro_local
 ex.add_config(ex.configurations[0]._conf['tracktor']['reid_config'])
 ex.add_named_config('oracle', 'experiments/cfgs/oracle_tracktor.yaml')
 
-
-def compare_models(m1, m2):
-    for key_item_1, key_item_2 in zip(m1.state_dict().items(), m2.state_dict().items()):
-        if torch.equal(key_item_1[1], key_item_2[1]):
-            continue
-        else:
-            return False
-    return True
-
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 @ex.automain
@@ -82,21 +73,11 @@ def main(tracktor, reid, _config, _log, _run):
 
     obj_detect.eval()
 
-    #obj_detect_copy = FRCNN_FPN(num_classes=2)
-    #obj_detect_copy.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
-    #                                map_location=lambda storage, loc: storage))
-    #obj_detect_copy.eval()
-
     # reid
     reid_network = resnet50(pretrained=False, **reid['cnn']).to(device)
     reid_network.load_state_dict(torch.load(tracktor['reid_weights'],
                                             map_location=lambda storage, loc: storage))
     reid_network.eval()
-
-    #reid_network_copy = resnet50(pretrained=False, **reid['cnn'])
-    #reid_network_copy.load_state_dict(torch.load(tracktor['reid_weights'],
-    #                                        map_location=lambda storage, loc: storage))
-    #reid_network_copy.eval()
 
     # tracktor
     if 'oracle' in tracktor:
@@ -110,12 +91,6 @@ def main(tracktor, reid, _config, _log, _run):
     dataset = Datasets(tracktor['dataset'])
 
     for seq in dataset:
-         #if not "04" in str(seq) and not "02" in str(seq):
-         #   print("Skipping")
-         #   continue
-
-         #print("Reid network not changed? {}".format(compare_models(reid_network, tracker.reid_ne04twork)))
-         #print("Object detection network not changed? {}".format(compare_models(obj_detect_copy, tracker.obj_detect)))
 
          tracker.reset()
 
@@ -157,7 +132,6 @@ def main(tracktor, reid, _config, _log, _run):
 
     if mot_accums:
         summary = evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt], generate_overall=True)
-        #summary = evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt and "04" in str(s) or "02" in str(s)], generate_overall=True)
         summary.to_pickle("output/finetuning_results/results_{}_{}_{}_{}_{}.pkl".format(tracktor['output_subdir'],
                                                                                            tracktor['tracker']['finetuning']['max_displacement'],
                                                                                             tracktor['tracker']['finetuning']['batch_size'],
