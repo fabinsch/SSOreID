@@ -79,6 +79,7 @@ class Tracker:
     def add(self, new_det_pos, new_det_scores, new_det_features, image):
         """Initializes new Track objects and saves them."""
         num_new = new_det_pos.size(0)
+
         for i in range(num_new):
             track = Track(new_det_pos[i].view(1, -1), new_det_scores[i], self.track_num + i,
                           new_det_features[i].view(1, -1), self.inactive_patience, self.max_features_num,
@@ -86,6 +87,7 @@ class Tracker:
                           image.size()[1:3], self.obj_detect.image_size)
 
             if self.finetuning_config["enabled"]:
+                other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i+1:], self.get_pos()))
                 box_head_copy = self.get_box_head()
                 box_predictor_copy = self.get_box_predictor()
 
@@ -97,7 +99,8 @@ class Tracker:
                                         self.finetuning_config,
                                         box_head_copy,
                                         box_predictor_copy,
-                                        plot=False)
+                                        plot=False,
+                                        additional_dets=other_pedestrians_bboxes)
             self.tracks.append(track)
 
         self.track_num += num_new
@@ -164,7 +167,7 @@ class Tracker:
         elif len(self.tracks) > 1:
             pos = torch.cat([t.pos for t in self.tracks], 0)
         else:
-            pos = torch.zeros(0).cuda()
+            pos = torch.zeros(0).to(device)
         return pos
 
 
@@ -175,7 +178,7 @@ class Tracker:
         elif len(self.tracks) > 1:
             features = torch.cat([t.features for t in self.tracks], 0)
         else:
-            features = torch.zeros(0).cuda()
+            features = torch.zeros(0).to(device)
         return features
 
 
@@ -408,7 +411,9 @@ class Tracker:
                         if self.finetuning_config["validation_over_time"]:
                             if np.mod(track.frames_since_active, self.finetuning_config["validation_interval"]) == 0:
                                 for checkpoint, models in track.checkpoints.items():
-                                    test_rois = track.generate_training_set(self.finetuning_config["max_displacement"], batch_size=128)
+                                    test_rois = track.generate_training_set(track.pos,
+                                                                            self.finetuning_config["max_displacement"],
+                                                                            batch_size=128)
                                     box_pred_val, _ = self.obj_detect.predict_boxes(test_rois[:, 0:4],
                                                                                                   box_head=models[0],
                                                                                                   box_predictor=models[1])
@@ -539,11 +544,10 @@ class Track(object):
         self.last_pos.clear()
         self.last_pos.append(self.pos.clone())
 
-    def generate_training_set(self, max_displacement, batch_size=8, plot=False, plot_args=None):
-        gt_pos = self.pos.to(device)
+    def generate_training_set(self, gt_pos, max_displacement, batch_size=8, plot=False, plot_args=None):
+        gt_pos = gt_pos.to(device)
         # displacement should be the realistic displacement of the bounding box from t-frame to the t+1-frame.
-        # TODO implement check that the randomly generated box has largest IoU with gt_pos compared to all other
-        # detections.
+        # TODO implement check that the randomly generated box has largest IoU with gt_pos compared to all other detections.
         random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos,
                                                                 batch_size=batch_size,
                                                                 max_displacement=max_displacement).to(device)
@@ -555,16 +559,48 @@ class Track(object):
 
         return training_boxes
 
+    def generate_training_set_with_negative_examples(self, max_displacement, batch_size, image, additional_dets,
+                                                     plot=False):
+        num_positive_examples = int(batch_size / 2)
+        positive_example_boxes = self.generate_training_set(self.pos,
+                                                            max_displacement,
+                                                            batch_size=num_positive_examples,
+                                                            plot=plot,
+                                                            plot_args=(image, -1, self.id)).to(device)
+        positive_example_boxes = resize_boxes(
+            positive_example_boxes, self.im_info, self.transformed_image_size[0])
+        positive_example_boxes = torch.cat((positive_example_boxes, torch.ones([num_positive_examples, 1]).to(device)), dim=1)
+        boxes = positive_example_boxes
+        if additional_dets.size(0) != 0:
+            standard_batch_size_negative_example = int(np.floor(num_positive_examples / len(additional_dets)))
+            first_negative_offset = num_positive_examples - (standard_batch_size_negative_example * additional_dets.size(0))
+            for i in range(additional_dets.size(0)):
+                num_negative_example = standard_batch_size_negative_example if i != 0 else standard_batch_size_negative_example + first_negative_offset
+                negative_example_boxes = self.generate_training_set(additional_dets[i].view(1, -1),
+                                                                    max_displacement,
+                                                                    batch_size=num_negative_example,
+                                                                    plot=plot,
+                                                                    plot_args=(image, i, self.id)).to(device)
+                negative_example_boxes = resize_boxes(
+                    negative_example_boxes, self.im_info, self.transformed_image_size[0])
+                negative_example_boxes = torch.cat(
+                    (negative_example_boxes, torch.zeros([num_negative_example, 1]).to(device)), dim=1)
+                boxes = torch.cat((boxes, negative_example_boxes))
+        return boxes[torch.randperm(boxes.size(0))]
+
+
     def finetune_detector(self, box_roi_pool, fpn_features, gt_box, bbox_pred_decoder, image,
-                          finetuning_config, box_head, box_predictor, plot=False):
+                          finetuning_config, box_head, box_predictor, plot=False, additional_dets=None):
         self.box_head = box_head
         self.box_predictor = box_predictor
 
         self.box_predictor.train()
         self.box_head.train()
+
         optimizer = torch.optim.Adam(list(self.box_predictor.parameters()),
                                      lr=float(finetuning_config["learning_rate"]))
-        criterion = torch.nn.SmoothL1Loss()
+        criterion_regressor = torch.nn.SmoothL1Loss()
+        criterion_classifier = torch.nn.CrossEntropyLoss()
 
         if isinstance(fpn_features, torch.Tensor):
             fpn_features = OrderedDict([(0, fpn_features)])
@@ -572,7 +608,8 @@ class Track(object):
         if finetuning_config["validate"]:
             if not self.plotter:
                 self.plotter = VisdomLinePlotter()
-            validation_boxes = self.generate_training_set(float(finetuning_config["max_displacement"]),
+            validation_boxes = self.generate_training_set(self.pos,
+                                                          float(finetuning_config["max_displacement"]),
                                                           batch_size=int(finetuning_config["batch_size_val"]),
                                                           plot=plot,
                                                           plot_args=(image, "val", self.id)).to(device)
@@ -600,18 +637,18 @@ class Track(object):
                     self.checkpoints[i+1] = [box_head, save_state_box_predictor]
                     #input('Checkpoints are the same: {} {}'.format(i+1, Tracker.compare_weights(self.box_predictor, self.checkpoints[0][1])))
                     self.box_predictor.train()
+                    self.box_head.train()
 
             optimizer.zero_grad()
-            training_boxes = self.generate_training_set(float(finetuning_config["max_displacement"]),
-                                                        batch_size=int(finetuning_config["batch_size"]),
-                                                        plot=plot,
-                                                        plot_args=(image, i, self.id)).to(device)
 
-            boxes = resize_boxes(
-                training_boxes, self.im_info, self.transformed_image_size[0])
+            training_boxes = self.generate_training_set_with_negative_examples(float(finetuning_config["max_displacement"]),
+                                                              int(finetuning_config["batch_size"]),
+                                                              image,
+                                                              additional_dets)
+            print(training_boxes.size())
             scaled_gt_box = resize_boxes(
                 gt_box.unsqueeze(0), self.im_info, self.transformed_image_size[0]).squeeze(0)
-            proposals = [boxes]
+            proposals = [training_boxes[:, 0:4]]
 
             with torch.no_grad():
                 roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
@@ -619,27 +656,26 @@ class Track(object):
                 pooled_feat = self.box_head(roi_pool_feat)
 
             # compute bbox offset
-            _, bbox_pred = self.box_predictor(pooled_feat)
+            class_logits, bbox_pred = self.box_predictor(pooled_feat)
+            pred_scores = F.softmax(class_logits, -1)
 
             pred_boxes = bbox_pred_decoder(bbox_pred, proposals)
             pred_boxes = pred_boxes[:, 1:].squeeze(dim=1)
 
             if np.mod(i, int(finetuning_config["iterations_per_validation"])) == 0 and finetuning_config["validate"]:
                 pooled_feat_val = self.box_head(roi_pool_feat_val)
-                _, bbox_pred_val = self.box_predictor(pooled_feat_val)
-                pred_boxes_val = bbox_pred_decoder(bbox_pred_val, proposals_val)
+                bbox_pred_scores, bbox_pred_val = self.box_predictor(pooled_feat_val)
+                class_logits_val = bbox_pred_decoder(bbox_pred_val, proposals_val)
                 pred_boxes_val = pred_boxes_val[:, 1:].squeeze(dim=1)
-                #plot_bounding_boxes(self.im_info,
-                #                    gt_box.unsqueeze(0),
-                #                    image,
-                #                    resize_boxes(pred_boxes_val, self.transformed_image_size[0], self.im_info),
-                #                    i,
-                #                    self.id,
-                #                    validate=True)
-                val_loss = criterion(pred_boxes_val, scaled_gt_box.repeat(int(finetuning_config["batch_size_val"]), 1))
+                pred_scores_val = F.softmax(class_logits_val, -1)
+                val_loss_regressor = criterion_regressor(pred_boxes_val, scaled_gt_box.repeat(int(finetuning_config["batch_size_val"]), 1))
+                val_loss_classifier = criterion_classifier(pred_scores_val, validation_boxes[:, 5].to(torch.int64))
+                val_loss = val_loss_regressor + val_loss_classifier
                 plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
 
-            loss = criterion(pred_boxes, scaled_gt_box.repeat(int(finetuning_config["batch_size"]), 1))
+            loss_regressor = criterion_regressor(pred_boxes[training_boxes[:, 4]==1, :], scaled_gt_box.repeat(int(int(finetuning_config["batch_size"])/2), 1))
+            loss_classifier = criterion_classifier(pred_scores, training_boxes[:, 4].to(torch.int64))
+            loss = loss_regressor + loss_classifier
             print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
 
             loss.backward()
