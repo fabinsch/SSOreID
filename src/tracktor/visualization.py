@@ -50,6 +50,8 @@ class VisdomLinePlotter(object):
                 xlabel='Epochs',
                 ylabel=var_name
             ))
+            self.viz.line(X=np.array(range(1, 51)), Y=np.repeat(0.5, 50), env=self.env, win=self.plots[var_name],
+                          update='insert', opts=dict(linecolor= np.array([[255, 0, 0],])), name="Regression Person threshold")
         else:
             self.viz.line(X=np.array([x]), Y=np.array([y]), env=self.env, win=self.plots[var_name], name=split_name,
                           update='append')
