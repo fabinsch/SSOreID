@@ -55,6 +55,7 @@ class Tracker:
             self.ground_truth = pd.read_csv('./data/MOT17Labels/train/MOT17-04-FRCNN/gt/gt.txt', header=None, sep=',')
             #self.ground_truth = pd.read_csv('/home/azmkuu/Desktop/tracking_wo_bnw/data/MOT17Labels/train/MOT17-04-FRCNN/gt/gt.txt', header=None, sep=',')
 
+        self.plotter = VisdomLinePlotter()
         self.tracks = []
         self.inactive_tracks = []
         self.track_num = 0
@@ -137,6 +138,7 @@ class Tracker:
                 scores.append(score)
                 bbox = clip_boxes_to_image(box, blob['img'].shape[-2:])
                 pos.append(bbox)
+                self.plotter.plot('person score {}'.format(track.id), 'score', "Person Score Track {}".format(track.id), frame, score.cpu().numpy()[0])
             scores = torch.cat(scores)
             pos = torch.cat(pos)
         else:
@@ -232,6 +234,7 @@ class Tracker:
                     if dist_mat[r, c] <= self.reid_sim_threshold:
                         t = self.inactive_tracks[r]
                         self.tracks.append(t)
+                        print(f"Reidying track {t.id}")
                         t.count_inactive = 0
                         t.pos = new_det_pos[c].view(1, -1)
                         t.reset_last_pos()
@@ -397,7 +400,10 @@ class Tracker:
                             if np.mod(track.frames_since_active, self.finetuning_config["finetuning_interval"]) == 0:
                                 box_head_copy = self.get_box_head()
                                 box_predictor_copy = self.get_box_predictor()
-
+                                other_pedestrians_bboxes = torch.Tensor([]).to(device)
+                                for j in range(len(self.tracks)):
+                                    if j != i:
+                                        other_pedestrians_bboxes = torch.cat((other_pedestrians_bboxes, self.tracks[j].pos))
                                 track.finetune_detector(
                                     self.obj_detect.roi_heads.box_roi_pool,
                                     self.obj_detect.fpn_features,
@@ -406,7 +412,8 @@ class Tracker:
                                     blob['img'][0],
                                     self.finetuning_config,
                                     box_head_copy,
-                                    box_predictor_copy
+                                    box_predictor_copy,
+                                    additional_dets=other_pedestrians_bboxes
                                 )
                         if self.finetuning_config["validation_over_time"]:
                             if np.mod(track.frames_since_active, self.finetuning_config["validation_interval"]) == 0:
