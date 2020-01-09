@@ -76,7 +76,7 @@ class Tracker:
     def add(self, new_det_pos, new_det_scores, new_det_features, image):
         """Initializes new Track objects and saves them."""
         num_new = new_det_pos.size(0)
-
+        old_tracks = self.get_pos()
         for i in range(num_new):
             track = Track(new_det_pos[i].view(1, -1), new_det_scores[i], self.track_num + i,
                           new_det_features[i].view(1, -1), self.inactive_patience, self.max_features_num,
@@ -84,10 +84,9 @@ class Tracker:
                           image.size()[1:3], self.obj_detect.image_size)
 
             if self.finetuning_config["enabled"]:
-                other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i+1:], self.get_pos()))
+                other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i+1:], old_tracks))
                 box_head_copy = self.get_box_head()
                 box_predictor_copy = self.get_box_predictor()
-
                 track.finetune_detector(self.obj_detect.roi_heads.box_roi_pool,
                                         self.obj_detect.fpn_features,
                                         new_det_pos[i],
@@ -119,6 +118,7 @@ class Tracker:
         if self.finetuning_config["enabled"]:
             scores = []
             pos = []
+            box_pred_id_6 = [(track.box_head, track.box_predictor) for track in self.tracks if track.id == 6]
             for track in self.tracks:
                 # Regress with finetuned bbox head for each track
                 assert track.box_head is not None
@@ -134,7 +134,9 @@ class Tracker:
                 scores.append(score)
                 bbox = clip_boxes_to_image(box, blob['img'].shape[-2:])
                 pos.append(bbox)
-                self.plotter.plot('person score {}'.format(track.id), 'score', "Person Score Track {}".format(track.id), frame, score.cpu().numpy()[0])
+                _, score_plot = self.obj_detect.predict_boxes(track.pos, box_head=box_pred_id_6[0][0],
+                                                              box_predictor=box_pred_id_6[0][1])
+                self.plotter.plot('person score {}'.format(track.id), 'score', "Person Score Track {}".format(track.id), frame, score_plot.cpu().numpy()[0])
             scores = torch.cat(scores)
             pos = torch.cat(pos)
         else:
@@ -540,7 +542,7 @@ class Track(object):
 
         return training_boxes
 
-    def generate_training_set_classification(self, batch_size, image, additional_dets, plot=False):
+    def generate_training_set_classification(self, batch_size, additional_dets):
         num_positive_examples = int(batch_size / 2)
         positive_examples = self.pos.repeat(num_positive_examples, 1)
         positive_examples = torch.cat((positive_examples, torch.ones([num_positive_examples, 1]).to(device)), dim=1)
@@ -559,6 +561,25 @@ class Track(object):
                 boxes = torch.cat((boxes, negative_example_and_label))
         return boxes[torch.randperm(boxes.size(0))]
 
+    def forward_pass(self, boxes, box_roi_pool, fpn_features, eval=False, scores=False):
+        if eval:
+            self.box_predictor.eval()
+            self.box_head.eval()
+        boxes_resized = resize_boxes(boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
+        proposals = [boxes_resized]
+
+        roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
+        with torch.no_grad():
+            feat = self.box_head(roi_pool_feat)
+        class_logits, _ = self.box_predictor(feat)
+        if scores:
+            pred_scores = F.softmax(class_logits, -1)
+            return pred_scores[:, 1:].squeeze(dim=1).detach()
+        loss = F.cross_entropy(class_logits, boxes[:, 4].long())
+        if eval:
+            self.box_predictor.train()
+            self.box_head.train()
+        return loss
 
     def finetune_detector(self, box_roi_pool, fpn_features, gt_box, bbox_pred_decoder, image,
                           finetuning_config, box_head, box_predictor, plot=False, additional_dets=None):
@@ -571,59 +592,38 @@ class Track(object):
         optimizer = torch.optim.Adam(list(self.box_predictor.parameters()),
                                      lr=float(finetuning_config["learning_rate"]))
 
-        if isinstance(fpn_features, torch.Tensor):
-            fpn_features = OrderedDict([(0, fpn_features)])
-
         if finetuning_config["validate"]:
             if not self.plotter:
                 self.plotter = VisdomLinePlotter()
-            validation_boxes = self.generate_training_set_classification(float(int(finetuning_config["batch_size_val"]),
-                                                          image,
-                                                          additional_dets,
-                                                          plot=plot).to(device))
-            validation_boxes_resized = resize_boxes(validation_boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
-            proposals_val = [validation_boxes_resized]
-            roi_pool_feat_val = box_roi_pool(fpn_features, proposals_val, self.im_info)
-
+            additional_dets = additional_dets[:-1]
+            val_dets = additional_dets[-1:]
+            validation_boxes = self.generate_training_set_classification(float(int(finetuning_config["batch_size_val"])),
+                                                                         val_dets).to(device)
 
         for i in range(int(finetuning_config["iterations"])):
 
             optimizer.zero_grad()
 
             training_boxes = self.generate_training_set_classification(int(finetuning_config["batch_size"]),
-                                                                              image,
-                                                                              additional_dets)
+                                                                       additional_dets)
 
-            training_boxes_resized = resize_boxes(training_boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
-            scaled_gt_box = resize_boxes(
-                gt_box.unsqueeze(0), self.im_info, self.transformed_image_size[0]).squeeze(0)
 
-            proposals = [training_boxes_resized]
-
-            with torch.no_grad():
-                roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
-
-            # feed pooled features to top model
-            pooled_feat = self.box_head(roi_pool_feat)
-
-            # compute bbox offset
-            class_logits, _ = self.box_predictor(pooled_feat)
+            loss = self.forward_pass(training_boxes, box_roi_pool, fpn_features, eval=False)
+            print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
 
             if np.mod(i, int(finetuning_config["iterations_per_validation"])) == 0 and finetuning_config["validate"]:
-                pooled_feat_val = self.box_head(roi_pool_feat_val)
-                class_logits_val, bbox_pred_val = self.box_predictor(pooled_feat_val)
-                pred_scores_val = F.softmax(class_logits_val, -1)
-                val_loss = F.cross_entropy(pred_scores_val, validation_boxes[:, 4].to(torch.int64))
+                val_loss = self.forward_pass(validation_boxes, box_roi_pool, fpn_features, eval=True)
                 self.plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
-
-            loss = F.cross_entropy(class_logits, training_boxes[:, 4].long())
-            print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
 
             loss.backward()
             optimizer.step()
 
         self.box_predictor.eval()
         self.box_head.eval()
+
+        dets = torch.cat((self.pos, additional_dets))
+        #print(dets)
+        print(self.forward_pass(dets, box_roi_pool, fpn_features, scores=True))
 
 #
 #                    idf1       idp       idr    recall  precision  num_unique_objects  mostly_tracked  partially_tracked  mostly_lost  num_false_positives  num_misses  num_switches  num_fragmentations      mota      motp

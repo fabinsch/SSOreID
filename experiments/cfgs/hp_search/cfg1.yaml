@@ -3,8 +3,10 @@ tracktor:
   'tracker':
     'finetuning':
       'enabled': True
-      'iterations': 20
-      'learning_rate': 1e-3
+      'iterations': 10
+      'learning_rate': 9e-3
       'batch_size': 32
+      validate: False
+      val_batch_size: 32
   'output_subdir': '1'
 #
