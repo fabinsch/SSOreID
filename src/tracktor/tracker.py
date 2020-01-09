@@ -50,10 +50,6 @@ class Tracker:
         if self.finetuning_config["enabled"]:
             self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
             self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
-        if self.finetuning_config["validation_over_time"]:
-            # TODO make loading dependent on the sequence being currently evaluated and reset ground truth after end of sequence
-            self.ground_truth = pd.read_csv('./data/MOT17Labels/train/MOT17-04-FRCNN/gt/gt.txt', header=None, sep=',')
-            #self.ground_truth = pd.read_csv('/home/azmkuu/Desktop/tracking_wo_bnw/data/MOT17Labels/train/MOT17-04-FRCNN/gt/gt.txt', header=None, sep=',')
 
         self.plotter = VisdomLinePlotter()
         self.tracks = []
@@ -390,9 +386,6 @@ class Tracker:
 
                 self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
 
-                if self.finetuning_config["validation_over_time"]:
-                    annotated_boxes = parse_ground_truth(frame, self.ground_truth).type(torch.FloatTensor)
-
                 for i, track in enumerate(self.tracks):
                     if i in keep:
                         track.frames_since_active += 1
@@ -415,25 +408,6 @@ class Tracker:
                                     box_predictor_copy,
                                     additional_dets=other_pedestrians_bboxes
                                 )
-                        if self.finetuning_config["validation_over_time"]:
-                            if np.mod(track.frames_since_active, self.finetuning_config["validation_interval"]) == 0:
-                                for checkpoint, models in track.checkpoints.items():
-                                    test_rois = track.generate_training_set(track.pos,
-                                                                            self.finetuning_config["max_displacement"],
-                                                                            batch_size=128)
-                                    box_pred_val, _ = self.obj_detect.predict_boxes(test_rois[:, 0:4],
-                                                                                                  box_head=models[0],
-                                                                                                  box_predictor=models[1])
-                                    annotated_boxes = annotated_boxes.to(device)
-                                    index_likely_bounding_box = torch.argmax(box_iou(track.pos, annotated_boxes))
-                                    annotated_likely_ground_truth_bounding_box = annotated_boxes[index_likely_bounding_box, :]
-
-                                    criterion_regressor = torch.nn.SmoothL1Loss()
-
-                                    loss = criterion_regressor(box_pred_val,
-                                                     annotated_likely_ground_truth_bounding_box.repeat(128, 1))
-                                    track.plotter.plot('loss', 'val {}'.format(checkpoint), 'Class Loss track {}'.format(i),
-                                                       track.frames_since_active, loss.item())
 
                 if keep.nelement() > 0:
                     if self.do_reid:
@@ -551,7 +525,7 @@ class Track(object):
         self.last_pos.clear()
         self.last_pos.append(self.pos.clone())
 
-    def generate_training_set(self, gt_pos, max_displacement, batch_size=8, plot=False, plot_args=None):
+    def generate_training_set_regession(self, gt_pos, max_displacement, batch_size=8, plot=False, plot_args=None):
         gt_pos = gt_pos.to(device)
         # displacement should be the realistic displacement of the bounding box from t-frame to the t+1-frame.
         # TODO implement check that the randomly generated box has largest IoU with gt_pos compared to all other detections.
@@ -566,32 +540,23 @@ class Track(object):
 
         return training_boxes
 
-    def generate_training_set_with_negative_examples(self, max_displacement, batch_size, image, additional_dets,
-                                                     plot=False):
+    def generate_training_set_classification(self, batch_size, image, additional_dets, plot=False):
         num_positive_examples = int(batch_size / 2)
-        positive_example_boxes = self.generate_training_set(self.pos,
-                                                            max_displacement,
-                                                            batch_size=num_positive_examples,
-                                                            plot=plot).to(device)
-        positive_example_boxes = clip_boxes(positive_example_boxes, self.im_info)
-        positive_example_boxes = torch.cat((positive_example_boxes, torch.ones([num_positive_examples, 1]).to(device)), dim=1)
-        boxes = positive_example_boxes
+        positive_examples = self.pos.repeat(num_positive_examples, 1)
+        positive_examples = torch.cat((positive_examples, torch.ones([num_positive_examples, 1]).to(device)), dim=1)
+        boxes = positive_examples
         if additional_dets.size(0) != 0:
             standard_batch_size_negative_example = int(np.floor(num_positive_examples / len(additional_dets)))
-            first_negative_offset = num_positive_examples - (standard_batch_size_negative_example * additional_dets.size(0))
+            offset = num_positive_examples - (standard_batch_size_negative_example * additional_dets.size(0))
             for i in range(additional_dets.size(0)):
                 # TODO have a person not seen before in the validation set.
-                num_negative_example = standard_batch_size_negative_example if i != 0 else standard_batch_size_negative_example + first_negative_offset
-                negative_example_boxes = self.generate_training_set(additional_dets[i].view(1, -1),
-                                                                    max_displacement,
-                                                                    batch_size=num_negative_example,
-                                                                    plot=plot).to(device)
-                negative_example_boxes = clip_boxes(negative_example_boxes, self.im_info)
-                negative_example_boxes = torch.cat(
-                    (negative_example_boxes, torch.zeros([num_negative_example, 1]).to(device)), dim=1)
-                boxes = torch.cat((boxes, negative_example_boxes))
-        if plot:
-            plot_bounding_boxes(self.im_info, self.pos, image, boxes.numpy(), -1, self.id)
+                num_negative_example = standard_batch_size_negative_example
+                if offset != 0:
+                    num_negative_example += 1
+                    offset -= 1
+                negative_example = additional_dets[i].view(1, -1).repeat(num_negative_example, 1)
+                negative_example_and_label = torch.cat((negative_example, torch.zeros([num_negative_example, 1]).to(device)), dim=1)
+                boxes = torch.cat((boxes, negative_example_and_label))
         return boxes[torch.randperm(boxes.size(0))]
 
 
@@ -603,10 +568,8 @@ class Track(object):
         self.box_predictor.train()
         self.box_head.train()
 
-        optimizer = torch.optim.Adam(list(self.box_predictor.parameters()) + list(self.box_head.parameters()),
+        optimizer = torch.optim.Adam(list(self.box_predictor.parameters()),
                                      lr=float(finetuning_config["learning_rate"]))
-        criterion_regressor = torch.nn.SmoothL1Loss()
-        criterion_classifier = torch.nn.CrossEntropyLoss()
 
         if isinstance(fpn_features, torch.Tensor):
             fpn_features = OrderedDict([(0, fpn_features)])
@@ -614,41 +577,23 @@ class Track(object):
         if finetuning_config["validate"]:
             if not self.plotter:
                 self.plotter = VisdomLinePlotter()
-            validation_boxes = self.generate_training_set_with_negative_examples(float(finetuning_config["max_displacement"]),
-                                                          int(finetuning_config["batch_size_val"]),
+            validation_boxes = self.generate_training_set_classification(float(int(finetuning_config["batch_size_val"]),
                                                           image,
                                                           additional_dets,
-                                                          plot=plot).to(device)
+                                                          plot=plot).to(device))
             validation_boxes_resized = resize_boxes(validation_boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
             proposals_val = [validation_boxes_resized]
             roi_pool_feat_val = box_roi_pool(fpn_features, proposals_val, self.im_info)
 
-        save_state_box_predictor = FastRCNNPredictor(1024, 2).to(device)
-        save_state_box_predictor.load_state_dict(self.box_predictor.state_dict())
-
-        self.checkpoints[0] = [box_head, save_state_box_predictor]
 
         for i in range(int(finetuning_config["iterations"])):
 
-            if finetuning_config["validation_over_time"]:
-                if not self.plotter:
-                    self.plotter = VisdomLinePlotter()
-                    print("Making Plotter")
-                if np.mod(i+1, finetuning_config["checkpoint_interval"]) == 0:
-                    self.box_predictor.eval()
-                    save_state_box_predictor = FastRCNNPredictor(1024, 2).to(device)
-                    save_state_box_predictor.load_state_dict(self.box_predictor.state_dict())
-                    self.checkpoints[i+1] = [box_head, save_state_box_predictor]
-                    #input('Checkpoints are the same: {} {}'.format(i+1, Tracker.compare_weights(self.box_predictor, self.checkpoints[0][1])))
-                    self.box_predictor.train()
-                    self.box_head.train()
-
             optimizer.zero_grad()
 
-            training_boxes = self.generate_training_set_with_negative_examples(float(finetuning_config["max_displacement"]),
-                                                                              int(finetuning_config["batch_size"]),
+            training_boxes = self.generate_training_set_classification(int(finetuning_config["batch_size"]),
                                                                               image,
                                                                               additional_dets)
+
             training_boxes_resized = resize_boxes(training_boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
             scaled_gt_box = resize_boxes(
                 gt_box.unsqueeze(0), self.im_info, self.transformed_image_size[0]).squeeze(0)
@@ -662,29 +607,16 @@ class Track(object):
             pooled_feat = self.box_head(roi_pool_feat)
 
             # compute bbox offset
-            class_logits, bbox_pred = self.box_predictor(pooled_feat)
-            pred_scores = F.softmax(class_logits, -1)
-
-            pred_boxes = bbox_pred_decoder(bbox_pred, proposals)
-            pred_boxes = pred_boxes[:, 1:].squeeze(dim=1)
+            class_logits, _ = self.box_predictor(pooled_feat)
 
             if np.mod(i, int(finetuning_config["iterations_per_validation"])) == 0 and finetuning_config["validate"]:
                 pooled_feat_val = self.box_head(roi_pool_feat_val)
                 class_logits_val, bbox_pred_val = self.box_predictor(pooled_feat_val)
-                pred_boxes_val = bbox_pred_decoder(bbox_pred_val, proposals_val)
-                pred_boxes_val = pred_boxes_val[:, 1:].squeeze(dim=1)
                 pred_scores_val = F.softmax(class_logits_val, -1)
-                val_loss_regressor = criterion_regressor(pred_boxes_val[validation_boxes[:, 4]==1, :],
-                                                         scaled_gt_box.repeat(int(int(finetuning_config["batch_size_val"])/2), 1))
-                val_loss_classifier = criterion_classifier(pred_scores_val, validation_boxes[:, 4].to(torch.int64))
-                val_loss = val_loss_regressor + val_loss_classifier
-                self.plotter.plot('loss', 'val cls', "Bbox Loss Track {}".format(self.id), i, val_loss_classifier.item())
-                self.plotter.plot('loss', 'val reg', "Bbox Loss Track {}".format(self.id), i , val_loss_regressor.item())
+                val_loss = F.cross_entropy(pred_scores_val, validation_boxes[:, 4].to(torch.int64))
                 self.plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
 
-            loss_regressor = criterion_regressor(pred_boxes[training_boxes[:, 4]==1, :], scaled_gt_box.repeat(int(int(finetuning_config["batch_size"])/2), 1))
-            loss_classifier = criterion_classifier(pred_scores, training_boxes[:, 4].to(torch.int64))
-            loss = loss_regressor + loss_classifier
+            loss = F.cross_entropy(class_logits, training_boxes[:, 4].long())
             print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
 
             loss.backward()
