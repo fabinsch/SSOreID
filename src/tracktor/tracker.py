@@ -134,9 +134,11 @@ class Tracker:
                 scores.append(score)
                 bbox = clip_boxes_to_image(box, blob['img'].shape[-2:])
                 pos.append(bbox)
-                _, score_plot = self.obj_detect.predict_boxes(track.pos, box_head=box_pred_id_6[0][0],
-                                                              box_predictor=box_pred_id_6[0][1])
-                self.plotter.plot('person score {}'.format(track.id), 'score', "Person Score Track {}".format(track.id), frame, score_plot.cpu().numpy()[0])
+                if box_pred_id_6:
+                    _, score_plot = self.obj_detect.predict_boxes(track.pos,
+                                                                  box_head=box_pred_id_6[0][0],
+                                                                  box_predictor=box_pred_id_6[0][1])
+                    self.plotter.plot('person score {}'.format(track.id), 'score', "Person Score Track {}".format(track.id), frame, score_plot.cpu().numpy()[0])
             scores = torch.cat(scores)
             pos = torch.cat(pos)
         else:
@@ -415,7 +417,6 @@ class Tracker:
                     if self.do_reid:
                         new_features = self.get_appearances(blob)
                         self.add_features(new_features)
-
         #####################
         # Create new tracks #
         #####################
@@ -568,9 +569,10 @@ class Track(object):
         boxes_resized = resize_boxes(boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
         proposals = [boxes_resized]
 
-        roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
         with torch.no_grad():
-            feat = self.box_head(roi_pool_feat)
+            roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
+
+        feat = self.box_head(roi_pool_feat)
         class_logits, _ = self.box_predictor(feat)
         if scores:
             pred_scores = F.softmax(class_logits, -1)
@@ -589,7 +591,7 @@ class Track(object):
         self.box_predictor.train()
         self.box_head.train()
 
-        optimizer = torch.optim.Adam(list(self.box_predictor.parameters()),
+        optimizer = torch.optim.Adam(list(self.box_predictor.parameters()) + list(self.box_head.parameters()),
                                      lr=float(finetuning_config["learning_rate"]))
 
         if finetuning_config["validate"]:
@@ -599,7 +601,7 @@ class Track(object):
             val_dets = additional_dets[-1:]
             validation_boxes = self.generate_training_set_classification(float(int(finetuning_config["batch_size_val"])),
                                                                          val_dets).to(device)
-
+        print("Finetuning track {}".format(self.id))
         for i in range(int(finetuning_config["iterations"])):
 
             optimizer.zero_grad()
@@ -609,7 +611,7 @@ class Track(object):
 
 
             loss = self.forward_pass(training_boxes, box_roi_pool, fpn_features, eval=False)
-            print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
+            #print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
 
             if np.mod(i, int(finetuning_config["iterations_per_validation"])) == 0 and finetuning_config["validate"]:
                 val_loss = self.forward_pass(validation_boxes, box_roi_pool, fpn_features, eval=True)
@@ -622,7 +624,6 @@ class Track(object):
         self.box_head.eval()
 
         dets = torch.cat((self.pos, additional_dets))
-        #print(dets)
         print(self.forward_pass(dets, box_roi_pool, fpn_features, scores=True))
 
 #
