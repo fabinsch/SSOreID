@@ -1,12 +1,14 @@
 tracktor:
-  dataset: mot17_train_FRCNN17
+  dataset: mot17_02_FRCNN17
   'tracker':
+    do_reid: False
     'finetuning':
       'enabled': True
-      'iterations': 10
+      'iterations': 25
       'learning_rate': 9e-3
       'batch_size': 32
       validate: False
       val_batch_size: 32
+      finetune_repeatedly: True
+      finetuning_interval: 4
   'output_subdir': '1'
-#
