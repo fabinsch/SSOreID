@@ -626,20 +626,17 @@ class Track(object):
 
             if np.mod(i, int(finetuning_config["iterations_per_validation"])) == 0 and finetuning_config["validate"]:
                 val_loss = self.forward_pass(validation_boxes, box_roi_pool, fpn_features, eval=True)
-                self.plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
+                #self.plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
 
             if early_stopping:
                 scores = self.forward_pass(training_boxes, box_roi_pool, fpn_features, scores=True, eval=True)
 
-                if finetuning_config["validate"]:
-                    print(i)
-                    print('Average score of positive examples: {}'.format(torch.mean(scores[:16])))
-                    print('Average score of negative examples: {}\n'.format(torch.mean(scores[16:])))
+                if finetuning_config["validate"] and np.mod(i, 10):
                     self.plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(self.id), i, scores[0].cpu().numpy())
                     for sample in range(16, 32):
                         self.plotter.plot('loss', 'negative {}'.format(sample), 'Class Loss Evaluation Track {}'.format(self.id), i, scores[sample].cpu().numpy())
 
-                if scores[0] - torch.max(scores[16:]) > 0.1 and scores[0] > 0.8:
+                if scores[0] - torch.max(scores[16:]) > 0.7:
                     print('Stopping because difference between positive score and maximum negative score is {}'.format(scores[0] - torch.max(scores[16:])))
                     break
 
