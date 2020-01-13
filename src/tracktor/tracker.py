@@ -51,7 +51,7 @@ class Tracker:
             self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
             self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
 
-        self.plotter = VisdomLinePlotter()
+        self.plotter = VisdomLinePlotter(env_name='person_scores', xlabel="Frames")
         self.tracks = []
         self.inactive_tracks = []
         self.track_num = 0
@@ -89,13 +89,9 @@ class Tracker:
                 box_predictor_copy = self.get_box_predictor()
                 track.finetune_detector(self.obj_detect.roi_heads.box_roi_pool,
                                         self.obj_detect.fpn_features,
-                                        new_det_pos[i],
-                                        self.obj_detect.roi_heads.box_coder.decode,
-                                        image,
                                         self.finetuning_config,
                                         box_head_copy,
                                         box_predictor_copy,
-                                        plot=False,
                                         additional_dets=other_pedestrians_bboxes)
             self.tracks.append(track)
 
@@ -138,7 +134,7 @@ class Tracker:
                     _, score_plot = self.obj_detect.predict_boxes(track.pos,
                                                                   box_head=box_pred_id_6[0][0],
                                                                   box_predictor=box_pred_id_6[0][1])
-                    self.plotter.plot('person score {}'.format(track.id), 'score', "Person Score Track {}".format(track.id), frame, score_plot.cpu().numpy()[0])
+                    self.plotter.plot('person score {}'.format(track.id), 'score', "Person Score Track {}".format(track.id), frame, score.cpu().numpy()[0])
             scores = torch.cat(scores)
             pos = torch.cat(pos)
         else:
@@ -404,9 +400,6 @@ class Tracker:
                                 track.finetune_detector(
                                     self.obj_detect.roi_heads.box_roi_pool,
                                     self.obj_detect.fpn_features,
-                                    track.pos.squeeze(0),
-                                    self.obj_detect.roi_heads.box_coder.decode,
-                                    blob['img'][0],
                                     self.finetuning_config,
                                     box_head_copy,
                                     box_predictor_copy,
@@ -528,10 +521,11 @@ class Track(object):
         self.last_pos.clear()
         self.last_pos.append(self.pos.clone())
 
+    # TODO is displacement of roi helpful? Kinda like dropout as specific features might not be in the ROI anymore
+    # TODO only take negative examples that are close to positive example --> Makes training easier.
+    # TODO try lower learning rate and not to overfit --> best behaviour of 6 was when 0 track still had high score.
     def generate_training_set_regession(self, gt_pos, max_displacement, batch_size=8, plot=False, plot_args=None):
         gt_pos = gt_pos.to(device)
-        # displacement should be the realistic displacement of the bounding box from t-frame to the t+1-frame.
-        # TODO implement check that the randomly generated box has largest IoU with gt_pos compared to all other detections.
         random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos,
                                                                 batch_size=batch_size,
                                                                 max_displacement=max_displacement).to(device)
@@ -545,19 +539,28 @@ class Track(object):
 
     def generate_training_set_classification(self, batch_size, additional_dets):
         num_positive_examples = int(batch_size / 2)
-        positive_examples = self.pos.repeat(num_positive_examples, 1)
+        positive_examples = self.generate_training_set_regession(self.pos,
+                                                       0.0,
+                                                       batch_size=num_positive_examples).to(device)
+        positive_examples = clip_boxes(positive_examples, self.im_info)
+        # positive_examples = self.pos.repeat(num_positive_examples, 1)
         positive_examples = torch.cat((positive_examples, torch.ones([num_positive_examples, 1]).to(device)), dim=1)
         boxes = positive_examples
         if additional_dets.size(0) != 0:
             standard_batch_size_negative_example = int(np.floor(num_positive_examples / len(additional_dets)))
             offset = num_positive_examples - (standard_batch_size_negative_example * additional_dets.size(0))
             for i in range(additional_dets.size(0)):
-                # TODO have a person not seen before in the validation set.
                 num_negative_example = standard_batch_size_negative_example
                 if offset != 0:
                     num_negative_example += 1
                     offset -= 1
-                negative_example = additional_dets[i].view(1, -1).repeat(num_negative_example, 1)
+                if num_negative_example == 0:
+                    break
+                negative_example = self.generate_training_set_regession(additional_dets[i].view(1, -1),
+                                                                        0.0,
+                                                                        batch_size=num_negative_example).to(device)
+                negative_example = clip_boxes(negative_example, self.im_info)
+                # negative_example = additional_dets[i].view(1, -1).repeat(num_negative_example, 1)
                 negative_example_and_label = torch.cat((negative_example, torch.zeros([num_negative_example, 1]).to(device)), dim=1)
                 boxes = torch.cat((boxes, negative_example_and_label))
         return boxes[torch.randperm(boxes.size(0))]
@@ -568,11 +571,10 @@ class Track(object):
             self.box_head.eval()
         boxes_resized = resize_boxes(boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
         proposals = [boxes_resized]
-
+        roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
+        # Only train the box prediction head
         with torch.no_grad():
-            roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
-
-        feat = self.box_head(roi_pool_feat)
+            feat = self.box_head(roi_pool_feat)
         class_logits, _ = self.box_predictor(feat)
         if scores:
             pred_scores = F.softmax(class_logits, -1)
@@ -583,20 +585,21 @@ class Track(object):
             self.box_head.train()
         return loss
 
-    def finetune_detector(self, box_roi_pool, fpn_features, gt_box, bbox_pred_decoder, image,
-                          finetuning_config, box_head, box_predictor, plot=False, additional_dets=None):
+    def finetune_detector(self, box_roi_pool, fpn_features,
+                          finetuning_config, box_head, box_predictor, additional_dets=None):
         self.box_head = box_head
         self.box_predictor = box_predictor
 
         self.box_predictor.train()
         self.box_head.train()
-
-        optimizer = torch.optim.Adam(list(self.box_predictor.parameters()) + list(self.box_head.parameters()),
+        optimizer = torch.optim.Adam(list(self.box_predictor.parameters()),
                                      lr=float(finetuning_config["learning_rate"]))
+        #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 30, gamma=0.1)
+
 
         if finetuning_config["validate"]:
             if not self.plotter:
-                self.plotter = VisdomLinePlotter()
+                self.plotter = VisdomLinePlotter(env_name='training')
             additional_dets = additional_dets[:-1]
             val_dets = additional_dets[-1:]
             validation_boxes = self.generate_training_set_classification(float(int(finetuning_config["batch_size_val"])),
@@ -619,6 +622,7 @@ class Track(object):
 
             loss.backward()
             optimizer.step()
+            #scheduler.step()
 
         self.box_predictor.eval()
         self.box_head.eval()
