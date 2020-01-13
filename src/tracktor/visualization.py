@@ -37,17 +37,18 @@ def plot_compare_bounding_boxes(box_finetune, box_no_finetune, image):
 class VisdomLinePlotter(object):
     """Plots to Visdom"""
 
-    def __init__(self, env_name='main'):
+    def __init__(self, env_name='main', xlabel='Epochs'):
         self.viz = Visdom(port=8098)
         self.env = env_name
         self.plots = {}
+        self.xlabel = xlabel
 
     def plot(self, var_name, split_name, title_name, x, y):
         if var_name not in self.plots:
             self.plots[var_name] = self.viz.line(X=np.array([x, x]), Y=np.array([y, y]), env=self.env, opts=dict(
                 legend=[split_name],
                 title=title_name,
-                xlabel='Epochs',
+                xlabel=self.xlabel,
                 ylabel=var_name
             ))
             self.viz.line(X=np.array(range(1, 51)), Y=np.repeat(0.5, 50), env=self.env, win=self.plots[var_name],
