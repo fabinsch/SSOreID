@@ -11,4 +11,5 @@ tracktor:
       val_batch_size: 32
       finetune_repeatedly: False
       finetuning_interval: 4
+      early_stopping_classifier: True
   'output_subdir': '1'

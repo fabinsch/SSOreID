@@ -90,3 +90,4 @@ tracktor:
       # Validate every t mod k frames
       validation_interval: 5
       checkpoint_interval: 5
+      early_stopping_classifier: False

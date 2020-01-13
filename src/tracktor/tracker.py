@@ -92,7 +92,8 @@ class Tracker:
                                         self.finetuning_config,
                                         box_head_copy,
                                         box_predictor_copy,
-                                        additional_dets=other_pedestrians_bboxes)
+                                        additional_dets=other_pedestrians_bboxes,
+                                        early_stopping=self.finetuning_config['early_stopping_classifier'])
             self.tracks.append(track)
 
         self.track_num += num_new
