@@ -131,11 +131,14 @@ class Tracker:
                 scores.append(score)
                 bbox = clip_boxes_to_image(box, blob['img'].shape[-2:])
                 pos.append(bbox)
+
+                #self.plotter.plot('Scores by classifier for track {}'.format(track.id), 'score {}')
                 if box_pred_id_6:
                     _, score_plot = self.obj_detect.predict_boxes(track.pos,
                                                                   box_head=box_pred_id_6[0][0],
                                                                   box_predictor=box_pred_id_6[0][1])
-                    self.plotter.plot('person score {}'.format(track.id), 'score', "Person Score Track {}".format(track.id), frame, score.cpu().numpy()[0])
+                    #TODO sollte das in der nächsten Zeile am ende score_plot statt score sein?
+                    self.plotter.plot('person score {}'.format(track.id), 'score', "Person Score Track {}".format(track.id), frame, score_plot.cpu().numpy()[0])
             scores = torch.cat(scores)
             pos = torch.cat(pos)
         else:
