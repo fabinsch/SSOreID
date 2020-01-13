@@ -632,9 +632,9 @@ class Track(object):
                     print(i)
                     print('Average score of positive examples: {}'.format(torch.mean(scores[:16])))
                     print('Average score of negative examples: {}\n'.format(torch.mean(scores[16:])))
-                    self.plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(self.id), i, torch.mean(scores[:16]))
+                    self.plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(self.id), i, scores[0].numpy())
                     for sample in range(16, 32):
-                        self.plotter.plot('loss', 'negative {}'.format(sample), 'Class Loss Evaluation Track {}'.format(self.id), i, scores[sample])
+                        self.plotter.plot('loss', 'negative {}'.format(sample), 'Class Loss Evaluation Track {}'.format(self.id), i, scores[sample].numpy())
 
                 if scores[0] - torch.max(scores[16:]) > 0.1 and scores[0] > 0.8:
                     print('Stopping because difference between positive score and maximum negative score is {}'.format(scores[0] - torch.max(scores[16:])))
