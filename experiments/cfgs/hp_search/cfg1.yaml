@@ -4,11 +4,11 @@ tracktor:
     do_reid: False
     'finetuning':
       'enabled': True
-      'iterations': 25
+      'iterations': 50
       'learning_rate': 9e-3
       'batch_size': 32
-      validate: False
+      validate: True
       val_batch_size: 32
-      finetune_repeatedly: True
+      finetune_repeatedly: False
       finetuning_interval: 4
   'output_subdir': '1'

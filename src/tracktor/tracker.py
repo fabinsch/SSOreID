@@ -537,7 +537,7 @@ class Track(object):
 
         return training_boxes
 
-    def generate_training_set_classification(self, batch_size, additional_dets):
+    def generate_training_set_classification(self, batch_size, additional_dets, shuffle=False):
         num_positive_examples = int(batch_size / 2)
         positive_examples = self.generate_training_set_regession(self.pos,
                                                        0.0,
@@ -563,7 +563,9 @@ class Track(object):
                 # negative_example = additional_dets[i].view(1, -1).repeat(num_negative_example, 1)
                 negative_example_and_label = torch.cat((negative_example, torch.zeros([num_negative_example, 1]).to(device)), dim=1)
                 boxes = torch.cat((boxes, negative_example_and_label))
-        return boxes[torch.randperm(boxes.size(0))]
+        if shuffle:
+            boxes = boxes[torch.randperm(boxes.size(0))]
+        return boxes
 
     def forward_pass(self, boxes, box_roi_pool, fpn_features, eval=False, scores=False):
         if eval:
@@ -578,6 +580,9 @@ class Track(object):
         class_logits, _ = self.box_predictor(feat)
         if scores:
             pred_scores = F.softmax(class_logits, -1)
+            if eval:
+                self.box_predictor.train()
+                self.box_head.train()
             return pred_scores[:, 1:].squeeze(dim=1).detach()
         loss = F.cross_entropy(class_logits, boxes[:, 4].long())
         if eval:
@@ -586,7 +591,7 @@ class Track(object):
         return loss
 
     def finetune_detector(self, box_roi_pool, fpn_features,
-                          finetuning_config, box_head, box_predictor, additional_dets=None):
+                          finetuning_config, box_head, box_predictor, additional_dets=None, early_stopping=True):
         self.box_head = box_head
         self.box_predictor = box_predictor
 
@@ -594,7 +599,7 @@ class Track(object):
         self.box_head.train()
         optimizer = torch.optim.Adam(list(self.box_predictor.parameters()),
                                      lr=float(finetuning_config["learning_rate"]))
-        #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 30, gamma=0.1)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 20, gamma=1)
 
 
         if finetuning_config["validate"]:
@@ -612,7 +617,6 @@ class Track(object):
             training_boxes = self.generate_training_set_classification(int(finetuning_config["batch_size"]),
                                                                        additional_dets)
 
-
             loss = self.forward_pass(training_boxes, box_roi_pool, fpn_features, eval=False)
             #print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
 
@@ -620,9 +624,26 @@ class Track(object):
                 val_loss = self.forward_pass(validation_boxes, box_roi_pool, fpn_features, eval=True)
                 self.plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
 
+            if early_stopping:
+                scores = self.forward_pass(training_boxes, box_roi_pool, fpn_features, scores=True, eval=True)
+
+                if finetuning_config["validate"]:
+                    print(i)
+                    print('Average score of positive examples: {}'.format(torch.mean(scores[:16])))
+                    print('Average score of negative examples: {}\n'.format(torch.mean(scores[16:])))
+                    self.plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(self.id), i, torch.mean(scores[:16]))
+                    for sample in range(16, 32):
+                        self.plotter.plot('loss', 'negative {}'.format(sample), 'Class Loss Evaluation Track {}'.format(self.id), i, scores[sample])
+
+                if scores[0] - torch.max(scores[16:]) > 0.1 and scores[0] > 0.8:
+                    print('Stopping because difference between positive score and maximum negative score is {}'.format(scores[0] - torch.max(scores[16:])))
+                    break
+
+
+
             loss.backward()
             optimizer.step()
-            #scheduler.step()
+            scheduler.step()
 
         self.box_predictor.eval()
         self.box_head.eval()
