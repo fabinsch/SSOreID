@@ -636,7 +636,7 @@ class Track(object):
                     for sample in range(16, 32):
                         self.plotter.plot('loss', 'negative {}'.format(sample), 'Class Loss Evaluation Track {}'.format(self.id), i, scores[sample].cpu().numpy())
 
-                if scores[0] - torch.max(scores[16:]) > 0.7:
+                if scores[0] - torch.max(scores[16:]) > 0.3:
                     print('Stopping because difference between positive score and maximum negative score is {}'.format(scores[0] - torch.max(scores[16:])))
                     break
 
