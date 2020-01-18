@@ -408,7 +408,8 @@ class Tracker:
                                     self.finetuning_config,
                                     box_head_copy,
                                     box_predictor_copy,
-                                    additional_dets=other_pedestrians_bboxes
+                                    additional_dets=other_pedestrians_bboxes,
+                                    early_stopping=self.finetuning_config['early_stopping_classifier']
                                 )
 
                 if keep.nelement() > 0:
@@ -596,7 +597,7 @@ class Track(object):
         return loss
 
     def finetune_detector(self, box_roi_pool, fpn_features,
-                          finetuning_config, box_head, box_predictor, additional_dets=None, early_stopping=True):
+                          finetuning_config, box_head, box_predictor, additional_dets=None, early_stopping=False):
         self.box_head = box_head
         self.box_predictor = box_predictor
 
