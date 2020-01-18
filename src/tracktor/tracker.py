@@ -138,7 +138,8 @@ class Tracker:
                                                                   box_head=box_pred_id_6[0][0],
                                                                   box_predictor=box_pred_id_6[0][1])
                     print('Score von classifier 6 auf track {} ist {}'.format(track.id, score_plot.cpu().nmpy([0])))
-                    self.plotter.plot('person score {}'.format(track.id), 'score', "Person Score Track {}".format(track.id), frame, score_plot.cpu().numpy()[0])
+                    if self.finetuning_config['validate']:
+                        self.plotter.plot('person score {}'.format(track.id), 'score', "Person Score Track {}".format(track.id), frame, score_plot.cpu().numpy()[0])
             scores = torch.cat(scores)
             pos = torch.cat(pos)
         else:
