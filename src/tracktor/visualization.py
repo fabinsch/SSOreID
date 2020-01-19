@@ -37,7 +37,7 @@ def plot_compare_bounding_boxes(box_finetune, box_no_finetune, image):
 class VisdomLinePlotter(object):
     """Plots to Visdom"""
 
-    def __init__(self, env_name='main', xlabel='Epochs'):
+    def __init__(self, env_name='main', xlabel='Iteration/Frame'):
         self.viz = Visdom(port=8097)
         self.env = env_name
         self.plots = {}
@@ -51,9 +51,9 @@ class VisdomLinePlotter(object):
                 xlabel=self.xlabel,
                 ylabel=var_name
             ))
-            self.viz.line(X=np.array(range(1, 51)), Y=np.repeat(0.5, 50), env=self.env, win=self.plots[var_name],
-                          update='insert', opts=dict(linecolor=np.array([[255, 0, 0], ])),
-                          name="Regression Person threshold")
+            #self.viz.line(X=np.array(range(1, 51)), Y=np.repeat(0.5, 50), env=self.env, win=self.plots[var_name],
+            #              update='insert', opts=dict(linecolor=np.array([[255, 0, 0], ])),
+            #              name="Regression Person threshold")
         else:
             self.viz.line(X=np.array([x]), Y=np.array([y]), env=self.env, win=self.plots[var_name], name=split_name,
                           update='append')

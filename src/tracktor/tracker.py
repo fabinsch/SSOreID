@@ -139,7 +139,7 @@ class Tracker:
                                                                   box_predictor_classification=box_pred_id_6[0][1])
                     print('Score von classifier 6 auf track {} ist {}'.format(track.id, score_plot.cpu().numpy()[0]))
                     if self.finetuning_config['validate']:
-                        self.plotter.plot('person score {}'.format(track.id), 'score', "Person Score Track  {}".format(track.id), frame, score_plot.cpu().numpy()[0])
+                        self.plotter.plot('person score', 'score {}'.format(track.id), "Person Scores by track 6 classifier", frame, score_plot.cpu().numpy()[0])
             scores = torch.cat(scores)
             pos = torch.cat(pos)
         else:
@@ -395,13 +395,13 @@ class Tracker:
                     if i in keep:
                         track.frames_since_active += 1
                         if self.finetuning_config["finetune_repeatedly"]:
+                            box_head_copy = self.get_box_head()
+                            box_predictor_copy = self.get_box_predictor()
+                            other_pedestrians_bboxes = torch.Tensor([]).to(device)
+                            for j in range(len(self.tracks)):
+                                if j != i:
+                                    other_pedestrians_bboxes = torch.cat((other_pedestrians_bboxes, self.tracks[j].pos))
                             if np.mod(track.frames_since_active, self.finetuning_config["finetuning_interval"]) == 0:
-                                box_head_copy = self.get_box_head()
-                                box_predictor_copy = self.get_box_predictor()
-                                other_pedestrians_bboxes = torch.Tensor([]).to(device)
-                                for j in range(len(self.tracks)):
-                                    if j != i:
-                                        other_pedestrians_bboxes = torch.cat((other_pedestrians_bboxes, self.tracks[j].pos))
                                 track.finetune_classification(
                                     self.obj_detect.roi_heads.box_roi_pool,
                                     self.obj_detect.fpn_features,
@@ -411,6 +411,10 @@ class Tracker:
                                     additional_dets=other_pedestrians_bboxes,
                                     early_stopping=self.finetuning_config['early_stopping_classifier']
                                 )
+                            elif self.finetuning_config["build_up_training_set"]:
+                                track.update_training_set_classification(self.finetuning_config['batch_size'],
+                                                                         other_pedestrians_bboxes,
+                                                                         include_previous_frames=True)
 
                 if keep.nelement() > 0:
                     if self.do_reid:
@@ -505,6 +509,7 @@ class Track(object):
         self.scale = self.im_info[0] / self.transformed_image_size[0][0]
         self.plotter = None
         self.checkpoints = dict()
+        self.training_boxes = None
 
     def has_positive_area(self):
         return self.pos[0, 2] > self.pos[0, 0] and self.pos[0, 3] > self.pos[0, 1]
@@ -575,6 +580,20 @@ class Track(object):
             boxes = boxes[torch.randperm(boxes.size(0))]
         return boxes
 
+    def update_training_set_classification(self, batch_size, additional_dets, include_previous_frames=False, shuffle=False):
+        boxes = self.generate_training_set_classification(batch_size, additional_dets, shuffle=shuffle)
+        if include_previous_frames and self.training_boxes is not None:
+            replacement_prob = 1 / 3
+            weights = torch.tensor([1 / batch_size]).repeat(int(batch_size))
+            indices_replaced_by_current_frame_boxes = torch.multinomial(weights, int(batch_size * replacement_prob))
+            self.training_boxes[indices_replaced_by_current_frame_boxes] = boxes[
+                indices_replaced_by_current_frame_boxes]
+        else:
+            self.training_boxes = boxes
+
+    def generate_validation_set_classfication(self, batch_size, additional_dets, shuffle=False):
+        return self.generate_training_set_classification(batch_size, additional_dets, shuffle=shuffle)
+
     def forward_pass_for_classifier_training(self, boxes, box_roi_pool, fpn_features, eval=False, scores=False):
         if eval:
             self.box_predictor_classification.eval()
@@ -616,17 +635,19 @@ class Track(object):
                 self.plotter = VisdomLinePlotter(env_name='training')
             additional_dets = additional_dets[:-1]
             val_dets = additional_dets[-1:]
-            validation_boxes = self.generate_training_set_classification(float(int(finetuning_config["batch_size_val"])),
+            validation_boxes = self.generate_validation_set_classfication(float(int(finetuning_config["batch_size_val"])),
                                                                          val_dets).to(device)
         print("Finetuning track {}".format(self.id))
         for i in range(int(finetuning_config["iterations"])):
 
             optimizer.zero_grad()
+            include_previous = finetuning_config['build_up_training_set']
+            self.update_training_set_classification(float(int(finetuning_config["batch_size"])),
+                                                                       additional_dets,
+                                                                       include_previous_frames=include_previous,
+                                                                       shuffle=False)
 
-            training_boxes = self.generate_training_set_classification(int(finetuning_config["batch_size"]),
-                                                                       additional_dets)
-
-            loss = self.forward_pass_for_classifier_training(training_boxes, box_roi_pool, fpn_features, eval=False)
+            loss = self.forward_pass_for_classifier_training(self.training_boxes, box_roi_pool, fpn_features, eval=False)
             #print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
 
             if np.mod(i, int(finetuning_config["iterations_per_validation"])) == 0 and finetuning_config["validate"]:
@@ -634,14 +655,14 @@ class Track(object):
                 #self.plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
 
             if early_stopping:
-                scores = self.forward_pass_for_classifier_training(training_boxes, box_roi_pool, fpn_features, scores=True, eval=True)
+                scores = self.forward_pass_for_classifier_training(self.training_boxes, box_roi_pool, fpn_features, scores=True, eval=True)
 
-                if finetuning_config["validate"] and np.mod(i, 10):
+                if finetuning_config["validate"] :
                     self.plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(self.id), i, scores[0].cpu().numpy())
                     for sample in range(16, 32):
                         self.plotter.plot('loss', 'negative {}'.format(sample), 'Class Loss Evaluation Track {}'.format(self.id), i, scores[sample].cpu().numpy())
 
-                if scores[0] - torch.max(scores[16:]) > 0.3:
+                if scores[0] - torch.max(scores[16:]) > 0.8:
                     print('Stopping because difference between positive score and maximum negative score is {}'.format(scores[0] - torch.max(scores[16:])))
                     break
 
