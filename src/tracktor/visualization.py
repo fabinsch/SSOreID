@@ -66,7 +66,7 @@ def plot_bounding_boxes(im_info, gt_pos, image, proposals, iteration, id, valida
     image = image.permute(1, 2, 0)
     fig, ax = plt.subplots()
     plt.imshow(image, cmap='gist_gray_r')
-    gt_pos_np = gt_pos.numpy()
+    gt_pos_np = gt_pos.cpu().numpy()
     for i in range(num_proposals):
         ax.add_patch(
             plt.Rectangle((proposals[i, 0], proposals[i, 1]),
