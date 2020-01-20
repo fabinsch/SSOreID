@@ -43,20 +43,25 @@ class VisdomLinePlotter(object):
         self.plots = {}
         self.xlabel = xlabel
 
-    def plot(self, var_name, split_name, title_name, x, y):
+    def plot(self, var_name, split_name, title_name, x, y, erase=False, is_target=False):
+        if is_target:
+            color = np.array([[255, 0, 0], ])
+        else:
+            color = np.array([[0, 0, 255], ])
         if var_name not in self.plots:
             self.plots[var_name] = self.viz.line(X=np.array([x, x]), Y=np.array([y, y]), env=self.env, opts=dict(
                 #legend=[split_name],
                 title=title_name,
                 xlabel=self.xlabel,
-                ylabel=var_name
+                ylabel=var_name,
+                linecolor=color
             ))
             #self.viz.line(X=np.array(range(1, 51)), Y=np.repeat(0.5, 50), env=self.env, win=self.plots[var_name],
             #              update='insert', opts=dict(linecolor=np.array([[255, 0, 0], ])),
             #              name="Regression Person threshold")
         else:
             self.viz.line(X=np.array([x]), Y=np.array([y]), env=self.env, win=self.plots[var_name], name=split_name,
-                          update='append')
+                          update='append', opts=dict(linecolor=color))
 
 
 def plot_bounding_boxes(im_info, gt_pos, image, proposals, iteration, id, validate=False):
