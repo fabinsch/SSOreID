@@ -139,8 +139,9 @@ class Tracker:
                     score_by_other_classifier = score_plot.cpu().numpy()[0]
                     print('Score von classifier {} auf track {} ist {}'.format(other_classifier[2], track.id, score_by_other_classifier))
                     if self.finetuning_config['validate']:
+                        is_target = (track.id == other_classifier[2])
                         self.plotter.plot('person {} score'.format(other_classifier[2]), 'score {}'.format(track.id), "Person Scores by track {} classifier".format(other_classifier[2]), frame,
-                                          score_by_other_classifier)
+                                          score_by_other_classifier, is_target=is_target)
             scores = torch.cat(scores)
             pos = torch.cat(pos)
         else:
@@ -675,8 +676,8 @@ class Track(object):
             if early_stopping:
                 scores = self.forward_pass_for_classifier_training(self.training_boxes, box_roi_pool, fpn_features, scores=True, eval=True)
 
-                if finetuning_config["validate"] :
-                    self.plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(self.id), i, scores[0].cpu().numpy())
+                if finetuning_config["validate"]:
+                    self.plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(self.id), i, scores[0].cpu().numpy(), is_target=True)
                     for sample in range(16, 32):
                         self.plotter.plot('loss', 'negative {}'.format(sample), 'Class Loss Evaluation Track {}'.format(self.id), i, scores[sample].cpu().numpy())
 
