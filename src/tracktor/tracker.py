@@ -115,7 +115,7 @@ class Tracker:
         if self.finetuning_config["enabled"]:
             scores = []
             pos = []
-            box_pred_id_6 = [(track.box_head_classification, track.box_predictor_classification) for track in self.tracks if track.id == 6]
+            other_classifiers = [(track.box_head_classification, track.box_predictor_classification, track.id) for track in self.tracks]
             for track in self.tracks:
                 # Regress with finetuned bbox head for each track
                 assert track.box_head_classification is not None
@@ -132,14 +132,15 @@ class Tracker:
                 bbox = clip_boxes_to_image(box, blob['img'].shape[-2:])
                 pos.append(bbox)
 
-                #self.plotter.plot('Scores by classifier for track {}'.format(track.id), 'score {}')
-                if box_pred_id_6:
+                for other_classifier in other_classifiers:
                     _, score_plot = self.obj_detect.predict_boxes(track.pos,
-                                                                  box_head_classification=box_pred_id_6[0][0],
-                                                                  box_predictor_classification=box_pred_id_6[0][1])
-                    print('Score von classifier 6 auf track {} ist {}'.format(track.id, score_plot.cpu().numpy()[0]))
+                                                                  box_head_classification=other_classifier[0],
+                                                                  box_predictor_classification=other_classifier[1])
+                    score_by_other_classifier = score_plot.cpu().numpy()[0]
+                    print('Score von classifier {} auf track {} ist {}'.format(other_classifier[2], track.id, score_by_other_classifier))
                     if self.finetuning_config['validate']:
-                        self.plotter.plot('person score', 'score {}'.format(track.id), "Person Scores by track 6 classifier", frame, score_plot.cpu().numpy()[0])
+                        self.plotter.plot('person {} score'.format(other_classifier[2]), 'score {}'.format(track.id), "Person Scores by track {} classifier".format(other_classifier[2]), frame,
+                                          score_by_other_classifier)
             scores = torch.cat(scores)
             pos = torch.cat(pos)
         else:
