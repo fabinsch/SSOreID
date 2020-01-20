@@ -203,7 +203,7 @@ class Tracker:
             for inactive_track in self.inactive_tracks:
                 print(inactive_track.id)
                 print(new_det_pos)
-                boxes, score = self.obj_detect.predict_boxes(new_det_pos, box_predictor=inactive_track.box_predictor)
+                boxes, score = self.obj_detect.predict_boxes(new_det_pos, box_predictor_classification=inactive_track.box_predictor_classification, box_head_classification=inactive_track.box_head_classification)
                 scores.append(score)
                 print('Last position of the inactive track: {} in {} frames ago'.format(inactive_track.last_pos[-1], inactive_track.count_inactive))
                 print('Scores by Network of track {}: {}\n'.format(inactive_track.id, score))
@@ -429,6 +429,7 @@ class Tracker:
                             elif self.finetuning_config["build_up_training_set"]:
                                 track.update_training_set_classification(self.finetuning_config['batch_size'],
                                                                          other_pedestrians_bboxes,
+                                                                         replacement_probability=self.finetuning_config['replacement_probability'],
                                                                          include_previous_frames=True)
 
                 if keep.nelement() > 0:
@@ -596,12 +597,11 @@ class Track(object):
             boxes = boxes[torch.randperm(boxes.size(0))]
         return boxes
 
-    def update_training_set_classification(self, batch_size, additional_dets, include_previous_frames=False, shuffle=False):
+    def update_training_set_classification(self, batch_size, additional_dets, include_previous_frames=False, shuffle=False, replacement_probability=0.5):
         boxes = self.generate_training_set_classification(batch_size, additional_dets, shuffle=shuffle)
         if include_previous_frames and self.training_boxes is not None:
-            replacement_prob = 1 / 3
             weights = torch.tensor([1 / batch_size]).repeat(int(batch_size))
-            indices_replaced_by_current_frame_boxes = torch.multinomial(weights, int(batch_size * replacement_prob))
+            indices_replaced_by_current_frame_boxes = torch.multinomial(weights, int(batch_size * replacement_probability))
             self.training_boxes[indices_replaced_by_current_frame_boxes] = boxes[
                 indices_replaced_by_current_frame_boxes]
         else:
@@ -643,7 +643,7 @@ class Track(object):
         self.box_head_classification.train()
         optimizer = torch.optim.Adam(
             list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()), lr=float(finetuning_config["learning_rate"]) )
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 20, gamma=1)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10, gamma=finetuning_config['gamma'])
 
 
         if finetuning_config["validate"]:
@@ -661,7 +661,8 @@ class Track(object):
             self.update_training_set_classification(float(int(finetuning_config["batch_size"])),
                                                                        additional_dets,
                                                                        include_previous_frames=include_previous,
-                                                                       shuffle=False)
+                                                                       shuffle=False,
+                                                                        replacement_probability=finetuning_config['replacement_probability'])
 
             loss = self.forward_pass_for_classifier_training(self.training_boxes, box_roi_pool, fpn_features, eval=False)
             #print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
@@ -692,7 +693,6 @@ class Track(object):
         #dets = torch.cat((self.pos, additional_dets))
         #print(self.forward_pass(dets, box_roi_pool, fpn_features, scores=True))
 
-#
 #                    idf1       idp       idr    recall  precision  num_unique_objects  mostly_tracked  partially_tracked  mostly_lost  num_false_positives  num_misses  num_switches  num_fragmentations      mota      motp
 #MOT17-02-FRCNN  0.458597  0.784569  0.323987  0.411980   0.997654                  62               8                 32           22                   18       10926            57                  65  0.407944  0.079305
 #MOT17-04-FRCNN  0.712063  0.904892  0.586980  0.647265   0.997828                  83              32                 29           22                   67       16775            21                  28  0.645415  0.095695
