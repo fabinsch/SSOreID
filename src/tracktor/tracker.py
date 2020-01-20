@@ -196,6 +196,21 @@ class Tracker:
         return features
 
 
+    def check_saved_finetuned_models(self, blob, new_det_pos):
+        scores = []
+        print('Inactive tracks: {}'.format([x.id for x in self.inactive_tracks]))
+        if len(new_det_pos.size()) > 1:
+            for inactive_track in self.inactive_tracks:
+                print(inactive_track.id)
+                print(new_det_pos)
+                boxes, score = self.obj_detect.predict_boxes(new_det_pos, box_predictor=inactive_track.box_predictor)
+                scores.append(score)
+                print('Last position of the inactive track: {} in {} frames ago'.format(inactive_track.last_pos[-1], inactive_track.count_inactive))
+                print('Scores by Network of track {}: {}\n'.format(inactive_track.id, score))
+                for i in range(len(new_det_pos)):
+                    plot_bounding_boxes(inactive_track.im_info, new_det_pos[i].unsqueeze(0), blob['img'], inactive_track.last_pos[-1], 999, 999)
+            #plot_bounding_boxes(im_info, new_det_pos[0], image, boxes, )
+
     def reid(self, blob, new_det_pos, new_det_scores):
         """Tries to ReID inactive tracks with provided detections."""
         zeros = torch.zeros(0).to(device)
@@ -454,6 +469,7 @@ class Tracker:
 
             # try to reidentify tracks
             new_det_pos, new_det_scores, new_det_features = self.reid(blob, new_det_pos, new_det_scores)
+            self.check_saved_finetuned_models(blob, new_det_pos)
 
             # add new
             if new_det_pos.nelement() > 0:
