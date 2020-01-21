@@ -216,6 +216,8 @@ class Tracker:
         # IDEA: evaluate all inactive track models on the new detections
         # reidentify a track, when the model has a significantly higher score on this new detection than on other detections
         if self.do_reid:
+            new_det_features = self.reid_network.test_rois(
+                blob['img'], new_det_pos).data
             scores = []
             print('Inactive tracks: {}'.format([x.id for x in self.inactive_tracks]))
             if len(new_det_pos.size()) > 1:
@@ -253,7 +255,7 @@ class Tracker:
                 if keep.nelement() > 0:
                     new_det_pos = new_det_pos[keep]
                     new_det_scores = new_det_scores[keep]
-                    new_det_features = torch.zeros(0).to(device)
+                    new_det_features = new_det_features[keep]
                 else:
                     new_det_pos = torch.zeros(0).to(device)
                     new_det_scores = torch.zeros(0).to(device)
