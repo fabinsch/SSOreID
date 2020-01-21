@@ -218,16 +218,14 @@ class Tracker:
         if self.do_reid:
             new_det_features = self.reid_network.test_rois(
                 blob['img'], new_det_pos).data
-            scores = []
             print('Inactive tracks: {}'.format([x.id for x in self.inactive_tracks]))
             if len(new_det_pos.size()) > 1:
                 remove_inactive = []
                 assigned = []
                 for inactive_track in self.inactive_tracks:
-                    boxes, score = self.obj_detect.predict_boxes(new_det_pos,
+                    boxes, scores = self.obj_detect.predict_boxes(new_det_pos,
                                                                  box_predictor_classification=inactive_track.box_predictor_classification,
                                                                  box_head_classification=inactive_track.box_head_classification)
-                    scores.append(score)
                     new_det_pos_highest_score_index = torch.argmax(scores)
 
                     self.tracks.append(inactive_track)
