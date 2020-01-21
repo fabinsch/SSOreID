@@ -85,15 +85,15 @@ class Tracker:
 
             if self.finetuning_config["enabled"]:
                 other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i+1:], old_tracks))
-                box_head_copy = self.get_box_head()
-                box_predictor_copy = self.get_box_predictor()
-                track.finetune_detector(self.obj_detect.roi_heads.box_roi_pool,
-                                        self.obj_detect.fpn_features,
-                                        self.finetuning_config,
-                                        box_head_copy,
-                                        box_predictor_copy,
-                                        additional_dets=other_pedestrians_bboxes,
-                                        early_stopping=self.finetuning_config['early_stopping_classifier'])
+                box_head_copy_for_classifier = self.get_box_head()
+                box_predictor_copy_for_classifier = self.get_box_predictor()
+                track.finetune_classification(self.obj_detect.roi_heads.box_roi_pool,
+                                              self.obj_detect.fpn_features,
+                                              self.finetuning_config,
+                                              box_head_copy_for_classifier,
+                                              box_predictor_copy_for_classifier,
+                                              additional_dets=other_pedestrians_bboxes,
+                                              early_stopping=self.finetuning_config['early_stopping_classifier'])
             self.tracks.append(track)
 
         self.track_num += num_new
@@ -115,15 +115,15 @@ class Tracker:
         if self.finetuning_config["enabled"]:
             scores = []
             pos = []
-            box_pred_id_6 = [(track.box_head, track.box_predictor) for track in self.tracks if track.id == 6]
+            other_classifiers = [(track.box_head_classification, track.box_predictor_classification, track.id) for track in self.tracks]
             for track in self.tracks:
                 # Regress with finetuned bbox head for each track
-                assert track.box_head is not None
-                assert track.box_predictor is not None
+                assert track.box_head_classification is not None
+                assert track.box_predictor_classification is not None
 
                 box, score = self.obj_detect.predict_boxes(track.pos,
-                                                           box_head=track.box_head,
-                                                           box_predictor=track.box_predictor)
+                                                           box_head_classification=track.box_head_classification,
+                                                           box_predictor_classification=track.box_predictor_classification)
 
                 if plot_compare:
                     box_no_finetune, score_no_finetune = self.obj_detect.predict_boxes(track.pos)
@@ -132,14 +132,16 @@ class Tracker:
                 bbox = clip_boxes_to_image(box, blob['img'].shape[-2:])
                 pos.append(bbox)
 
-                #self.plotter.plot('Scores by classifier for track {}'.format(track.id), 'score {}')
-                if box_pred_id_6:
+                for other_classifier in other_classifiers:
                     _, score_plot = self.obj_detect.predict_boxes(track.pos,
-                                                                  box_head=box_pred_id_6[0][0],
-                                                                  box_predictor=box_pred_id_6[0][1])
-                    print('Score von classifier 6 auf track {} ist {}'.format(track.id, score_plot.cpu().numpy()[0]))
+                                                                  box_head_classification=other_classifier[0],
+                                                                  box_predictor_classification=other_classifier[1])
+                    score_by_other_classifier = score_plot.cpu().numpy()[0]
+                    print('Score von classifier {} auf track {} ist {}'.format(other_classifier[2], track.id, score_by_other_classifier))
                     if self.finetuning_config['validate']:
-                        self.plotter.plot('person score {}'.format(track.id), 'score', "Person Score Track  {}".format(track.id), frame, score_plot.cpu().numpy()[0])
+                        is_target = (track.id == other_classifier[2])
+                        self.plotter.plot('person {} score'.format(other_classifier[2]), 'score {}'.format(track.id), "Person Scores by track {} classifier".format(other_classifier[2]), frame,
+                                          score_by_other_classifier, is_target=is_target)
             scores = torch.cat(scores)
             pos = torch.cat(pos)
         else:
@@ -195,6 +197,21 @@ class Tracker:
             features = torch.zeros(0).cuda()
         return features
 
+
+    def check_saved_finetuned_models(self, blob, new_det_pos):
+        scores = []
+        print('Inactive tracks: {}'.format([x.id for x in self.inactive_tracks]))
+        if len(new_det_pos.size()) > 1:
+            for inactive_track in self.inactive_tracks:
+                print(inactive_track.id)
+                print(new_det_pos)
+                boxes, score = self.obj_detect.predict_boxes(new_det_pos, box_predictor_classification=inactive_track.box_predictor_classification, box_head_classification=inactive_track.box_head_classification)
+                scores.append(score)
+                print('Last position of the inactive track: {} in {} frames ago'.format(inactive_track.last_pos[-1], inactive_track.count_inactive))
+                print('Scores by Network of track {}: {}\n'.format(inactive_track.id, score))
+                for i in range(len(new_det_pos)):
+                    plot_bounding_boxes(inactive_track.im_info, new_det_pos[i].unsqueeze(0), blob['img'], inactive_track.last_pos[-1], 999, 999)
+            #plot_bounding_boxes(im_info, new_det_pos[0], image, boxes, )
 
     def reid(self, blob, new_det_pos, new_det_scores):
         """Tries to ReID inactive tracks with provided detections."""
@@ -395,14 +412,14 @@ class Tracker:
                     if i in keep:
                         track.frames_since_active += 1
                         if self.finetuning_config["finetune_repeatedly"]:
+                            box_head_copy = self.get_box_head()
+                            box_predictor_copy = self.get_box_predictor()
+                            other_pedestrians_bboxes = torch.Tensor([]).to(device)
+                            for j in range(len(self.tracks)):
+                                if j != i:
+                                    other_pedestrians_bboxes = torch.cat((other_pedestrians_bboxes, self.tracks[j].pos))
                             if np.mod(track.frames_since_active, self.finetuning_config["finetuning_interval"]) == 0:
-                                box_head_copy = self.get_box_head()
-                                box_predictor_copy = self.get_box_predictor()
-                                other_pedestrians_bboxes = torch.Tensor([]).to(device)
-                                for j in range(len(self.tracks)):
-                                    if j != i:
-                                        other_pedestrians_bboxes = torch.cat((other_pedestrians_bboxes, self.tracks[j].pos))
-                                track.finetune_detector(
+                                track.finetune_classification(
                                     self.obj_detect.roi_heads.box_roi_pool,
                                     self.obj_detect.fpn_features,
                                     self.finetuning_config,
@@ -411,6 +428,11 @@ class Tracker:
                                     additional_dets=other_pedestrians_bboxes,
                                     early_stopping=self.finetuning_config['early_stopping_classifier']
                                 )
+                            elif self.finetuning_config["build_up_training_set"]:
+                                track.update_training_set_classification(self.finetuning_config['batch_size'],
+                                                                         other_pedestrians_bboxes,
+                                                                         replacement_probability=self.finetuning_config['replacement_probability'],
+                                                                         include_previous_frames=True)
 
                 if keep.nelement() > 0:
                     if self.do_reid:
@@ -450,6 +472,7 @@ class Tracker:
 
             # try to reidentify tracks
             new_det_pos, new_det_scores, new_det_features = self.reid(blob, new_det_pos, new_det_scores)
+            #self.check_saved_finetuned_models(blob, new_det_pos)
 
             # add new
             if new_det_pos.nelement() > 0:
@@ -498,11 +521,14 @@ class Track(object):
         self.transformed_image_size = transformed_image_size
         self.gt_id = None
         self.im_info = im_info
-        self.box_predictor = None
-        self.box_head = None
+        self.box_predictor_classification = None
+        self.box_head_classification = None
+        self.box_predictor_regression = None
+        self.box_head_regression = None
         self.scale = self.im_info[0] / self.transformed_image_size[0][0]
         self.plotter = None
         self.checkpoints = dict()
+        self.training_boxes = None
 
     def has_positive_area(self):
         return self.pos[0, 2] > self.pos[0, 0] and self.pos[0, 3] > self.pos[0, 1]
@@ -573,39 +599,53 @@ class Track(object):
             boxes = boxes[torch.randperm(boxes.size(0))]
         return boxes
 
-    def forward_pass(self, boxes, box_roi_pool, fpn_features, eval=False, scores=False):
+    def update_training_set_classification(self, batch_size, additional_dets, include_previous_frames=False, shuffle=False, replacement_probability=0.5):
+        boxes = self.generate_training_set_classification(batch_size, additional_dets, shuffle=shuffle)
+        if include_previous_frames and self.training_boxes is not None:
+            weights = torch.tensor([1 / batch_size]).repeat(int(batch_size))
+            indices_replaced_by_current_frame_boxes = torch.multinomial(weights, int(batch_size * replacement_probability))
+            self.training_boxes[indices_replaced_by_current_frame_boxes] = boxes[
+                indices_replaced_by_current_frame_boxes]
+        else:
+            self.training_boxes = boxes
+
+    def generate_validation_set_classfication(self, batch_size, additional_dets, shuffle=False):
+        return self.generate_training_set_classification(batch_size, additional_dets, shuffle=shuffle)
+
+    def forward_pass_for_classifier_training(self, boxes, box_roi_pool, fpn_features, eval=False, scores=False):
         if eval:
-            self.box_predictor.eval()
-            self.box_head.eval()
+            self.box_predictor_classification.eval()
+            self.box_head_classification.eval()
         boxes_resized = resize_boxes(boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
         proposals = [boxes_resized]
-        roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
-        # Only train the box prediction head
         with torch.no_grad():
-            feat = self.box_head(roi_pool_feat)
-        class_logits, _ = self.box_predictor(feat)
+            roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
+        # Only train the box prediction head
+        #with torch.no_grad():
+        feat = self.box_head_classification(roi_pool_feat)
+        class_logits, _ = self.box_predictor_classification(feat)
         if scores:
             pred_scores = F.softmax(class_logits, -1)
             if eval:
-                self.box_predictor.train()
-                self.box_head.train()
+                self.box_predictor_classification.train()
+                self.box_head_classification.train()
             return pred_scores[:, 1:].squeeze(dim=1).detach()
         loss = F.cross_entropy(class_logits, boxes[:, 4].long())
         if eval:
-            self.box_predictor.train()
-            self.box_head.train()
+            self.box_predictor_classification.train()
+            self.box_head_classification.train()
         return loss
 
-    def finetune_detector(self, box_roi_pool, fpn_features,
-                          finetuning_config, box_head, box_predictor, additional_dets=None, early_stopping=False):
-        self.box_head = box_head
-        self.box_predictor = box_predictor
+    def finetune_classification(self, box_roi_pool, fpn_features,
+                                finetuning_config, box_head_classification, box_predictor_classification, additional_dets=None, early_stopping=False):
+        self.box_head_classification = box_head_classification
+        self.box_predictor_classification = box_predictor_classification
 
-        self.box_predictor.train()
-        self.box_head.train()
-        optimizer = torch.optim.Adam(list(self.box_predictor.parameters()),
-                                     lr=float(finetuning_config["learning_rate"]))
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 20, gamma=1)
+        self.box_predictor_classification.train()
+        self.box_head_classification.train()
+        optimizer = torch.optim.Adam(
+            list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()), lr=float(finetuning_config["learning_rate"]) )
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10, gamma=finetuning_config['gamma'])
 
 
         if finetuning_config["validate"]:
@@ -613,32 +653,35 @@ class Track(object):
                 self.plotter = VisdomLinePlotter(env_name='training')
             additional_dets = additional_dets[:-1]
             val_dets = additional_dets[-1:]
-            validation_boxes = self.generate_training_set_classification(float(int(finetuning_config["batch_size_val"])),
+            validation_boxes = self.generate_validation_set_classfication(float(int(finetuning_config["batch_size_val"])),
                                                                          val_dets).to(device)
         print("Finetuning track {}".format(self.id))
         for i in range(int(finetuning_config["iterations"])):
 
             optimizer.zero_grad()
+            include_previous = finetuning_config['build_up_training_set']
+            self.update_training_set_classification(float(int(finetuning_config["batch_size"])),
+                                                                       additional_dets,
+                                                                       include_previous_frames=include_previous,
+                                                                       shuffle=False,
+                                                                        replacement_probability=finetuning_config['replacement_probability'])
 
-            training_boxes = self.generate_training_set_classification(int(finetuning_config["batch_size"]),
-                                                                       additional_dets)
-
-            loss = self.forward_pass(training_boxes, box_roi_pool, fpn_features, eval=False)
+            loss = self.forward_pass_for_classifier_training(self.training_boxes, box_roi_pool, fpn_features, eval=False)
             #print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
 
             if np.mod(i, int(finetuning_config["iterations_per_validation"])) == 0 and finetuning_config["validate"]:
-                val_loss = self.forward_pass(validation_boxes, box_roi_pool, fpn_features, eval=True)
+                val_loss = self.forward_pass_for_classifier_training(validation_boxes, box_roi_pool, fpn_features, eval=True)
                 #self.plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
 
             if early_stopping:
-                scores = self.forward_pass(training_boxes, box_roi_pool, fpn_features, scores=True, eval=True)
+                scores = self.forward_pass_for_classifier_training(self.training_boxes, box_roi_pool, fpn_features, scores=True, eval=True)
 
-                if finetuning_config["validate"] and np.mod(i, 10):
-                    self.plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(self.id), i, scores[0].cpu().numpy())
+                if finetuning_config["validate"]:
+                    self.plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(self.id), i, scores[0].cpu().numpy(), is_target=True)
                     for sample in range(16, 32):
                         self.plotter.plot('loss', 'negative {}'.format(sample), 'Class Loss Evaluation Track {}'.format(self.id), i, scores[sample].cpu().numpy())
 
-                if scores[0] - torch.max(scores[16:]) > 0.3:
+                if scores[0] - torch.max(scores[16:]) > 0.8:
                     print('Stopping because difference between positive score and maximum negative score is {}'.format(scores[0] - torch.max(scores[16:])))
                     break
 
@@ -646,13 +689,12 @@ class Track(object):
             optimizer.step()
             scheduler.step()
 
-        self.box_predictor.eval()
-        self.box_head.eval()
+        self.box_predictor_classification.eval()
+        self.box_head_classification.eval()
 
         #dets = torch.cat((self.pos, additional_dets))
         #print(self.forward_pass(dets, box_roi_pool, fpn_features, scores=True))
 
-#
 #                    idf1       idp       idr    recall  precision  num_unique_objects  mostly_tracked  partially_tracked  mostly_lost  num_false_positives  num_misses  num_switches  num_fragmentations      mota      motp
 #MOT17-02-FRCNN  0.458597  0.784569  0.323987  0.411980   0.997654                  62               8                 32           22                   18       10926            57                  65  0.407944  0.079305
 #MOT17-04-FRCNN  0.712063  0.904892  0.586980  0.647265   0.997828                  83              32                 29           22                   67       16775            21                  28  0.645415  0.095695

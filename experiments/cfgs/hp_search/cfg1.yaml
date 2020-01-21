@@ -4,12 +4,15 @@ tracktor:
     do_reid: False
     'finetuning':
       'enabled': True
-      'iterations': 25
-      'learning_rate': 9e-3
+      'iterations':  30
+      'learning_rate': 1.5e-5
       'batch_size': 32
       validate: True
       val_batch_size: 32
       finetune_repeatedly: True
       finetuning_interval: 4
-      early_stopping_classifier: False
+      early_stopping_classifier: True
+      'build_up_training_set': True
+      'gamma': 0.2
+      'replacement_probability': 0.5
   'output_subdir': '1'

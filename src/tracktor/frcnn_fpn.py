@@ -22,7 +22,8 @@ class FRCNN_FPN(FasterRCNN):
 
         return detections['boxes'].detach(), detections['scores'].detach()
 
-    def predict_boxes(self, boxes, box_head=None, box_predictor=None):
+    def predict_boxes(self, boxes, box_head_classification=None, box_predictor_classification=None,
+                      box_head_regression=None, box_predictor_regression=None):
         device = list(self.parameters())[0].device
         boxes = boxes.to(device)
 
@@ -36,13 +37,22 @@ class FRCNN_FPN(FasterRCNN):
 
         box_features = self.roi_heads.box_roi_pool(
             self.fpn_features, proposals, self.image_size)
-        if box_head is None:
-            box_head = self.roi_heads.box_head
-        box_features = box_head(box_features)
-        if box_predictor is None:
-            box_predictor = self.roi_heads.box_predictor
-        class_logits, box_regression = box_predictor(
-            box_features)
+
+        if box_head_classification is None:
+            box_head_classification = self.roi_heads.box_head
+        if box_head_regression is None:
+            box_head_regression = self.roi_heads.box_head
+        box_features_classification = box_head_classification(box_features)
+        box_features_regression = box_head_regression(box_features)
+        if box_predictor_classification is None:
+            box_predictor_classification = self.roi_heads.box_predictor
+        if box_predictor_regression is None:
+            box_predictor_regression = self.roi_heads.box_predictor
+
+        class_logits, _ = box_predictor_classification(
+            box_features_classification)
+        _, box_regression = box_predictor_regression(
+            box_features_regression)
 
         pred_boxes = self.roi_heads.box_coder.decode(box_regression, proposals)
         pred_scores = F.softmax(class_logits, -1)

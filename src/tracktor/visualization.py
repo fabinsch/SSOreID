@@ -37,26 +37,31 @@ def plot_compare_bounding_boxes(box_finetune, box_no_finetune, image):
 class VisdomLinePlotter(object):
     """Plots to Visdom"""
 
-    def __init__(self, env_name='main', xlabel='Epochs'):
+    def __init__(self, env_name='main', xlabel='Iteration/Frame'):
         self.viz = Visdom(port=8097)
         self.env = env_name
         self.plots = {}
         self.xlabel = xlabel
 
-    def plot(self, var_name, split_name, title_name, x, y):
+    def plot(self, var_name, split_name, title_name, x, y, erase=False, is_target=False):
+        if is_target:
+            color = np.array([[255, 0, 0], ])
+        else:
+            color = np.array([[0, 0, 255], ])
         if var_name not in self.plots:
             self.plots[var_name] = self.viz.line(X=np.array([x, x]), Y=np.array([y, y]), env=self.env, opts=dict(
                 #legend=[split_name],
                 title=title_name,
                 xlabel=self.xlabel,
-                ylabel=var_name
+                ylabel=var_name,
+                linecolor=color
             ))
-            self.viz.line(X=np.array(range(1, 51)), Y=np.repeat(0.5, 50), env=self.env, win=self.plots[var_name],
-                          update='insert', opts=dict(linecolor=np.array([[255, 0, 0], ])),
-                          name="Regression Person threshold")
+            #self.viz.line(X=np.array(range(1, 51)), Y=np.repeat(0.5, 50), env=self.env, win=self.plots[var_name],
+            #              update='insert', opts=dict(linecolor=np.array([[255, 0, 0], ])),
+            #              name="Regression Person threshold")
         else:
             self.viz.line(X=np.array([x]), Y=np.array([y]), env=self.env, win=self.plots[var_name], name=split_name,
-                          update='append')
+                          update='append', opts=dict(linecolor=color))
 
 
 def plot_bounding_boxes(im_info, gt_pos, image, proposals, iteration, id, validate=False):
@@ -66,7 +71,7 @@ def plot_bounding_boxes(im_info, gt_pos, image, proposals, iteration, id, valida
     image = image.permute(1, 2, 0)
     fig, ax = plt.subplots()
     plt.imshow(image, cmap='gist_gray_r')
-    gt_pos_np = gt_pos.numpy()
+    gt_pos_np = gt_pos.cpu().numpy()
     for i in range(num_proposals):
         ax.add_patch(
             plt.Rectangle((proposals[i, 0], proposals[i, 1]),
