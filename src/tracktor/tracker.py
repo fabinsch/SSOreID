@@ -239,7 +239,6 @@ class Tracker:
                     print(new_det_pos)
                     print('Last position of the inactive track: {} in {} frames ago'.format(inactive_track.last_pos[-1],
                                                                                             inactive_track.count_inactive))
-                    print('Scores by Network of track {}: {}\n'.format(inactive_track.id, score))
 
                 for inactive_track in remove_inactive:
                     self.inactive_tracks.remove(inactive_track)
