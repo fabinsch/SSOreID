@@ -1,7 +1,7 @@
 tracktor:
   dataset: mot17_02_FRCNN17
   'tracker':
-    do_reid: False
+    do_reid: True
     'finetuning':
       'enabled': True
       'iterations':  30
