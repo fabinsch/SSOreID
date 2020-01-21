@@ -520,7 +520,8 @@ class Tracker:
             new_det_scores = det_scores
 
             # try to reidentify tracks
-            new_det_pos, new_det_scores, new_det_features = self.reid(blob, new_det_pos, new_det_scores)
+            #new_det_pos, new_det_scores, new_det_features = self.reid(blob, new_det_pos, new_det_scores)
+            new_det_pos, new_det_scores, new_det_features = self.reid_by_finetuned_model(blob, new_det_pos, new_det_scores)
             #self.check_saved_finetuned_models(blob, new_det_pos)
 
             # add new
