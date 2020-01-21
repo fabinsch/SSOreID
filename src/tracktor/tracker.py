@@ -115,7 +115,7 @@ class Tracker:
         if self.finetuning_config["enabled"]:
             scores = []
             pos = []
-            other_classifiers = [(track.box_head_classification, track.box_predictor_classification, track.id) for track in [self.tracks + self.inactive_tracks]]
+            other_classifiers = [(track.box_head_classification, track.box_predictor_classification, track.id) for track in self.tracks + self.inactive_tracks]
             for track in self.tracks:
                 # Regress with finetuned bbox head for each track
                 assert track.box_head_classification is not None
@@ -212,6 +212,56 @@ class Tracker:
                     plot_bounding_boxes(inactive_track.im_info, new_det_pos[i].unsqueeze(0), blob['img'], inactive_track.last_pos[-1], 999, 999)
             #plot_bounding_boxes(im_info, new_det_pos[0], image, boxes, )
 
+    def reid_by_finetuned_model(self, blob, new_det_pos, new_det_scores):
+        # IDEA: evaluate all inactive track models on the new detections
+        # reidentify a track, when the model has a significantly higher score on this new detection than on other detections
+
+        scores = []
+        print('Inactive tracks: {}'.format([x.id for x in self.inactive_tracks]))
+        if len(new_det_pos.size()) > 1:
+            remove_inactive = []
+            assigned = []
+            for inactive_track in self.inactive_tracks:
+                boxes, score = self.obj_detect.predict_boxes(new_det_pos,
+                                                             box_predictor_classification=inactive_track.box_predictor_classification,
+                                                             box_head_classification=inactive_track.box_head_classification)
+                scores.append(score)
+                new_det_pos_highest_score_index = torch.argmax(scores)
+
+                self.tracks.append(inactive_track)
+                print(f"Reidying track {inactive_track.id}")
+                inactive_track.count_inactive = 0
+                inactive_track.pos = new_det_pos[new_det_pos_highest_score_index].view(1, -1)
+                inactive_track.reset_last_pos()
+                assigned.append(new_det_pos_highest_score_index)
+                remove_inactive.append(inactive_track)
+                print(inactive_track.id)
+                print(new_det_pos)
+                print('Last position of the inactive track: {} in {} frames ago'.format(inactive_track.last_pos[-1],
+                                                                                        inactive_track.count_inactive))
+                print('Scores by Network of track {}: {}\n'.format(inactive_track.id, score))
+
+            for inactive_track in remove_inactive:
+                self.inactive_tracks.remove(inactive_track)
+
+                #
+                # for i in range(len(new_det_pos)):
+                #     plot_bounding_boxes(inactive_track.im_info, new_det_pos[i].unsqueeze(0), blob['img'],
+                #                         inactive_track.last_pos[-1], 999, 999)
+
+            keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
+            if keep.nelement() > 0:
+                new_det_pos = new_det_pos[keep]
+                new_det_scores = new_det_scores[keep]
+                new_det_features = torch.zeros(0).to(device)
+            else:
+                new_det_pos = torch.zeros(0).to(device)
+                new_det_scores = torch.zeros(0).to(device)
+                new_det_features = torch.zeros(0).to(device)
+
+        return new_det_pos, new_det_scores, new_det_features
+
+
     def reid(self, blob, new_det_pos, new_det_scores):
         """Tries to ReID inactive tracks with provided detections."""
         zeros = torch.zeros(0).to(device)
@@ -237,7 +287,7 @@ class Tracker:
 
                 # calculate IoU distances
                 iou = bbox_overlaps(pos, new_det_pos)
-                iou_mask = torch.ge(iou, self.reid_iou_threshold)
+                iou_mask = torch.ge(iou, self.reid_iou_threshold)   # wird nicht reided wenn iou größer als der iou threshold ist "To minimize the risk of false reIDs, weonly consider pairs of deactivated and new bounding boxeswith a sufficiently large IoU
                 iou_neg_mask = ~iou_mask
                 # make all impossible assignments to the same add big value
                 dist_mat = dist_mat * iou_mask.float() + iou_neg_mask.float() * 1000
