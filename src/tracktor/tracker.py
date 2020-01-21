@@ -115,7 +115,7 @@ class Tracker:
         if self.finetuning_config["enabled"]:
             scores = []
             pos = []
-            other_classifiers = [(track.box_head_classification, track.box_predictor_classification, track.id) for track in [self.tracks + self.inactive_tracks]]
+            other_classifiers = [(track.box_head_classification, track.box_predictor_classification, track.id) for track in self.tracks + self.inactive_tracks]
             for track in self.tracks:
                 # Regress with finetuned bbox head for each track
                 assert track.box_head_classification is not None
