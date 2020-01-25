@@ -89,8 +89,14 @@ class Tracker:
 
             if self.finetuning_config["for_tracking"]:
                 other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i+1:], old_tracks))
+                track.update_training_set_classification(self.finetuning_config['batch_size'],
+                                            other_pedestrians_bboxes,
+                                            self.obj_detect.fpn_features,
+                                            replacement_probability=self.finetuning_config['replacement_probability'],
+                                            include_previous_frames=True)
                 box_head_copy_for_classifier = self.get_box_head()
                 box_predictor_copy_for_classifier = self.get_box_predictor()
+                print(self.obj_detect.fpn_features)
                 track.finetune_classification(self.obj_detect.fpn_features,
                                               self.finetuning_config,
                                               box_head_copy_for_classifier,

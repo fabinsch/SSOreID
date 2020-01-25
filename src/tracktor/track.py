@@ -136,9 +136,6 @@ class Track(object):
 #        proposals = [boxes_resized]
 #        with torch.no_grad():
 #            roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
-#
-        # Only train the box prediction head
-        #with torch.no_grad():
         feat = self.box_head_classification(features)
         class_logits, _ = self.box_predictor_classification(feat)
         if return_scores:
@@ -155,6 +152,7 @@ class Track(object):
 
     def finetune_classification(self, fpn_features,
                                 finetuning_config, box_head_classification, box_predictor_classification, additional_dets=None, early_stopping=False):
+        print(fpn_features)
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
 
