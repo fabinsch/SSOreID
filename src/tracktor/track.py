@@ -164,7 +164,7 @@ class Track(object):
             list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()), lr=float(finetuning_config["learning_rate"]) )
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10, gamma=finetuning_config['gamma'])
 
-        if finetuning_config["validate"]:
+        if finetuning_config["validate"] and additional_dets is not None:
             if not self.plotter:
                 self.plotter = VisdomLinePlotter(env_name='training')
             additional_dets = additional_dets[:-1]
@@ -175,14 +175,6 @@ class Track(object):
         for i in range(int(finetuning_config["iterations"])):
 
             optimizer.zero_grad()
-            include_previous = finetuning_config['build_up_training_set']
-            self.update_training_set_classification(float(int(finetuning_config["batch_size"])),
-                                                                       additional_dets,
-                                                                       fpn_features,
-                                                                       include_previous_frames=include_previous,
-                                                                       shuffle=False,
-                                                                        replacement_probability=finetuning_config['replacement_probability'])
-
             loss = self.forward_pass_for_classifier_training(self.training_set['features'], self.training_set['scores'], eval=False)
             # print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
 
