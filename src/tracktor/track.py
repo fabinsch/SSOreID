@@ -35,7 +35,7 @@ class Track(object):
         self.box_predictor_regression = None
         self.box_head_regression = None
         self.scale = self.im_info[0] / self.transformed_image_size[0][0]
-        self.plotter = None
+        self.plotter = VisdomLinePlotter(env_name='training')
         self.checkpoints = dict()
         self.training_set = {'features': None, 'boxes': None, 'scores': None}
         self.box_roi_pool = box_roi_pool
