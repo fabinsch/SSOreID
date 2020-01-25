@@ -70,7 +70,6 @@ class Tracker:
                                               self.finetuning_config,
                                               box_head_copy_for_classifier,
                                               box_predictor_copy_for_classifier,
-
                                               early_stopping=False)
         self.inactive_tracks += tracks
 
@@ -87,14 +86,16 @@ class Tracker:
                           new_det_features[i].view(1, -1), self.inactive_patience, self.max_features_num,
                           self.motion_model_cfg['n_steps'] if self.motion_model_cfg['n_steps'] > 0 else 1,
                           image.size()[1:3], self.obj_detect.image_size, box_roi_pool=box_roi_pool)
+            if self.finetuning_config["for_tracking"] or self.finetuning_config["for_reid"]:
+                other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i + 1:], old_tracks))
+                track.update_training_set_classification(self.finetuning_config['batch_size'],
+                                                     other_pedestrians_bboxes,
+                                                     self.obj_detect.fpn_features,
+                                                     replacement_probability=self.finetuning_config[
+                                                         'replacement_probability'],
+                                                     include_previous_frames=True)
 
             if self.finetuning_config["for_tracking"]:
-                other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i+1:], old_tracks))
-                track.update_training_set_classification(self.finetuning_config['batch_size'],
-                                            other_pedestrians_bboxes,
-                                            self.obj_detect.fpn_features,
-                                            replacement_probability=self.finetuning_config['replacement_probability'],
-                                            include_previous_frames=True)
                 box_head_copy_for_classifier = self.get_box_head()
                 box_predictor_copy_for_classifier = self.get_box_predictor()
                 track.finetune_classification(self.obj_detect.fpn_features,
