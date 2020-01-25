@@ -167,7 +167,7 @@ class Track(object):
         #     additional_dets = additional_dets[:-1]
         #     val_dets = additional_dets[-1:]
         #     validation_set = self.generate_validation_set_classfication(float(int(finetuning_config["batch_size_val"])),
-                                                                         val_dets, fpn_features)
+          #                                                               val_dets, fpn_features)
         print("Finetuning track {}".format(self.id))
         for i in range(int(finetuning_config["iterations"])):
 
