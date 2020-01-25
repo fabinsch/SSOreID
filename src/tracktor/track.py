@@ -161,12 +161,12 @@ class Track(object):
             list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()), lr=float(finetuning_config["learning_rate"]) )
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10, gamma=finetuning_config['gamma'])
 
-        if finetuning_config["validate"]:# and additional_dets is not None:
-            if not self.plotter:
-                self.plotter = VisdomLinePlotter(env_name='training')
-            additional_dets = additional_dets[:-1]
-            val_dets = additional_dets[-1:]
-            validation_set = self.generate_validation_set_classfication(float(int(finetuning_config["batch_size_val"])),
+        # if finetuning_config["validate"]:# and additional_dets is not None:
+        #     if not self.plotter:
+        #         self.plotter = VisdomLinePlotter(env_name='training')
+        #     additional_dets = additional_dets[:-1]
+        #     val_dets = additional_dets[-1:]
+        #     validation_set = self.generate_validation_set_classfication(float(int(finetuning_config["batch_size_val"])),
                                                                          val_dets, fpn_features)
         print("Finetuning track {}".format(self.id))
         for i in range(int(finetuning_config["iterations"])):
@@ -175,9 +175,9 @@ class Track(object):
             loss = self.forward_pass_for_classifier_training(self.training_set['features'], self.training_set['scores'], eval=False)
             # print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
 
-            if np.mod(i, int(finetuning_config["iterations_per_validation"])) == 0 and finetuning_config["validate"]:
-                val_loss = self.forward_pass_for_classifier_training(validation_set['features'], validation_set['scores'], eval=True)
-                # self.plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
+            #if np.mod(i, int(finetuning_config["iterations_per_validation"])) == 0 and finetuning_config["validate"]:
+            #    val_loss = self.forward_pass_for_classifier_training(validation_set['features'], validation_set['scores'], eval=True)
+            #    # self.plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
 
             if early_stopping:
                 scores = self.forward_pass_for_classifier_training(self.training_set['features'], self.training_set['scores'], return_scores=True, eval=True)

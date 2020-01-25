@@ -70,6 +70,7 @@ class Tracker:
                                               self.finetuning_config,
                                               box_head_copy_for_classifier,
                                               box_predictor_copy_for_classifier,
+
                                               early_stopping=False)
         self.inactive_tracks += tracks
 
