@@ -3,7 +3,8 @@ tracktor:
   'tracker':
     do_reid: True
     'finetuning':
-      'enabled': True
+      for_tracking: True
+      for_reid: True
       'iterations':  30
       'learning_rate': 1.5e-5
       'batch_size': 32
