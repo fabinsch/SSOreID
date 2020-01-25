@@ -152,7 +152,6 @@ class Track(object):
 
     def finetune_classification(self, fpn_features,
                                 finetuning_config, box_head_classification, box_predictor_classification, additional_dets=None, early_stopping=False):
-        print(fpn_features)
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
 
@@ -162,7 +161,7 @@ class Track(object):
             list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()), lr=float(finetuning_config["learning_rate"]) )
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10, gamma=finetuning_config['gamma'])
 
-        if finetuning_config["validate"] and additional_dets is not None:
+        if finetuning_config["validate"]:# and additional_dets is not None:
             if not self.plotter:
                 self.plotter = VisdomLinePlotter(env_name='training')
             additional_dets = additional_dets[:-1]

@@ -96,7 +96,6 @@ class Tracker:
                                             include_previous_frames=True)
                 box_head_copy_for_classifier = self.get_box_head()
                 box_predictor_copy_for_classifier = self.get_box_predictor()
-                print(self.obj_detect.fpn_features)
                 track.finetune_classification(self.obj_detect.fpn_features,
                                               self.finetuning_config,
                                               box_head_copy_for_classifier,
