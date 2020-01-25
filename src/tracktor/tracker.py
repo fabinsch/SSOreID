@@ -39,7 +39,7 @@ class Tracker:
         self.number_of_iterations = tracker_cfg['number_of_iterations']
         self.termination_eps = tracker_cfg['termination_eps']
         self.finetuning_config = tracker_cfg['finetuning']
-        if self.finetuning_config["enabled"] or self.finetuning_config["use_for_reid"]:
+        if self.finetuning_config["for_tracking"] or self.finetuning_config["use_for_reid"]:
             self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
             self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
 
