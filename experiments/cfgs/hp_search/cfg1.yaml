@@ -15,4 +15,5 @@ tracktor:
       'build_up_training_set': True
       'gamma': 0.2
       'replacement_probability': 0.5
+      feature_collection_interval: 1
   'output_subdir': '1'
