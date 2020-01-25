@@ -66,12 +66,11 @@ class Tracker:
             if self.finetuning_config["for_reid"]:
                 box_head_copy_for_classifier = self.get_box_head()
                 box_predictor_copy_for_classifier = self.get_box_predictor()
-                t.finetune_classification(self.obj_detect.roi_heads.box_roi_pool,
-                                              self.obj_detect.fpn_features,
+                t.finetune_classification(self.obj_detect.fpn_features,
                                               self.finetuning_config,
                                               box_head_copy_for_classifier,
                                               box_predictor_copy_for_classifier,
-                                              early_stopping=self.finetuning_config['early_stopping_classifier'])
+                                              early_stopping=False)
         self.inactive_tracks += tracks
 
     def add(self, new_det_pos, new_det_scores, new_det_features, image):
