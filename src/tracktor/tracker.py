@@ -97,7 +97,6 @@ class Tracker:
                 box_predictor_copy_for_classifier = self.get_box_predictor()
                 track.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
                                               box_predictor_copy_for_classifier,
-                                              additional_dets=other_pedestrians_bboxes,
                                               early_stopping=self.finetuning_config['early_stopping_classifier'])
 
             self.tracks.append(track)

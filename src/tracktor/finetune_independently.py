@@ -50,21 +50,22 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
         optimizer.zero_grad()
         loss = forward_pass_for_classifier_training(training_set['features'], training_set['scores'], box_head_classification, box_predictor_classification)
 
-        if finetuning_config["early_stopping_classifier"]:
+        if finetuning_config["early_stopping_classifier"] or finetuning_config["validate"]:
             scores = forward_pass_for_classifier_training(training_set['features'], training_set['scores'], box_head_classification, box_predictor_classification,
                                                                return_scores=True, eval=True)
 
-            if finetuning_config["validate"]:
-                plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(id), i,
-                                  scores[0].cpu().numpy(), is_target=True)
-                for sample in range(16, 32):
-                    plotter.plot('loss', 'negative {}'.format(sample),
-                                      'Class Loss Evaluation Track {}'.format(id), i, scores[sample].cpu().numpy())
+        if finetuning_config["validate"]:
+            plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(id), i,
+                              scores[0].cpu().numpy(), is_target=True)
+            for sample in range(16, 32):
+                plotter.plot('loss', 'negative {}'.format(sample),
+                                  'Class Loss Evaluation Track {}'.format(id), i, scores[sample].cpu().numpy())
 
-            if scores[0] - torch.max(scores[16:]) > 1.5:
-                print('Stopping because difference between positive score and maximum negative score is {}'.format(
-                    scores[0] - torch.max(scores[16:])))
-                break
+
+        if finetuning_config["early_stopping_classifier"] and scores[0] - torch.max(scores[16:]) > 1.5:
+            print('Stopping because difference between positive score and maximum negative score is {}'.format(
+                scores[0] - torch.max(scores[16:])))
+            break
 
         loss.backward()
         optimizer.step()
