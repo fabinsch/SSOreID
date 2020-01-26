@@ -534,7 +534,10 @@ class Tracker:
 
         self.im_index += 1
         self.last_image = blob['img'][0]
-
+        if frame == 599:
+            for t in self.tracks:
+                pickle.dump(t.training_set,
+                            open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
 
     def get_results(self):
         return self.results
