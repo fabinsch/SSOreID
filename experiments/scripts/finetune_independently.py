@@ -5,6 +5,7 @@ from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHe
 from torch.nn import functional as F
 from tracktor.frcnn_fpn import FRCNN_FPN
 from tracktor.live_dataset import IndividualDataset
+import time
 import torch
 from sacred import Experiment
 
@@ -38,10 +39,14 @@ def initialize_nets(obj_detect_weights):
 
 def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_predictor_classification):
     dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(id), "rb"))
-    #dataset.clean()
+    dataset.post_process()
+
     train_size =  int(0.8 * len(dataset))
     test_size = int(len(dataset) - train_size)
-    training_set, validation_set = torch.utils.data.random_split(dataset, [train_size, test_size])
+    training_set, validation_set = dataset.val_test_split(percentage_positive_examples_train=0.8, ordered_by_frame=True,
+                                                          downsample=True)
+
+    #training_set, validation_set = torch.utils.data.random_split(dataset, [train_size, test_size])
 
     box_predictor_classification.train()
     box_head_classification.train()
@@ -53,7 +58,6 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
 
     for i in range(int(finetuning_config["iterations"])):
         for i_sample, sample_batch in enumerate(train_dataloader):
-            print(i)
             optimizer.zero_grad()
             loss = forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], box_head_classification, box_predictor_classification)
 
@@ -62,6 +66,7 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
             scheduler.step()
 
         if finetuning_config["early_stopping_classifier"] or finetuning_config["validate"]:
+
             positive_scores = forward_pass_for_classifier_training(
                 sample_batch['features'][sample_batch['scores'] == 1], sample_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
                 eval=True)
@@ -109,9 +114,6 @@ def forward_pass_for_classifier_training(features, scores, box_head_classificati
         box_head_classification.train()
     return loss
 
-def post_process_data(dataset):
-    return
-
 @ex.automain
 def main(tracktor, _config, _log, _run):
 
@@ -121,6 +123,6 @@ def main(tracktor, _config, _log, _run):
     plotter = VisdomLinePlotter(env_name='finetune_independently')
 
     obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
-    track_ids = [7]
+    track_ids = [6]
     for track_id in track_ids:
         do_finetuning(track_id, finetuning_config, plotter, box_head_classification, box_predictor_classification)
