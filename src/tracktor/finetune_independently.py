@@ -37,42 +37,59 @@ def initialize_nets(obj_detect_weights):
     return obj_detect, box_head_classification, box_predictor_classification
 
 def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_predictor_classification):
-    training_set = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(id), "rb"))
+    dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(id), "rb"))
+    #dataset.clean()
+    train_size =  0.8 * len(dataset)
+    test_size = len(dataset) - train_size
+    training_set, validation_set = torch.utils.data.random_split(dataset, [train_size, test_size])
 
     box_predictor_classification.train()
     box_head_classification.train()
     optimizer = torch.optim.Adam(
                 list(box_predictor_classification.parameters()) + list(box_head_classification.parameters()), lr=float(finetuning_config["learning_rate"]) )
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10, gamma=finetuning_config['gamma'])
+    train_dataloader = torch.utils.data.DataLoader(training_set, batch_size=512)
+    val_dataloader = torch.utils.data.DataLoader(validation_set, batch_size=512)
 
     for i in range(int(finetuning_config["iterations"])):
-        print(i)
-        optimizer.zero_grad()
-        loss = forward_pass_for_classifier_training(training_set['features'], training_set['scores'], box_head_classification, box_predictor_classification)
-
-        if finetuning_config["early_stopping_classifier"] or finetuning_config["validate"]:
-            scores = forward_pass_for_classifier_training(training_set['features'], training_set['scores'], box_head_classification, box_predictor_classification,
-                                                               return_scores=True, eval=True)
-
-        if finetuning_config["validate"]:
-            plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(id), i,
-                              scores[0].cpu().numpy(), is_target=True)
-            for sample in range(16, 32):
-                plotter.plot('loss', 'negative {}'.format(sample),
-                                  'Class Loss Evaluation Track {}'.format(id), i, scores[sample].cpu().numpy())
+        for i_sample, sample_batch in enumerate(train_dataloader):
+            print(i)
+            optimizer.zero_grad()
+            loss = forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], box_head_classification, box_predictor_classification)
 
 
-        if finetuning_config["early_stopping_classifier"] and scores[0] - torch.max(scores[16:]) > 1.5:
-            print('Stopping because difference between positive score and maximum negative score is {}'.format(
-                scores[0] - torch.max(scores[16:])))
-            break
+            if finetuning_config["early_stopping_classifier"] or finetuning_config["validate"]:
+                positive_scores = forward_pass_for_classifier_training(
+                    sample_batch['features'][sample_batch['scores'] == 1], sample_batch['scores'], return_scores=True,
+                    eval=True)
+                negative_scores = forward_pass_for_classifier_training(
+                    sample_batch['features'][sample_batch['scores'] == 0], sample_batch['scores'], return_scores=True,
+                    eval=True)
 
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
+            if finetuning_config["validate"]:
+                for score in positive_scores:
+                    plotter.plot('score', 'positive', 'Scores Evaluation Classifier for Track {}'.format(id),
+                                      i, score.cpu().numpy(), is_target=True)
+                for score in negative_scores:
+                    plotter.plot('score', 'negative', 'Scores Evaluation Classifier for Track {}'.format(id),
+                                      i, score.cpu().numpy())
+
+            if finetuning_config["early_stopping_classifier"] and torch.min(positive_scores) - torch.max(negative_scores) > 1.5:
+                break
+
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
 
     box_predictor_classification.eval()
     box_head_classification.eval()
+    total_samples = 0
+    loss = 0
+    for i, batch in enumerate(val_dataloader):
+        loss += forward_pass_for_classifier_training(batch['features'], batch['scores'], box_head_classification, box_predictor_classification)
+        total_samples += batch['features'].size()[0]
+    print('Loss: {}'.format(loss/total_samples))
+
 
 def forward_pass_for_classifier_training(features, scores, box_head_classification, box_predictor_classification, eval=False, return_scores=False):
     if eval:
@@ -102,5 +119,6 @@ def main(tracktor, _config, _log, _run):
     plotter = VisdomLinePlotter(env_name='finetune_independently')
 
     obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
-    track_id = 7
-    do_finetuning(track_id, finetuning_config, plotter, box_head_classification, box_predictor_classification)
+    track_ids = [7]
+    for track_id in track_ids:
+        do_finetuning(track_id, finetuning_config, plotter, box_head_classification, box_predictor_classification)
