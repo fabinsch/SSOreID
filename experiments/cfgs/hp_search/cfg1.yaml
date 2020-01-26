@@ -7,7 +7,7 @@ tracktor:
       for_reid: True
       'iterations':  30
       'learning_rate': 1.5e-5
-      'batch_size': 32
+      'batch_size': 16
       validate: True
       val_batch_size: 32
       finetune_repeatedly: True
