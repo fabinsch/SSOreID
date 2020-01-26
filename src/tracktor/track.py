@@ -115,17 +115,12 @@ class Track(object):
         return {'features': roi_pool_feat, 'boxes': boxes[:, 0:4], 'scores': boxes[:, 4]}
 
     def update_training_set_classification(self, batch_size, additional_dets, fpn_features,
-                                           include_previous_frames=False, shuffle=False, replacement_probability=0.5):
+                                           include_previous_frames=False, shuffle=False):
         training_set_dict = self.generate_training_set_classification(batch_size, additional_dets, fpn_features, shuffle=shuffle)
-        if include_previous_frames and self.training_set['features'] is not None:
-            weights = torch.tensor([1 / batch_size]).repeat(int(batch_size))
-            indices_replaced_by_current_frame_features = torch.multinomial(weights, int(batch_size * replacement_probability))
-            self.training_set['features'][indices_replaced_by_current_frame_features] = training_set_dict['features'][indices_replaced_by_current_frame_features]
-            self.training_set['boxes'][indices_replaced_by_current_frame_features] = training_set_dict['boxes'][
-                indices_replaced_by_current_frame_features]
 
-        else:
-            self.training_set = training_set_dict
+        if not include_previous_frames:
+            self.training_set = IndividualDataset(self.id)
+        self.training_set.append_samples(training_set_dict)
 
     def generate_validation_set_classfication(self, batch_size, additional_dets, fpn_features, shuffle=False):
         return self.generate_training_set_classification(batch_size, additional_dets, fpn_features, shuffle=shuffle)
@@ -162,7 +157,7 @@ class Track(object):
         optimizer = torch.optim.Adam(
             list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()), lr=float(finetuning_config["learning_rate"]) )
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10, gamma=finetuning_config['gamma'])
-        dataloader = torch.utils.data.DataLoader(self.training_set, batch_size=128)
+        dataloader = torch.utils.data.DataLoader(self.training_set, batch_size=finetuning_config["batch_size"])
 
         # if finetuning_config["validate"]:# and additional_dets is not None:
         #     if not self.plotter:
