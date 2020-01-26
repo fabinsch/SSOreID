@@ -57,29 +57,29 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
             optimizer.zero_grad()
             loss = forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], box_head_classification, box_predictor_classification)
 
-
-            if finetuning_config["early_stopping_classifier"] or finetuning_config["validate"]:
-                positive_scores = forward_pass_for_classifier_training(
-                    sample_batch['features'][sample_batch['scores'] == 1], sample_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
-                    eval=True)
-                negative_scores = forward_pass_for_classifier_training(
-                    sample_batch['features'][sample_batch['scores'] == 0], sample_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
-                    eval=True)
-
-            if finetuning_config["validate"]:
-                for score in positive_scores:
-                    plotter.plot('score', 'positive', 'Scores Evaluation Classifier for Track {}'.format(id),
-                                      i, score.cpu().numpy(), is_target=True)
-                for score in negative_scores:
-                    plotter.plot('score', 'negative', 'Scores Evaluation Classifier for Track {}'.format(id),
-                                      i, score.cpu().numpy())
-
-            if finetuning_config["early_stopping_classifier"] and torch.min(positive_scores) - torch.max(negative_scores) > 1.5:
-                break
-
             loss.backward()
             optimizer.step()
             scheduler.step()
+
+        if finetuning_config["early_stopping_classifier"] or finetuning_config["validate"]:
+            positive_scores = forward_pass_for_classifier_training(
+                sample_batch['features'][sample_batch['scores'] == 1], sample_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
+                eval=True)
+            negative_scores = forward_pass_for_classifier_training(
+                sample_batch['features'][sample_batch['scores'] == 0], sample_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
+                eval=True)
+
+        if finetuning_config["validate"]:
+            for score in positive_scores:
+                plotter.plot('score', 'positive', 'Scores Evaluation Classifier for Track {}'.format(id),
+                                  i, score.cpu().numpy(), is_target=True)
+            for score in negative_scores:
+                plotter.plot('score', 'negative', 'Scores Evaluation Classifier for Track {}'.format(id),
+                                  i, score.cpu().numpy())
+
+        if finetuning_config["early_stopping_classifier"] and torch.min(positive_scores) - torch.max(negative_scores) > 1.5:
+            break
+
 
     box_predictor_classification.eval()
     box_head_classification.eval()
