@@ -73,8 +73,8 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
             for score in positive_scores:
                 plotter.plot('score', 'positive', 'Scores Evaluation Classifier for Track {}'.format(id),
                                   i, score.cpu().numpy(), is_target=True)
-            for score in negative_scores:
-                plotter.plot('score', 'negative', 'Scores Evaluation Classifier for Track {}'.format(id),
+            for i, score in enumerate(negative_scores):
+                plotter.plot('score', 'negative {}'.format(i), 'Scores Evaluation Classifier for Track {}'.format(id),
                                   i, score.cpu().numpy())
 
         if finetuning_config["early_stopping_classifier"] and torch.min(positive_scores) - torch.max(negative_scores) > 1.5:
