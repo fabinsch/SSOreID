@@ -162,6 +162,7 @@ class Track(object):
         optimizer = torch.optim.Adam(
             list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()), lr=float(finetuning_config["learning_rate"]) )
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10, gamma=finetuning_config['gamma'])
+        dataloader = torch.utils.data.DataLoader(self.training_set, batch_size=128)
 
         # if finetuning_config["validate"]:# and additional_dets is not None:
         #     if not self.plotter:
@@ -172,30 +173,26 @@ class Track(object):
           #                                                               val_dets, fpn_features)
         print("Finetuning track {}".format(self.id))
         for i in range(int(finetuning_config["iterations"])):
+            for i_sample, sample_batch in enumerate(dataloader):
 
-            optimizer.zero_grad()
-            loss = self.forward_pass_for_classifier_training(self.training_set['features'], self.training_set['scores'], eval=False)
-            # print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
+                optimizer.zero_grad()
+                loss = self.forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], eval=False)
 
-            #if np.mod(i, int(finetuning_config["iterations_per_validation"])) == 0 and finetuning_config["validate"]:
-            #    val_loss = self.forward_pass_for_classifier_training(validation_set['features'], validation_set['scores'], eval=True)
-            #    # self.plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
+                if early_stopping or finetuning_config["validate"]:
+                    scores = self.forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], return_scores=True, eval=True)
 
-            if early_stopping or finetuning_config["validate"]:
-                scores = self.forward_pass_for_classifier_training(self.training_set['features'], self.training_set['scores'], return_scores=True, eval=True)
+                if finetuning_config["validate"]:
+                    self.plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(self.id), i, scores[0].cpu().numpy(), is_target=True)
+                    for sample in range(16, 32):
+                        self.plotter.plot('loss', 'negative {}'.format(sample), 'Class Loss Evaluation Track {}'.format(self.id), i, scores[sample].cpu().numpy())
 
-            if finetuning_config["validate"]:
-                self.plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(self.id), i, scores[0].cpu().numpy(), is_target=True)
-                for sample in range(16, 32):
-                    self.plotter.plot('loss', 'negative {}'.format(sample), 'Class Loss Evaluation Track {}'.format(self.id), i, scores[sample].cpu().numpy())
+                    if early_stopping and scores[0] - torch.max(scores[16:]) > 0.8:
+                        print('Stopping because difference between positive score and maximum negative score is {}'.format(scores[0] - torch.max(scores[16:])))
+                        break
 
-                if early_stopping and scores[0] - torch.max(scores[16:]) > 0.8:
-                    print('Stopping because difference between positive score and maximum negative score is {}'.format(scores[0] - torch.max(scores[16:])))
-                    break
-
-            loss.backward()
-            optimizer.step()
-            scheduler.step()
+                loss.backward()
+                optimizer.step()
+                scheduler.step()
 
         self.box_predictor_classification.eval()
         self.box_head_classification.eval()
