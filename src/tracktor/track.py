@@ -8,7 +8,7 @@ from torchvision.models.detection.transform import resize_boxes
 from tracktor.training_set_generation import replicate_and_randomize_boxes
 from tracktor.utils import clip_boxes
 from tracktor.visualization import plot_bounding_boxes, VisdomLinePlotter
-
+import pickle
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class Track(object):
@@ -120,8 +120,13 @@ class Track(object):
         if include_previous_frames and self.training_set['features'] is not None:
             weights = torch.tensor([1 / batch_size]).repeat(int(batch_size))
             indices_replaced_by_current_frame_features = torch.multinomial(weights, int(batch_size * replacement_probability))
-            test = training_set_dict['features'][indices_replaced_by_current_frame_features]
-            self.training_set['features'][indices_replaced_by_current_frame_features] = test
+            self.training_set['features'][indices_replaced_by_current_frame_features] = training_set_dict['features'][indices_replaced_by_current_frame_features]
+            self.training_set['boxes'][indices_replaced_by_current_frame_features] = training_set_dict['boxes'][
+                indices_replaced_by_current_frame_features]
+
+            if self.frames_since_active == 2:
+                print('Using pickle')
+                pickle.dump(self.training_set, open("training_set/feature_training_set_track_{}.pkl".format(self.id), "wb"))
         else:
             self.training_set = training_set_dict
 
@@ -150,8 +155,8 @@ class Track(object):
             self.box_head_classification.train()
         return loss
 
-    def finetune_classification(self, fpn_features,
-                                finetuning_config, box_head_classification, box_predictor_classification, additional_dets=None, early_stopping=False):
+    def finetune_classification(self, finetuning_config, box_head_classification, box_predictor_classification,
+                                early_stopping=False):
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
 
