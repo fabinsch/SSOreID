@@ -70,8 +70,8 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
                 eval=True)
 
         if finetuning_config["validate"]:
-            for score in positive_scores:
-                plotter.plot('score', 'positive', 'Scores Evaluation Classifier for Track {}'.format(id),
+            for sample_idx, score in positive_scores:
+                plotter.plot('score', 'positive {}'.format(sample_idx), 'Scores Evaluation Classifier for Track {}'.format(id),
                                   i, score.cpu().numpy(), is_target=True)
             for sample_idx, score in enumerate(negative_scores):
                 plotter.plot('score', 'negative {}'.format(sample_idx), 'Scores Evaluation Classifier for Track {}'.format(id),
