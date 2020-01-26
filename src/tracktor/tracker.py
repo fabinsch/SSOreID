@@ -509,9 +509,9 @@ class Tracker:
             new_det_features = self.reid_network.test_rois(blob['img'], new_det_pos).data
             if self.do_reid:
                 new_det_pos, new_det_scores = self.reid(blob, new_det_pos, new_det_features, new_det_scores)
-            if self.finetuning_config["for_reid"]:
-                new_det_pos, new_det_scores = self.reid_by_finetuned_model(blob, new_det_pos, new_det_features, new_det_scores)
-
+            #if self.finetuning_config["for_reid"]:
+            #    new_det_pos, new_det_scores = self.reid_by_finetuned_model(blob, new_det_pos, new_det_features, new_det_scores)
+#
             # add new
             if new_det_pos.nelement() > 0:
                 self.add(new_det_pos, new_det_scores, new_det_features, blob['img'][0])
