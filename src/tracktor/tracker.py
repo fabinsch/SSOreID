@@ -68,8 +68,8 @@ class Tracker:
             if self.finetuning_config["for_reid"]:
                 box_head_copy_for_classifier = self.get_box_head()
                 box_predictor_copy_for_classifier = self.get_box_predictor()
-                t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
-                                          box_predictor_copy_for_classifier, early_stopping=False)
+                #t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
+                #                          box_predictor_copy_for_classifier, early_stopping=False)
                 pickle.dump(t.training_set,
                             open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
 
@@ -456,7 +456,6 @@ class Tracker:
 
                         if self.finetuning_config["build_up_training_set"] and np.mod(track.frames_since_active,
                                                         self.finetuning_config["feature_collection_interval"]) == 0:
-                            print('Building up training set!')
                             track.update_training_set_classification(self.finetuning_config['batch_size'],
                                             other_pedestrians_bboxes,
                                             self.obj_detect.fpn_features,

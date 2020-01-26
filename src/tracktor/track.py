@@ -173,15 +173,16 @@ class Track(object):
                 loss = self.forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], eval=False)
 
                 if early_stopping or finetuning_config["validate"]:
-                    scores = self.forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], return_scores=True, eval=True)
+                    positive_scores = self.forward_pass_for_classifier_training(sample_batch['features'][sample_batch['scores']==1], sample_batch['scores'], return_scores=True, eval=True)
+                    negative_scores = self.forward_pass_for_classifier_training(sample_batch['features'][sample_batch['scores']==0], sample_batch['scores'], return_scores=True, eval=True)
 
                 if finetuning_config["validate"]:
-                    self.plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(self.id), i, scores[0].cpu().numpy(), is_target=True)
-                    for sample in range(16, 32):
-                        self.plotter.plot('loss', 'negative {}'.format(sample), 'Class Loss Evaluation Track {}'.format(self.id), i, scores[sample].cpu().numpy())
+                    for score in positive_scores:
+                        self.plotter.plot('score', 'positive', 'Scores Evaluation Classifier for Track {}'.format(self.id), i, score.cpu().numpy(), is_target=True)
+                    for score in negative_scores:
+                        self.plotter.plot('score', 'negative', 'Scores Evaluation Classifier for Track {}'.format(self.id), i, score.cpu().numpy())
 
-                    if early_stopping and scores[0] - torch.max(scores[16:]) > 0.8:
-                        print('Stopping because difference between positive score and maximum negative score is {}'.format(scores[0] - torch.max(scores[16:])))
+                    if early_stopping and torch.min(positive_scores) - torch.max(negative_scores) > 0.8:
                         break
 
                 loss.backward()
