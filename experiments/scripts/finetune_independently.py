@@ -60,10 +60,10 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
 
             if finetuning_config["early_stopping_classifier"] or finetuning_config["validate"]:
                 positive_scores = forward_pass_for_classifier_training(
-                    sample_batch['features'][sample_batch['scores'] == 1], sample_batch['scores'], return_scores=True,
+                    sample_batch['features'][sample_batch['scores'] == 1], sample_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
                     eval=True)
                 negative_scores = forward_pass_for_classifier_training(
-                    sample_batch['features'][sample_batch['scores'] == 0], sample_batch['scores'], return_scores=True,
+                    sample_batch['features'][sample_batch['scores'] == 0], sample_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
                     eval=True)
 
             if finetuning_config["validate"]:
