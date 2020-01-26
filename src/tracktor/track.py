@@ -8,7 +8,6 @@ from torchvision.models.detection.transform import resize_boxes
 from tracktor.training_set_generation import replicate_and_randomize_boxes
 from tracktor.utils import clip_boxes
 from tracktor.visualization import plot_bounding_boxes, VisdomLinePlotter
-import pickle
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class Track(object):
@@ -198,9 +197,9 @@ class Track(object):
 class IndividualDataset(torch.utils.data.Dataset):
     def __init__(self, id):
         self.id = id
-        self.features = torch.tensor([])
-        self.boxes = torch.tensor([])
-        self.scores = torch.tensor([])
+        self.features = torch.tensor([]).to(device)
+        self.boxes = torch.tensor([]).to(device)
+        self.scores = torch.tensor([]).to(device)
 
     def append_samples(self, training_set_dict):
         self.features = torch.cat((self.features, training_set_dict['features']))

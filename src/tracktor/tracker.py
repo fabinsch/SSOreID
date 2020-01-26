@@ -1,3 +1,5 @@
+import pickle
+
 import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
@@ -68,7 +70,6 @@ class Tracker:
                 box_predictor_copy_for_classifier = self.get_box_predictor()
                 t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
                                           box_predictor_copy_for_classifier, early_stopping=False)
-                print('Using pickle')
                 pickle.dump(t.training_set,
                             open("training_set/feature_training_set_track_{}.pkl".format(self.id), "wb"))
 
