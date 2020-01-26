@@ -203,9 +203,9 @@ class Track(object):
 class IndividualDataset(torch.utils.data.Dataset):
     def __init__(self, id):
         self.id = id
-        self.features = None
-        self.boxes = None
-        self.scores = None
+        self.features = torch.tensor([])
+        self.boxes = torch.tensor([])
+        self.scores = torch.tensor([])
 
     def append_samples(self, training_set_dict):
         self.features = torch.cat((self.features, training_set_dict['features']))
