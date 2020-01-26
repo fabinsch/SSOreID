@@ -71,7 +71,7 @@ class Tracker:
                 t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
                                           box_predictor_copy_for_classifier, early_stopping=False)
                 pickle.dump(t.training_set,
-                            open("training_set/feature_training_set_track_{}.pkl".format(self.id), "wb"))
+                            open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
 
         self.inactive_tracks += tracks
 
