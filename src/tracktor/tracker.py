@@ -68,6 +68,10 @@ class Tracker:
                 box_predictor_copy_for_classifier = self.get_box_predictor()
                 t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
                                           box_predictor_copy_for_classifier, early_stopping=False)
+                print('Using pickle')
+                pickle.dump(t.training_set,
+                            open("training_set/feature_training_set_track_{}.pkl".format(self.id), "wb"))
+
         self.inactive_tracks += tracks
 
     def add(self, new_det_pos, new_det_scores, new_det_features, image):

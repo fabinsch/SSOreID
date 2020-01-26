@@ -37,7 +37,7 @@ class Track(object):
         self.scale = self.im_info[0] / self.transformed_image_size[0][0]
         self.plotter = VisdomLinePlotter(env_name='training')
         self.checkpoints = dict()
-        self.training_set = {'features': None, 'boxes': None, 'scores': None}
+        self.training_set = IndividualDataset(self.id)
         self.box_roi_pool = box_roi_pool
 
     def has_positive_area(self):
@@ -124,9 +124,6 @@ class Track(object):
             self.training_set['boxes'][indices_replaced_by_current_frame_features] = training_set_dict['boxes'][
                 indices_replaced_by_current_frame_features]
 
-            if self.frames_since_active == 2:
-                print('Using pickle')
-                pickle.dump(self.training_set, open("training_set/feature_training_set_track_{}.pkl".format(self.id), "wb"))
         else:
             self.training_set = training_set_dict
 
@@ -205,3 +202,21 @@ class Track(object):
 
         # dets = torch.cat((self.pos, additional_dets))
         # print(self.forward_pass(dets, box_roi_pool, fpn_features, scores=True))
+
+class IndividualDataset(torch.utils.data.Dataset):
+    def __init__(self, id):
+        self.id = id
+        self.features = None
+        self.boxes = None
+        self.scores = None
+
+    def append_samples(self, training_set_dict):
+        self.features = torch.cat((self.features, training_set_dict['features']))
+        self.boxes = torch.cat((self.boxes, training_set_dict['boxes']))
+        self.scores = torch.cat((self.scores, training_set_dict['scores']))
+
+    def __len__(self):
+        return self.features.size()[0]
+
+    def __getitem__(self, idx):
+        return {'features': self.features[idx, :, :, :], 'boxes': self.boxes[idx, :], 'scores': self.scores[idx]}

@@ -102,5 +102,5 @@ def main(tracktor, _config, _log, _run):
     plotter = VisdomLinePlotter(env_name='finetune_independently')
 
     obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
-    track_id = 1
+    track_id = 7
     do_finetuning(track_id, finetuning_config, plotter, box_head_classification, box_predictor_classification)
