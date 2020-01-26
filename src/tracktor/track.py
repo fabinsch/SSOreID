@@ -8,7 +8,6 @@ from torchvision.models.detection.transform import resize_boxes
 from tracktor.training_set_generation import replicate_and_randomize_boxes
 from tracktor.utils import clip_boxes
 from tracktor.visualization import plot_bounding_boxes, VisdomLinePlotter
-import pickle
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class Track(object):
@@ -37,7 +36,7 @@ class Track(object):
         self.scale = self.im_info[0] / self.transformed_image_size[0][0]
         self.plotter = VisdomLinePlotter(env_name='training')
         self.checkpoints = dict()
-        self.training_set = {'features': None, 'boxes': None, 'scores': None}
+        self.training_set = IndividualDataset(self.id)
         self.box_roi_pool = box_roi_pool
 
     def has_positive_area(self):
@@ -115,20 +114,12 @@ class Track(object):
         return {'features': roi_pool_feat, 'boxes': boxes[:, 0:4], 'scores': boxes[:, 4]}
 
     def update_training_set_classification(self, batch_size, additional_dets, fpn_features,
-                                           include_previous_frames=False, shuffle=False, replacement_probability=0.5):
+                                           include_previous_frames=False, shuffle=False):
         training_set_dict = self.generate_training_set_classification(batch_size, additional_dets, fpn_features, shuffle=shuffle)
-        if include_previous_frames and self.training_set['features'] is not None:
-            weights = torch.tensor([1 / batch_size]).repeat(int(batch_size))
-            indices_replaced_by_current_frame_features = torch.multinomial(weights, int(batch_size * replacement_probability))
-            self.training_set['features'][indices_replaced_by_current_frame_features] = training_set_dict['features'][indices_replaced_by_current_frame_features]
-            self.training_set['boxes'][indices_replaced_by_current_frame_features] = training_set_dict['boxes'][
-                indices_replaced_by_current_frame_features]
 
-            if self.frames_since_active == 2:
-                print('Using pickle')
-                pickle.dump(self.training_set, open("training_set/feature_training_set_track_{}.pkl".format(self.id), "wb"))
-        else:
-            self.training_set = training_set_dict
+        if not include_previous_frames:
+            self.training_set = IndividualDataset(self.id)
+        self.training_set.append_samples(training_set_dict)
 
     def generate_validation_set_classfication(self, batch_size, additional_dets, fpn_features, shuffle=False):
         return self.generate_training_set_classification(batch_size, additional_dets, fpn_features, shuffle=shuffle)
@@ -165,6 +156,7 @@ class Track(object):
         optimizer = torch.optim.Adam(
             list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()), lr=float(finetuning_config["learning_rate"]) )
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10, gamma=finetuning_config['gamma'])
+        dataloader = torch.utils.data.DataLoader(self.training_set, batch_size=512)
 
         # if finetuning_config["validate"]:# and additional_dets is not None:
         #     if not self.plotter:
@@ -175,33 +167,48 @@ class Track(object):
           #                                                               val_dets, fpn_features)
         print("Finetuning track {}".format(self.id))
         for i in range(int(finetuning_config["iterations"])):
+            for i_sample, sample_batch in enumerate(dataloader):
 
-            optimizer.zero_grad()
-            loss = self.forward_pass_for_classifier_training(self.training_set['features'], self.training_set['scores'], eval=False)
-            # print('Finished iteration {} --- Loss {}'.format(i, loss.item()))
+                optimizer.zero_grad()
+                loss = self.forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], eval=False)
 
-            #if np.mod(i, int(finetuning_config["iterations_per_validation"])) == 0 and finetuning_config["validate"]:
-            #    val_loss = self.forward_pass_for_classifier_training(validation_set['features'], validation_set['scores'], eval=True)
-            #    # self.plotter.plot('loss', 'val', "Bbox Loss Track {}".format(self.id), i, val_loss.item())
+                if early_stopping or finetuning_config["validate"]:
+                    positive_scores = self.forward_pass_for_classifier_training(sample_batch['features'][sample_batch['scores']==1], sample_batch['scores'], return_scores=True, eval=True)
+                    negative_scores = self.forward_pass_for_classifier_training(sample_batch['features'][sample_batch['scores']==0], sample_batch['scores'], return_scores=True, eval=True)
 
-            if early_stopping or finetuning_config["validate"]:
-                scores = self.forward_pass_for_classifier_training(self.training_set['features'], self.training_set['scores'], return_scores=True, eval=True)
+                if finetuning_config["validate"]:
+                    for score in positive_scores:
+                        self.plotter.plot('score', 'positive', 'Scores Evaluation Classifier for Track {}'.format(self.id), i, score.cpu().numpy(), is_target=True)
+                    for score in negative_scores:
+                        self.plotter.plot('score', 'negative', 'Scores Evaluation Classifier for Track {}'.format(self.id), i, score.cpu().numpy())
 
-            if finetuning_config["validate"]:
-                self.plotter.plot('loss', 'positive', 'Class Loss Evaluation Track {}'.format(self.id), i, scores[0].cpu().numpy(), is_target=True)
-                for sample in range(16, 32):
-                    self.plotter.plot('loss', 'negative {}'.format(sample), 'Class Loss Evaluation Track {}'.format(self.id), i, scores[sample].cpu().numpy())
+                    if early_stopping and torch.min(positive_scores) - torch.max(negative_scores) > 0.8:
+                        break
 
-                if early_stopping and scores[0] - torch.max(scores[16:]) > 0.8:
-                    print('Stopping because difference between positive score and maximum negative score is {}'.format(scores[0] - torch.max(scores[16:])))
-                    break
-
-            loss.backward()
-            optimizer.step()
-            scheduler.step()
+                loss.backward()
+                optimizer.step()
+                scheduler.step()
 
         self.box_predictor_classification.eval()
         self.box_head_classification.eval()
 
         # dets = torch.cat((self.pos, additional_dets))
         # print(self.forward_pass(dets, box_roi_pool, fpn_features, scores=True))
+
+class IndividualDataset(torch.utils.data.Dataset):
+    def __init__(self, id):
+        self.id = id
+        self.features = torch.tensor([]).to(device)
+        self.boxes = torch.tensor([]).to(device)
+        self.scores = torch.tensor([]).to(device)
+
+    def append_samples(self, training_set_dict):
+        self.features = torch.cat((self.features, training_set_dict['features']))
+        self.boxes = torch.cat((self.boxes, training_set_dict['boxes']))
+        self.scores = torch.cat((self.scores, training_set_dict['scores']))
+
+    def __len__(self):
+        return self.features.size()[0]
+
+    def __getitem__(self, idx):
+        return {'features': self.features[idx, :, :, :], 'boxes': self.boxes[idx, :], 'scores': self.scores[idx]}

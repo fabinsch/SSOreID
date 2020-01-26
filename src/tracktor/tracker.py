@@ -1,3 +1,5 @@
+import pickle
+
 import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
@@ -66,8 +68,11 @@ class Tracker:
             if self.finetuning_config["for_reid"]:
                 box_head_copy_for_classifier = self.get_box_head()
                 box_predictor_copy_for_classifier = self.get_box_predictor()
-                t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
-                                          box_predictor_copy_for_classifier, early_stopping=False)
+                #t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
+                #                          box_predictor_copy_for_classifier, early_stopping=False)
+                pickle.dump(t.training_set,
+                            open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
+
         self.inactive_tracks += tracks
 
     def add(self, new_det_pos, new_det_scores, new_det_features, image):
@@ -88,8 +93,6 @@ class Tracker:
                 track.update_training_set_classification(self.finetuning_config['batch_size'],
                                                      other_pedestrians_bboxes,
                                                      self.obj_detect.fpn_features,
-                                                     replacement_probability=self.finetuning_config[
-                                                         'replacement_probability'],
                                                      include_previous_frames=True)
 
             if self.finetuning_config["for_tracking"]:
@@ -453,11 +456,9 @@ class Tracker:
 
                         if self.finetuning_config["build_up_training_set"] and np.mod(track.frames_since_active,
                                                         self.finetuning_config["feature_collection_interval"]) == 0:
-                            print('Building up training set!')
                             track.update_training_set_classification(self.finetuning_config['batch_size'],
                                             other_pedestrians_bboxes,
                                             self.obj_detect.fpn_features,
-                                            replacement_probability=self.finetuning_config['replacement_probability'],
                                             include_previous_frames=True)
 
                         if self.finetuning_config["for_tracking"] and self.finetuning_config["finetune_repeatedly"]:
@@ -508,9 +509,9 @@ class Tracker:
             new_det_features = self.reid_network.test_rois(blob['img'], new_det_pos).data
             if self.do_reid:
                 new_det_pos, new_det_scores = self.reid(blob, new_det_pos, new_det_features, new_det_scores)
-            if self.finetuning_config["for_reid"]:
-                new_det_pos, new_det_scores = self.reid_by_finetuned_model(blob, new_det_pos, new_det_features, new_det_scores)
-
+            #if self.finetuning_config["for_reid"]:
+            #    new_det_pos, new_det_scores = self.reid_by_finetuned_model(blob, new_det_pos, new_det_features, new_det_scores)
+#
             # add new
             if new_det_pos.nelement() > 0:
                 self.add(new_det_pos, new_det_scores, new_det_features, blob['img'][0])
@@ -533,7 +534,10 @@ class Tracker:
 
         self.im_index += 1
         self.last_image = blob['img'][0]
-
+        if frame == 599:
+            for t in self.tracks:
+                pickle.dump(t.training_set,
+                            open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
 
     def get_results(self):
         return self.results
