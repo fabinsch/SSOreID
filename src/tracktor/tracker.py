@@ -92,8 +92,6 @@ class Tracker:
                 track.update_training_set_classification(self.finetuning_config['batch_size'],
                                                      other_pedestrians_bboxes,
                                                      self.obj_detect.fpn_features,
-                                                     replacement_probability=self.finetuning_config[
-                                                         'replacement_probability'],
                                                      include_previous_frames=True)
 
             if self.finetuning_config["for_tracking"]:
@@ -461,7 +459,6 @@ class Tracker:
                             track.update_training_set_classification(self.finetuning_config['batch_size'],
                                             other_pedestrians_bboxes,
                                             self.obj_detect.fpn_features,
-                                            replacement_probability=self.finetuning_config['replacement_probability'],
                                             include_previous_frames=True)
 
                         if self.finetuning_config["for_tracking"] and self.finetuning_config["finetune_repeatedly"]:
