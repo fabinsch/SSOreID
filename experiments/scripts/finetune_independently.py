@@ -41,7 +41,6 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
     #dataset.clean()
     train_size =  int(0.8 * len(dataset))
     test_size = int(len(dataset) - train_size)
-    training_set, validation_set = dataset.split(framerange=None)
     training_set, validation_set = torch.utils.data.random_split(dataset, [train_size, test_size])
 
     box_predictor_classification.train()
