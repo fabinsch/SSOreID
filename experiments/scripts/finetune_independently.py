@@ -4,8 +4,8 @@ from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHe
 
 from torch.nn import functional as F
 from tracktor.frcnn_fpn import FRCNN_FPN
+from tracktor.live_dataset import IndividualDataset
 import torch
-import sacred
 from sacred import Experiment
 
 from tracktor.visualization import VisdomLinePlotter
@@ -92,6 +92,8 @@ def forward_pass_for_classifier_training(features, scores, box_head_classificati
         box_head_classification.train()
     return loss
 
+def post_process_data(dataset):
+    return
 
 @ex.automain
 def main(tracktor, _config, _log, _run):
