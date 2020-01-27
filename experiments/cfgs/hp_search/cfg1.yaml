@@ -5,7 +5,7 @@ tracktor:
     'finetuning':
       for_tracking: False
       for_reid: False
-      'iterations':  30
+      'iterations':  31
       'learning_rate': 1.5e-5
       'batch_size': 16
       validate: True

@@ -2,6 +2,7 @@ import pickle
 
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHead
 
+import numpy as np
 from torch.nn import functional as F
 from tracktor.frcnn_fpn import FRCNN_FPN
 from tracktor.live_dataset import IndividualDataset
@@ -60,8 +61,8 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
             loss.backward()
             optimizer.step()
             scheduler.step()
-
-        if finetuning_config["early_stopping_classifier"] or finetuning_config["plot_training_curves"]:
+        plot_every = 10
+        if np.mod(i, plot_every) == 0 and (finetuning_config["early_stopping_classifier"] or finetuning_config["plot_training_curves"]):
 
             positive_scores = forward_pass_for_classifier_training(
                 sample_batch['features'][sample_batch['scores'] == 1], sample_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
@@ -70,7 +71,7 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
                 sample_batch['features'][sample_batch['scores'] == 0], sample_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
                 eval=True)
 
-        if finetuning_config["plot_training_curves"]:
+        if np.mod(i, plot_every) == 0 and finetuning_config["plot_training_curves"]:
             for sample_idx, score in enumerate(positive_scores):
                 plotter.plot('score', 'positive {}'.format(sample_idx), 'Scores Evaluation Classifier for Track {}'.format(id),
                                   i, score.cpu().numpy(), is_target=True)
@@ -81,22 +82,23 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
         if finetuning_config["early_stopping_classifier"] and torch.min(positive_scores) - torch.max(negative_scores) > 1.5:
             break
 
-        for val_batch_idx, val_batch in enumerate(val_dataloader):
-            if finetuning_config["validate"]:
-                val_positive_scores = forward_pass_for_classifier_training(
-                    val_batch['features'][val_batch['scores'] == 1], val_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
-                    eval=True)
-                val_negative_scores = forward_pass_for_classifier_training(
-                    val_batch['features'][val_batch['scores'] == 0], val_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
-                    eval=True)
+        if np.mod(i, plot_every) == 0 and finetuning_config["validate"]:
+            for val_batch_idx, val_batch in enumerate(val_dataloader):
+                if finetuning_config["validate"]:
+                    val_positive_scores = forward_pass_for_classifier_training(
+                        val_batch['features'][val_batch['scores'] == 1], val_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
+                        eval=True)
+                    val_negative_scores = forward_pass_for_classifier_training(
+                        val_batch['features'][val_batch['scores'] == 0], val_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
+                        eval=True)
 
-            if finetuning_config["validate"]:
-                for sample_idx, score in enumerate(val_positive_scores):
-                    plotter.plot('score', 'val positive {}'.format(sample_idx), 'Validation Scores Evaluation Classifier for Track {}'.format(id),
-                                      i, score.cpu().numpy(), is_val_target=True)
-                for sample_idx, score in enumerate(val_negative_scores):
-                    plotter.plot('score', 'val negative {}'.format(sample_idx), 'Validation Scores Evaluation Classifier for Track {}'.format(id),
-                                      i, score.cpu().numpy(), is_val_pred=True)
+                if finetuning_config["validate"]:
+                    for sample_idx, score in enumerate(val_positive_scores):
+                        plotter.plot('score', 'val positive {}'.format(sample_idx), 'Scores Evaluation Classifier for Track {}'.format(id),
+                                          i, score.cpu().numpy(), is_val_target=True)
+                    for sample_idx, score in enumerate(val_negative_scores):
+                        plotter.plot('score', 'val negative {}'.format(sample_idx), 'Scores Evaluation Classifier for Track {}'.format(id),
+                                          i, score.cpu().numpy(), is_val_pred=True)
 
 
         box_predictor_classification.eval()
@@ -149,12 +151,17 @@ def main(tracktor, _config, _log, _run):
     tracker_cfg = tracktor['tracker']
     finetuning_config = tracker_cfg['finetuning']
     obj_detect_weights = _config['tracktor']['obj_detect_model']
-    if finetuning_config['validate'] or finetuning_config['plot_training_curves']:
-        plotter = VisdomLinePlotter(env_name='finetune_independently')
-    else:
-        plotter = None
 
-    obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
-    track_ids = [6]
+
+    track_ids = range(92)
     for track_id in track_ids:
-        do_finetuning(track_id, finetuning_config, plotter, box_head_classification, box_predictor_classification)
+        if finetuning_config['validate'] or finetuning_config['plot_training_curves']:
+            plotter = VisdomLinePlotter(env_name='finetune_independently')
+        else:
+            plotter = None
+        obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
+
+        try:
+            do_finetuning(track_id, finetuning_config, plotter, box_head_classification, box_predictor_classification)
+        except AssertionError:
+            continue
