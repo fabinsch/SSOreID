@@ -105,6 +105,8 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
         loss += forward_pass_for_classifier_training(batch['features'], batch['scores'], box_head_classification, box_predictor_classification)
         total_samples += batch['features'].size()[0]
     print('Loss: {}'.format(loss/total_samples))
+    print(true_labels)
+    print(predicted_labels)
     f1_score = sklearn.metrics.f1_score(true_labels, predicted_labels)
     print('F1 Score: {}'.format(f1_score))
 
