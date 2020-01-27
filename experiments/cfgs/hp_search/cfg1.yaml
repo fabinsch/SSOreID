@@ -9,6 +9,7 @@ tracktor:
       'learning_rate': 1.5e-5
       'batch_size': 16
       validate: True
+      plot_training_curves: True
       val_batch_size: 32
       finetune_repeatedly: True
       finetuning_interval: 4
