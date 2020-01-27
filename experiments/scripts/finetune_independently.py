@@ -42,10 +42,10 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
     dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(id), "rb"))
     dataset.post_process()
 
-    train_size =  int(0.8 * len(dataset))
-    test_size = int(len(dataset) - train_size)
     training_set, validation_set = dataset.val_test_split(percentage_positive_examples_train=0.8, ordered_by_frame=True,
                                                           downsample=True)
+    print(len(training_set))
+    print(len(validation_set))
 
     #training_set, validation_set = torch.utils.data.random_split(dataset, [train_size, test_size])
 
