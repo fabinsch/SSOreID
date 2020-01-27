@@ -94,7 +94,8 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
     true_labels = torch.tensor([])
     predicted_labels = torch.tensor([])
     for i, batch in enumerate(val_dataloader):
-        true_labels = torch.cat([true_labels, batch['scores'].to('cpu')])
+        new_true_scores = batch['scores'].to('cpu')
+        true_labels = torch.cat([true_labels, new_true_scores])
         predicted_scores = forward_pass_for_classifier_training(
                 batch['features'], batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
                 eval=True)
