@@ -20,7 +20,7 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.scores = torch.cat((self.scores, training_set_dict['scores']))
 
     # Filter out all duplicates and add frame number tensor for each data point
-    NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES = 31
+    NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES = 15
     def post_process(self):
         print("post processing data")
         self.samples_per_frame = defaultdict(list)
@@ -74,6 +74,7 @@ class IndividualDataset(torch.utils.data.Dataset):
 
         train_idx = torch.cat((torch.LongTensor(pos_idx_train), torch.LongTensor(neg_idx_train)))
         val_idx = torch.cat((torch.LongTensor(pos_idx_val), torch.LongTensor(neg_idx_val)))
+        print()
         return [Subset(self, train_idx), Subset(self, val_idx)]
 
     def val_test_split_old(self, percentage_positive_examples_train=None, number_positive_examples_train=None,
