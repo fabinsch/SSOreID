@@ -157,7 +157,7 @@ class Track(object):
         self.box_head_classification.train()
         optimizer = torch.optim.Adam(
             list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()), lr=float(finetuning_config["learning_rate"]) )
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 15, gamma=finetuning_config['gamma'])
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 2, gamma=finetuning_config['gamma'])
         dataloader = torch.utils.data.DataLoader(self.training_set, batch_size=512)
 
         # if finetuning_config["validate"]:# and additional_dets is not None:

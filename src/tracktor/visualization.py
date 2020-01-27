@@ -37,7 +37,7 @@ def plot_compare_bounding_boxes(box_finetune, box_no_finetune, image):
 class VisdomLinePlotter(object):
     """Plots to Visdom"""
 
-    def __init__(self, env_name='main', xlabel='Iteration/Frame'):
+    def __init__(self, env_name='main', xlabel='Iteration'):
         self.viz = Visdom(port=8097)
         self.env = env_name
         self.plots = {}

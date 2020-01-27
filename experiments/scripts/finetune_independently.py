@@ -49,19 +49,18 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
     box_head_classification.train()
     optimizer = torch.optim.Adam(
                 list(box_predictor_classification.parameters()) + list(box_head_classification.parameters()), lr=float(finetuning_config["learning_rate"]) )
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 10, gamma=finetuning_config['gamma'])
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, finetuning_config["decay_every"], gamma=finetuning_config['gamma'])
     train_dataloader = torch.utils.data.DataLoader(training_set, batch_size=512)
     val_dataloader = torch.utils.data.DataLoader(validation_set, batch_size=512)
 
     for i in range(int(finetuning_config["iterations"])):
-        print(i)
         for i_sample, sample_batch in enumerate(train_dataloader):
             optimizer.zero_grad()
             loss = forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], box_head_classification, box_predictor_classification)
             loss.backward()
             optimizer.step()
             scheduler.step()
-        plot_every = 10
+        plot_every = 2
         if np.mod(i, plot_every) == 0 and (finetuning_config["early_stopping_classifier"] or finetuning_config["plot_training_curves"]):
 
             positive_scores = forward_pass_for_classifier_training(
@@ -122,10 +121,10 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
         loss += forward_pass_for_classifier_training(batch['features'], batch['scores'], box_head_classification, box_predictor_classification)
         total_samples += batch['features'].size()[0]
 
-        print('Loss: {}'.format(loss / total_samples))
+        print('Loss for track {}: {}'.format(id, loss / total_samples))
         f1_score = sklearn.metrics.f1_score(true_labels, predicted_labels)
-        print('F1 Score: {}'.format(f1_score))
-
+        print('F1 Score for track {}: {}'.format(id, f1_score))
+    return f1_score
 
 def forward_pass_for_classifier_training(features, scores, box_head_classification, box_predictor_classification, eval=False, return_scores=False):
     if eval:
@@ -151,9 +150,9 @@ def main(tracktor, _config, _log, _run):
     tracker_cfg = tracktor['tracker']
     finetuning_config = tracker_cfg['finetuning']
     obj_detect_weights = _config['tracktor']['obj_detect_model']
+    f1_scores = []
 
-
-    track_ids = range(92)
+    track_ids = [6, 24, 13, 25, 27]
     for track_id in track_ids:
         if finetuning_config['validate'] or finetuning_config['plot_training_curves']:
             plotter = VisdomLinePlotter(env_name='finetune_independently')
@@ -162,6 +161,10 @@ def main(tracktor, _config, _log, _run):
         obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
 
         try:
-            do_finetuning(track_id, finetuning_config, plotter, box_head_classification, box_predictor_classification)
+            f1_score = do_finetuning(track_id, finetuning_config, plotter, box_head_classification, box_predictor_classification)
+            f1_scores.append(f1_score)
         except AssertionError:
             continue
+        print(np.mean(f1_scores))
+    print(np.sum(np.array(f1_scores)>0.99))
+    print(f1_scores)

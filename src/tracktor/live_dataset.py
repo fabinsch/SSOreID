@@ -23,7 +23,7 @@ class IndividualDataset(torch.utils.data.Dataset):
     # Filter out all duplicates and add frame number tensor for each data point
     NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES = 15
     def post_process(self):
-        print("post processing data")
+        #print("post processing data")
         self.samples_per_frame = defaultdict(list)
         unique_indices = []
         number_of_duplicates = 0
@@ -46,7 +46,7 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.number_of_positive_examples = self.scores[self.scores==1].size()[0]
         assert len(self.samples_per_frame) == self.number_of_positive_examples
         self.sort_by_iou()
-        print("DONE")
+        #print("DONE")
 
     def sort_by_iou(self):
         for frame_number in self.samples_per_frame:
