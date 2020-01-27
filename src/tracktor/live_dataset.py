@@ -74,7 +74,6 @@ class IndividualDataset(torch.utils.data.Dataset):
 
         train_idx = torch.cat((torch.LongTensor(pos_idx_train), torch.LongTensor(neg_idx_train)))
         val_idx = torch.cat((torch.LongTensor(pos_idx_val), torch.LongTensor(neg_idx_val)))
-        print()
         return [Subset(self, train_idx), Subset(self, val_idx)]
 
     def val_test_split_old(self, percentage_positive_examples_train=None, number_positive_examples_train=None,
