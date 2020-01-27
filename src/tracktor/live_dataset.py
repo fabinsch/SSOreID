@@ -2,6 +2,7 @@ import torch
 from torch import randperm
 from torch.utils.data import Subset
 from collections import defaultdict
+from torchvision.ops.boxes import box_iou
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -25,7 +26,6 @@ class IndividualDataset(torch.utils.data.Dataset):
         print("post processing data")
         self.samples_per_frame = defaultdict(list)
         unique_indices = []
-        frame_numbers = []
         number_of_duplicates = 0
         frame_number = 0
         current_box = self.boxes[0, :]
@@ -33,7 +33,6 @@ class IndividualDataset(torch.utils.data.Dataset):
             if not torch.equal(box, current_box):
                 if number_of_duplicates == self.NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES:
                     frame_number += 1
-                frame_numbers.append(frame_number)
                 # TODO Sort by proximity to first member in list
                 unique_indices.append(i)
                 self.samples_per_frame[frame_number].append(len(unique_indices) - 1)
@@ -41,13 +40,26 @@ class IndividualDataset(torch.utils.data.Dataset):
                 number_of_duplicates = 0
             else:
                 number_of_duplicates += 1
-        self.frame_numbers = torch.Tensor(frame_numbers)
         self.scores = self.scores[torch.LongTensor(unique_indices)]
         self.boxes = self.boxes[torch.LongTensor(unique_indices), :]
         self.features = self.features[torch.LongTensor(unique_indices),:,:,:]
         self.number_of_positive_examples = self.scores[self.scores==1].size()[0]
-        print(self.samples_per_frame)
+        assert len(self.samples_per_frame) == self.number_of_positive_examples
+        self.sort_by_iou()
         print("DONE")
+
+    def sort_by_iou(self):
+        for frame_number in self.samples_per_frame:
+            box_idx_in_frame = self.samples_per_frame[frame_number]
+            pos_box = self.boxes[box_idx_in_frame[0], :].unsqueeze(0)
+            ious = []
+            for box_idx in box_idx_in_frame:
+                iou = box_iou(self.boxes[box_idx, :].unsqueeze(0), pos_box)
+                ious.append(iou.cpu().numpy()[0][0])
+            box_idx_in_frame_sorted = [index for iou, index  in sorted(zip(ious, box_idx_in_frame), key=lambda x: x[0], reverse=True)]
+            assert len(box_idx_in_frame) == len(box_idx_in_frame_sorted)
+            assert box_idx_in_frame[0] == box_idx_in_frame_sorted[0]
+            self.samples_per_frame[frame_number] = box_idx_in_frame_sorted
 
     def val_test_split(self, num_frames_train=20, num_frames_val=10, train_val_frame_gap=0, downsampling=True, upsampling=False):
         assert num_frames_train + num_frames_val + train_val_frame_gap <= self.number_of_positive_examples, \
