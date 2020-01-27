@@ -8,6 +8,7 @@ from tracktor.live_dataset import IndividualDataset
 import time
 import torch
 from sacred import Experiment
+import sklearn
 
 from tracktor.visualization import VisdomLinePlotter
 
@@ -90,10 +91,22 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
     box_head_classification.eval()
     total_samples = 0
     loss = 0
+    true_labels = []
+    predicted_labels = []
     for i, batch in enumerate(val_dataloader):
+        true_labels.append(batch['scores'])
+        predicted_scores = forward_pass_for_classifier_training(
+                batch['features'], batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
+                eval=True)
+        new_predicted_labels = predicted_scores
+        new_predicted_labels[predicted_scores > 0.5] = 1
+        new_predicted_labels[predicted_scores < 0.5] = 0
+        predicted_labels.append(new_predicted_labels)
         loss += forward_pass_for_classifier_training(batch['features'], batch['scores'], box_head_classification, box_predictor_classification)
         total_samples += batch['features'].size()[0]
     print('Loss: {}'.format(loss/total_samples))
+    f1_score = sklearn.metrics.f1_score(true_labels, predicted_labels)
+    print('F1 Score: {}'.format(f1_score))
 
 
 def forward_pass_for_classifier_training(features, scores, box_head_classification, box_predictor_classification, eval=False, return_scores=False):
