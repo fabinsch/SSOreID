@@ -41,12 +41,7 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
     dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(id), "rb"))
     dataset.post_process()
 
-    train_size =  int(0.8 * len(dataset))
-    test_size = int(len(dataset) - train_size)
-    training_set, validation_set = dataset.val_test_split(percentage_positive_examples_train=0.8, ordered_by_frame=True,
-                                                          downsample=True)
-
-    #training_set, validation_set = torch.utils.data.random_split(dataset, [train_size, test_size])
+    training_set, validation_set = dataset.val_test_split(num_frames_train=20, num_frames_val=10, train_val_frame_gap=5)
 
     box_predictor_classification.train()
     box_head_classification.train()
@@ -60,7 +55,6 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
         for i_sample, sample_batch in enumerate(train_dataloader):
             optimizer.zero_grad()
             loss = forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], box_head_classification, box_predictor_classification)
-
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -120,7 +114,7 @@ def main(tracktor, _config, _log, _run):
     tracker_cfg = tracktor['tracker']
     finetuning_config = tracker_cfg['finetuning']
     obj_detect_weights = _config['tracktor']['obj_detect_model']
-    plotter = VisdomLinePlotter(env_name='finetune_independently')
+    plotter = None #VisdomLinePlotter(env_name='finetune_independently')
 
     obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
     track_ids = [6]
