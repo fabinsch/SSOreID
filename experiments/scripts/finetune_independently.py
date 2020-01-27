@@ -87,22 +87,22 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
         if finetuning_config["early_stopping_classifier"] and torch.min(positive_scores) - torch.max(negative_scores) > 1.5:
             break
 
-        #for val_batch_idx, val_batch in enumerate(val_dataloader):
-        #    if finetuning_config["validate"]:
-        #        val_positive_scores = forward_pass_for_classifier_training(
-        #            val_batch['features'][val_batch['scores'] == 1], val_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
-        #            eval=True)
-        #        val_negative_scores = forward_pass_for_classifier_training(
-        #            val_batch['features'][val_batch['scores'] == 0], val_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
-        #            eval=True)
-#
-        #    if finetuning_config["validate"]:
-        #        for sample_idx, score in enumerate(val_positive_scores):
-        #            plotter.plot('score', 'positive {}'.format(sample_idx), 'Validation Scores Evaluation Classifier for Track {}'.format(id),
-        #                              i, score.cpu().numpy(), is_target=True)
-        #        for sample_idx, score in enumerate(val_negative_scores):
-        #            plotter.plot('score', 'negative {}'.format(sample_idx), 'Validation Scores Evaluation Classifier for Track {}'.format(id),
-        #                              i, score.cpu().numpy())
+        for val_batch_idx, val_batch in enumerate(val_dataloader):
+            if finetuning_config["validate"]:
+                val_positive_scores = forward_pass_for_classifier_training(
+                    val_batch['features'][val_batch['scores'] == 1], val_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
+                    eval=True)
+                val_negative_scores = forward_pass_for_classifier_training(
+                    val_batch['features'][val_batch['scores'] == 0], val_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
+                    eval=True)
+
+            if finetuning_config["validate"]:
+                for sample_idx, score in enumerate(val_positive_scores):
+                    plotter.plot('score', 'val positive {}'.format(sample_idx), 'Validation Scores Evaluation Classifier for Track {}'.format(id),
+                                      i, score.cpu().numpy(), is_val_target=True)
+                for sample_idx, score in enumerate(val_negative_scores):
+                    plotter.plot('score', 'val negative {}'.format(sample_idx), 'Validation Scores Evaluation Classifier for Track {}'.format(id),
+                                      i, score.cpu().numpy(), is_val_pred=True)
 
 
         box_predictor_classification.eval()
