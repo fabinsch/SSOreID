@@ -133,7 +133,8 @@ def main(tracktor, _config, _log, _run):
     tracker_cfg = tracktor['tracker']
     finetuning_config = tracker_cfg['finetuning']
     obj_detect_weights = _config['tracktor']['obj_detect_model']
-    plotter = VisdomLinePlotter(env_name='finetune_independently')
+    if finetuning_config['validate']:
+        plotter = VisdomLinePlotter(env_name='finetune_independently')
 
     obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
     track_ids = [6]
