@@ -106,6 +106,26 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
         predicted_labels = torch.cat([predicted_labels, new_predicted_labels.to('cpu')])
         loss += forward_pass_for_classifier_training(batch['features'], batch['scores'], box_head_classification, box_predictor_classification)
         total_samples += batch['features'].size()[0]
+
+        if finetuning_config["validate"]:
+
+            positive_scores = forward_pass_for_classifier_training(
+                batch['features'][batch['scores'] == 1], batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
+                eval=True)
+            negative_scores = forward_pass_for_classifier_training(
+                batch['features'][batch['scores'] == 0], batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
+                eval=True)
+
+        if finetuning_config["validate"]:
+            for sample_idx, score in enumerate(positive_scores):
+                plotter.plot('score', 'positive {}'.format(sample_idx), 'Validation Scores Evaluation Classifier for Track {}'.format(id),
+                                  i, score.cpu().numpy(), is_target=True)
+            for sample_idx, score in enumerate(negative_scores):
+                plotter.plot('score', 'negative {}'.format(sample_idx), 'Validation Scores Evaluation Classifier for Track {}'.format(id),
+                                  i, score.cpu().numpy())
+
+
+
     print('Loss: {}'.format(loss/total_samples))
     f1_score = sklearn.metrics.f1_score(true_labels, predicted_labels)
     print('F1 Score: {}'.format(f1_score))
