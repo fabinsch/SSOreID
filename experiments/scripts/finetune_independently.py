@@ -42,8 +42,8 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
     dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(id), "rb"))
     dataset.post_process()
 
-    training_set, validation_set = dataset.val_test_split(num_frames_train=20, num_frames_val=10, train_val_frame_gap=5)
-
+    training_set, validation_set = dataset.val_test_split(num_frames_train=20, num_frames_val=10, train_val_frame_gap=5,
+                                                          downsampling=False)
     box_predictor_classification.train()
     box_head_classification.train()
     optimizer = torch.optim.Adam(
@@ -53,7 +53,6 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
     val_dataloader = torch.utils.data.DataLoader(validation_set, batch_size=512)
 
     for i in range(int(finetuning_config["iterations"])):
-        print(i)
         for i_sample, sample_batch in enumerate(train_dataloader):
             optimizer.zero_grad()
             loss = forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], box_head_classification, box_predictor_classification)
