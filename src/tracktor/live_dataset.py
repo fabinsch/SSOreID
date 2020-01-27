@@ -20,7 +20,7 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.scores = torch.cat((self.scores, training_set_dict['scores']))
 
     # Filter out all duplicates and add frame number tensor for each data point
-    NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES = 31
+    NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES = 7
     def post_process(self):
         print("post processing data")
         self.samples_per_frame = defaultdict(list)
