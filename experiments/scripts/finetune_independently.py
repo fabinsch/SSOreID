@@ -43,7 +43,7 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
     dataset.post_process()
 
     training_set, validation_set = dataset.val_test_split(num_frames_train=20, num_frames_val=10, train_val_frame_gap=5,
-                                                          downsampling=False)
+                                                          downsampling=True, shuffle=True)
     box_predictor_classification.train()
     box_head_classification.train()
     optimizer = torch.optim.Adam(

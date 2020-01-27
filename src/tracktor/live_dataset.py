@@ -33,7 +33,6 @@ class IndividualDataset(torch.utils.data.Dataset):
             if not torch.equal(box, current_box):
                 if number_of_duplicates == self.NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES:
                     frame_number += 1
-                # TODO Sort by proximity to first member in list
                 unique_indices.append(i)
                 self.samples_per_frame[frame_number].append(len(unique_indices) - 1)
                 current_box = box
@@ -61,7 +60,8 @@ class IndividualDataset(torch.utils.data.Dataset):
             assert box_idx_in_frame[0] == box_idx_in_frame_sorted[0]
             self.samples_per_frame[frame_number] = box_idx_in_frame_sorted
 
-    def val_test_split(self, num_frames_train=20, num_frames_val=10, train_val_frame_gap=0, downsampling=True):
+    def val_test_split(self, num_frames_train=20, num_frames_val=10, train_val_frame_gap=0, downsampling=True,
+                       shuffle=True):
         assert num_frames_train + num_frames_val + train_val_frame_gap <= self.number_of_positive_examples, \
             "There are not enough frames in the data set"
         pos_idx_train = []
@@ -94,6 +94,9 @@ class IndividualDataset(torch.utils.data.Dataset):
 
         train_idx = torch.cat((torch.LongTensor(pos_idx_train), torch.LongTensor(neg_idx_train)))
         val_idx = torch.cat((torch.LongTensor(pos_idx_val), torch.LongTensor(neg_idx_val)))
+        if shuffle:
+            train_idx = train_idx[randperm(len(train_idx))]
+            val_idx = val_idx[randperm(len(val_idx))]
         return [Subset(self, train_idx), Subset(self, val_idx)]
 
     def establish_class_balance(self):
