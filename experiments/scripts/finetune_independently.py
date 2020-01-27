@@ -94,14 +94,14 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
     true_labels = torch.tensor([])
     predicted_labels = torch.tensor([])
     for i, batch in enumerate(val_dataloader):
-        true_labels = torch.cat([true_labels, batch['scores']])
+        true_labels = torch.cat([true_labels, batch['scores'].to('cpu')])
         predicted_scores = forward_pass_for_classifier_training(
                 batch['features'], batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
                 eval=True)
         new_predicted_labels = predicted_scores
         new_predicted_labels[predicted_scores > 0.5] = 1
         new_predicted_labels[predicted_scores < 0.5] = 0
-        predicted_labels = torch.cat([predicted_labels, new_predicted_labels])
+        predicted_labels = torch.cat([predicted_labels, new_predicted_labels.to('cpu')])
         loss += forward_pass_for_classifier_training(batch['features'], batch['scores'], box_head_classification, box_predictor_classification)
         total_samples += batch['features'].size()[0]
     print('Loss: {}'.format(loss/total_samples))
