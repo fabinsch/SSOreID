@@ -8,7 +8,7 @@ from tracktor.live_dataset import IndividualDataset
 import time
 import torch
 from sacred import Experiment
-import sklearn
+import sklearn.metrics
 
 from tracktor.visualization import VisdomLinePlotter
 
