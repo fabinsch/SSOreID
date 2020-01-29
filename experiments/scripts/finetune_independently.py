@@ -68,8 +68,6 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
                                                           downsampling=False,
                                                           shuffle=True)
 
-    training_set, validation_set = get_reid_datasets(21, 65)
-
     box_predictor_classification.train()
     box_head_classification.train()
     optimizer = torch.optim.Adam(
@@ -137,6 +135,7 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
     loss = 0
     true_labels = torch.tensor([])
     predicted_labels = torch.tensor([])
+
     for idx, batch in enumerate(val_dataloader):
         new_true_scores = batch['scores'].to('cpu')
         true_labels = torch.cat([true_labels, new_true_scores])
@@ -150,9 +149,9 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
         loss += forward_pass_for_classifier_training(batch['features'], batch['scores'], box_head_classification, box_predictor_classification)
         total_samples += batch['features'].size()[0]
 
-        print('Loss for track {}: {}'.format(id, loss / total_samples))
-        f1_score = sklearn.metrics.f1_score(true_labels, predicted_labels)
-        print('F1 Score for track {}: {}'.format(id, f1_score))
+    print('Loss for track {}: {}'.format(id, loss / total_samples))
+    f1_score = sklearn.metrics.f1_score(true_labels, predicted_labels)
+    print('F1 Score for track {}: {}'.format(id, f1_score))
     return f1_score
 
 def forward_pass_for_classifier_training(features, scores, box_head_classification, box_predictor_classification, eval=False, return_scores=False):

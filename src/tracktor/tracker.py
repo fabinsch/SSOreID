@@ -45,7 +45,8 @@ class Tracker:
             self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
             self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
 
-        self.plotter = VisdomLinePlotter(env_name='person_scores', xlabel="Frames")
+        if self.finetuning_config["validate"] or self.finetuning_config["plot_training_curves"]:
+            self.plotter = VisdomLinePlotter(env_name='person_scores', xlabel="Frames")
         self.tracks = []
         self.inactive_tracks = []
         self.track_num = 0
@@ -78,7 +79,7 @@ class Tracker:
 
         self.inactive_tracks += tracks
 
-    def add(self, new_det_pos, new_det_scores, new_det_features, image):
+    def add(self, new_det_pos, new_det_scores, new_det_features, image, frame):
         """Initializes new Track objects and saves them."""
         num_new = new_det_pos.size(0)
         old_tracks = self.get_pos()
@@ -92,11 +93,12 @@ class Tracker:
                           self.motion_model_cfg['n_steps'] if self.motion_model_cfg['n_steps'] > 0 else 1,
                           image.size()[1:3], self.obj_detect.image_size, box_roi_pool=box_roi_pool)
             if self.finetuning_config["for_tracking"] or self.finetuning_config["for_reid"]:
-                other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i + 1:], old_tracks))
-                track.update_training_set_classification(self.finetuning_config['batch_size'],
-                                                     other_pedestrians_bboxes,
-                                                     self.obj_detect.fpn_features,
-                                                     include_previous_frames=True)
+                if np.mod(frame, 20) == 0:
+                    other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i + 1:], old_tracks))
+                    track.update_training_set_classification(self.finetuning_config['batch_size'],
+                                                         other_pedestrians_bboxes,
+                                                         self.obj_detect.fpn_features,
+                                                         include_previous_frames=True)
 
             if self.finetuning_config["for_tracking"]:
                 box_head_copy_for_classifier = self.get_box_head()
@@ -219,15 +221,12 @@ class Tracker:
             score_matrix = torch.tensor([]).to(device) # 1 row: scores for a new detection by the current inactive tracks
             #idea: go over the detections, check the scores of the classifiers wheter one is significantly higher
             inactive_tracks_to_test = [track for track in self.inactive_tracks if track.use_for_finetuning]
-            print(f'Number of relevant inactive tracks: {len(inactive_tracks_to_test)}')
-            print(f'Number of new detections: {new_det_pos.size()[0]}')
 
             for inactive_track in inactive_tracks_to_test:
                 boxes, scores = self.obj_detect.predict_boxes(new_det_pos,
                                                              box_predictor_classification=inactive_track.box_predictor_classification,
                                                              box_head_classification=inactive_track.box_head_classification)
-                print(f'Size of new scores: {scores.size()}' )
-                print(f'Current size of score matrix: {score_matrix.size()}')
+
                 if score_matrix.size()[0] == 0:
                     score_matrix = scores.unsqueeze(1)
                 else:
@@ -235,17 +234,16 @@ class Tracker:
                         scores = scores.unsqueeze(1)
                     score_matrix = torch.cat([score_matrix, scores], dim=1)
 
-            print(f'Shape of score matrix: {score_matrix.size()}')
+            print(f'Score matrix: {score_matrix}')
             for track_index in range(len(inactive_tracks_to_test)):
 
                 track_scores = score_matrix[:, track_index]
-                print(track_scores)
                 highest_score_index = torch.argmax(track_scores)
                 highest_score = torch.max(track_scores)
                 track_scores[highest_score_index] = 0
                 second_highest_score = torch.max(track_scores)
                 distance_to_second_highest_score = highest_score - second_highest_score
-                if distance_to_second_highest_score > 0.3:
+                if distance_to_second_highest_score > 0.3 and highest_score > 0.7:
                     inactive_track = inactive_tracks_to_test[track_index]
                     score_matrix[highest_score_index, track_index+1:] = 0
                     self.tracks.append(inactive_track)
@@ -541,7 +539,7 @@ class Tracker:
 #
             # add new
             if new_det_pos.nelement() > 0:
-                self.add(new_det_pos, new_det_scores, new_det_features, blob['img'][0])
+                self.add(new_det_pos, new_det_scores, new_det_features, blob['img'][0], frame)
 
         ####################
         # Generate Results #
