@@ -123,7 +123,6 @@ class Track(object):
 
         if not include_previous_frames:
             self.training_set = IndividualDataset(self.id)
-            print(self.training_set.last_frame_number)
         self.training_set.append_samples(training_set_dict)
 
     def generate_validation_set_classfication(self, batch_size, additional_dets, fpn_features, shuffle=False):
@@ -153,10 +152,8 @@ class Track(object):
 
     def finetune_classification(self, finetuning_config, box_head_classification, box_predictor_classification,
                                 early_stopping=False):
-        print('\n\n\nFinetuning classifier for track {}'.format(self.id))
         self.training_set.post_process()
-        training_set, _ = self.training_set.val_test_split(num_frames_train=self.frames_since_active,
-                                                             num_frames_val=0, train_val_frame_gap=0, downsampling=False)
+        training_set = self.training_set.get_training_set()
 
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
@@ -168,16 +165,19 @@ class Track(object):
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 2, gamma=finetuning_config['gamma'])
         dataloader = torch.utils.data.DataLoader(training_set, batch_size=256)
 
-        print("Finetuning track {}".format(self.id))
         for i in range(int(finetuning_config["iterations"])):
             for i_sample, sample_batch in enumerate(dataloader):
 
                 optimizer.zero_grad()
                 loss = self.forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], eval=False)
 
-                if early_stopping or finetuning_config["validate"]:
-                    positive_scores = self.forward_pass_for_classifier_training(sample_batch['features'][sample_batch['scores']==1], sample_batch['scores'], return_scores=True, eval=True)
-                    negative_scores = self.forward_pass_for_classifier_training(sample_batch['features'][sample_batch['scores']==0], sample_batch['scores'], return_scores=True, eval=True)
+                loss.backward()
+                optimizer.step()
+                scheduler.step()
+
+            if early_stopping or finetuning_config["validate"] or finetuning_config["plot_training_curves"]:
+                positive_scores = self.forward_pass_for_classifier_training(sample_batch['features'][sample_batch['scores']==1], sample_batch['scores'], return_scores=True, eval=True)
+                negative_scores = self.forward_pass_for_classifier_training(sample_batch['features'][sample_batch['scores']==0], sample_batch['scores'], return_scores=True, eval=True)
 
             if finetuning_config["plot_training_curves"]:
                 positive_scores = positive_scores[:10]
@@ -191,12 +191,9 @@ class Track(object):
                                  'Scores Evaluation Classifier for Track {}'.format(self.id),
                                  i, score.cpu().numpy())
 
-                if early_stopping and torch.min(positive_scores) - torch.max(negative_scores) > 0.2:
-                        break
+            if early_stopping and torch.min(positive_scores) - torch.max(negative_scores) > 0.9:
+                    break
 
-                loss.backward()
-                optimizer.step()
-                scheduler.step()
 
         self.box_predictor_classification.eval()
         self.box_head_classification.eval()

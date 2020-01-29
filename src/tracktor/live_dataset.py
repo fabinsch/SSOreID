@@ -56,6 +56,10 @@ class IndividualDataset(torch.utils.data.Dataset):
             assert box_idx_in_frame[0] == box_idx_in_frame_sorted[0]
             self.samples_per_frame[frame_number] = box_idx_in_frame_sorted
 
+    def get_training_set(self):
+        training_set, _ = self.val_test_split(num_frames_train=self.number_of_positive_examples, num_frames_val=0, train_val_frame_gap=0)
+        return training_set
+
     def val_test_split(self, num_frames_train=20, num_frames_val=10, train_val_frame_gap=0, downsampling=True,
                        shuffle=True):
         assert num_frames_train + num_frames_val + train_val_frame_gap <= self.number_of_positive_examples, \
