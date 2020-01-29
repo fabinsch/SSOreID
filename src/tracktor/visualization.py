@@ -37,17 +37,24 @@ def plot_compare_bounding_boxes(box_finetune, box_no_finetune, image):
 class VisdomLinePlotter(object):
     """Plots to Visdom"""
 
-    def __init__(self, env_name='main', xlabel='Iteration/Frame'):
+    def __init__(self, env_name='main', xlabel='Iteration'):
         self.viz = Visdom(port=8097)
         self.env = env_name
         self.plots = {}
         self.xlabel = xlabel
 
-    def plot(self, var_name, split_name, title_name, x, y, erase=False, is_target=False):
-        if is_target:
-            color = np.array([[255, 0, 0], ])
+    def plot(self, var_name, split_name, title_name, x, y, erase=False, train_positive=False, val_positive=False,
+             color=None, val_negative=False):
+        if train_positive:
+            color = np.array([[128, 0, 0], ])#dark red: train positive
+        elif val_positive:
+            color = np.array([[255, 0, 0], ]) #light red: val positive
+        elif val_negative:
+            color = np.array([[0, 0, 255], ])#light blue: val negative
+        elif color is not None:
+            color = color
         else:
-            color = np.array([[0, 0, 255], ])
+            color = np.array([[0, 0, 128], ])
         if var_name not in self.plots:
             self.plots[var_name] = self.viz.line(X=np.array([x, x]), Y=np.array([y, y]), env=self.env, opts=dict(
                 #legend=[split_name],

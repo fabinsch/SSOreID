@@ -66,7 +66,9 @@ tracktor:
     reid_iou_threshold: 0.2
     # Train finetuned bounding box predictor for each track
     finetuning:
-      enabled: True
+      for_tracking: True
+      for_reid: True
+      feature_collection_interval: 10
       # Number of iterations each predictor is tuned
       iterations: 7
       # Learning rate for the finetuning
@@ -80,7 +82,7 @@ tracktor:
       # Finetune on every t mod k frames
       finetuning_interval: 50
       #Have a validation set randomly generated
-      validate: False
+      validate: True
       # Evaluate validation set every ith iteration
       iterations_per_validation: 1
       # Number of samples used for each iteration of validation
