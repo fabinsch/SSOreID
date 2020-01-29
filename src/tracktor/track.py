@@ -166,7 +166,7 @@ class Track(object):
         optimizer = torch.optim.Adam(
             list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()), lr=float(finetuning_config["learning_rate"]) )
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 2, gamma=finetuning_config['gamma'])
-        dataloader = torch.utils.data.DataLoader(training_set, batch_size=512)
+        dataloader = torch.utils.data.DataLoader(training_set, batch_size=256)
 
         print("Finetuning track {}".format(self.id))
         for i in range(int(finetuning_config["iterations"])):

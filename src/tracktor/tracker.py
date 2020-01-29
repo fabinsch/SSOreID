@@ -226,8 +226,7 @@ class Tracker:
                 boxes, scores = self.obj_detect.predict_boxes(new_det_pos,
                                                              box_predictor_classification=inactive_track.box_predictor_classification,
                                                              box_head_classification=inactive_track.box_head_classification)
-                print(f'Size of new scores: {scores.size()}' )
-                print(f'Current size of score matrix: {score_matrix.size()}')
+
                 if score_matrix.size()[0] == 0:
                     score_matrix = scores.unsqueeze(1)
                 else:

@@ -56,12 +56,12 @@ def get_reid_datasets(first_id, second_id):
 
 def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_predictor_classification):
     dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(id), "rb"))
-    dataset.post_process()
+    dataset.post_process(finetune_independently=True)
 
-    training_set, validation_set = dataset.val_test_split(num_frames_train=40, num_frames_val=10, train_val_frame_gap=25,
+    training_set, validation_set = dataset.val_test_split(num_frames_train=40, num_frames_val=10, train_val_frame_gap=125,
                                                           downsampling=False, shuffle=True)
 
-    training_set, validation_set = get_reid_datasets(21, 65)
+    #training_set, validation_set = get_reid_datasets(21, 65)
 
     box_predictor_classification.train()
     box_head_classification.train()
@@ -144,9 +144,9 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
         loss += forward_pass_for_classifier_training(batch['features'], batch['scores'], box_head_classification, box_predictor_classification)
         total_samples += batch['features'].size()[0]
 
-        print('Loss for track {}: {}'.format(id, loss / total_samples))
-        f1_score = sklearn.metrics.f1_score(true_labels, predicted_labels)
-        print('F1 Score for track {}: {}'.format(id, f1_score))
+    print('Loss for track {}: {}'.format(id, loss / total_samples))
+    f1_score = sklearn.metrics.f1_score(true_labels, predicted_labels)
+    print('F1 Score for track {}: {}'.format(id, f1_score))
     return f1_score
 
 def forward_pass_for_classifier_training(features, scores, box_head_classification, box_predictor_classification, eval=False, return_scores=False):
@@ -175,7 +175,9 @@ def main(tracktor, _config, _log, _run):
     obj_detect_weights = _config['tracktor']['obj_detect_model']
     f1_scores = []
 
-    track_ids = [6, 24, 13, 25, 27]
+    track_ids = range(92) # [4, 19, 35, 41, 44, 47, 79, 80, 82, 6, 13] # idsw: 27, 14
+    track_ids = [track_id for track_id in track_ids if track_id not in [27, 14]]
+
     for track_id in track_ids:
         if finetuning_config['validate'] or finetuning_config['plot_training_curves']:
             plotter = VisdomLinePlotter(env_name='finetune_independently')
