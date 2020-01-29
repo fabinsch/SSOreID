@@ -226,8 +226,7 @@ class Tracker:
                 boxes, scores = self.obj_detect.predict_boxes(new_det_pos,
                                                              box_predictor_classification=inactive_track.box_predictor_classification,
                                                              box_head_classification=inactive_track.box_head_classification)
-                print(f'Size of new scores: {scores.size()}' )
-                print(f'Current size of score matrix: {score_matrix.size()}')
+
                 if score_matrix.size()[0] == 0:
                     score_matrix = scores.unsqueeze(1)
                 else:
@@ -236,16 +235,16 @@ class Tracker:
                     score_matrix = torch.cat([score_matrix, scores], dim=1)
 
             print(f'Shape of score matrix: {score_matrix.size()}')
+            print(f'Score matrix: {score_matrix}')
             for track_index in range(len(inactive_tracks_to_test)):
 
                 track_scores = score_matrix[:, track_index]
-                print(track_scores)
                 highest_score_index = torch.argmax(track_scores)
                 highest_score = torch.max(track_scores)
                 track_scores[highest_score_index] = 0
                 second_highest_score = torch.max(track_scores)
                 distance_to_second_highest_score = highest_score - second_highest_score
-                if distance_to_second_highest_score > 0.3:
+                if distance_to_second_highest_score > 0.3 and highest_score > 0.7:
                     inactive_track = inactive_tracks_to_test[track_index]
                     score_matrix[highest_score_index, track_index+1:] = 0
                     self.tracks.append(inactive_track)
@@ -563,8 +562,8 @@ class Tracker:
         self.last_image = blob['img'][0]
         if frame == 599:
             for t in self.tracks:
-                pickle.dump(t.training_set,
-                            open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
+                #pickle.dump(t.training_set,
+                #            open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
 
     def get_results(self):
         return self.results

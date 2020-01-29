@@ -24,10 +24,9 @@ class IndividualDataset(torch.utils.data.Dataset):
 
     # Filter out all duplicates and add frame number tensor for each data point
     NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES = 15
-    def post_process(self):
-        if self.last_frame_number is None:
+    def post_process(self, finetune_independently=False):
+        if finetune_independently:
             self.last_frame_number = 0
-        if self.already_existing_tracks is None:
             self.already_existing_tracks = 0
         #print("post processing data")
         self.samples_per_frame = defaultdict(list)
