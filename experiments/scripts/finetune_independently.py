@@ -232,7 +232,7 @@ def frame_number_train_exp(finetuning_config, obj_detect_weights):
 def test_multiple_tracks(finetuning_config, obj_detect_weights):
     f1_scores = []
 
-    track_ids = [6]
+    track_ids = [6, 24, 13, 25, 27]
     for track_id in track_ids:
         if finetuning_config['validate'] or finetuning_config['plot_training_curves']:
             plotter = VisdomLinePlotter(env_name='finetune_independently')
@@ -241,9 +241,7 @@ def test_multiple_tracks(finetuning_config, obj_detect_weights):
         obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
 
         try:
-            f1_score = do_finetuning(track_id, finetuning_config, plotter, box_head_classification,
-                                     box_predictor_classification, num_frames_train=15, num_frames_val=10,
-                                     train_val_frame_gap=5)
+            f1_score = do_finetuning(track_id, finetuning_config, plotter, box_head_classification, box_predictor_classification)
             f1_scores.append(f1_score)
         except AssertionError:
             continue
