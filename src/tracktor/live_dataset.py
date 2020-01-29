@@ -7,15 +7,13 @@ from torchvision.ops.boxes import box_iou
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class IndividualDataset(torch.utils.data.Dataset):
-    def __init__(self, id, frame=0, tracks=0):
+    def __init__(self, id):
         self.id = id
-        self.last_frame_number = frame
         self.features = torch.tensor([]).to(device)
         self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
         self.samples_per_frame = None
         self.number_of_positive_examples = None
-        self.already_existing_tracks = tracks
 
     def append_samples(self, training_set_dict):
         self.features = torch.cat((self.features, training_set_dict['features']))
@@ -25,36 +23,26 @@ class IndividualDataset(torch.utils.data.Dataset):
     # Filter out all duplicates and add frame number tensor for each data point
     NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES = 15
     def post_process(self):
-        if self.last_frame_number is None:
-            self.last_frame_number = 0
-        if self.already_existing_tracks is None:
-            self.already_existing_tracks = 0
-        #print("post processing data")
         self.samples_per_frame = defaultdict(list)
         unique_indices = []
         number_of_duplicates = 0
-        frame_number = self.last_frame_number
+        frame_number = 0
         current_box = self.boxes[0, :]
         for i, box in enumerate(torch.cat((self.boxes[1:, :], torch.Tensor([[0,0,0,0]]).to(device)))):
             if not torch.equal(box, current_box):
                 if number_of_duplicates == self.NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES:
                     frame_number += 1
                 unique_indices.append(i)
-                self.samples_per_frame[frame_number].append(len(unique_indices) - 1)
+                self.samples_per_frame[frame_number].append(i)
                 current_box = box
                 number_of_duplicates = 0
             else:
                 number_of_duplicates += 1
-        self.scores = self.scores[torch.LongTensor(unique_indices)]
-        self.boxes = self.boxes[torch.LongTensor(unique_indices), :]
-        self.features = self.features[torch.LongTensor(unique_indices),:,:,:]
-        self.number_of_positive_examples = self.scores[self.scores==1].size()[0]
-        assert len(self.samples_per_frame) + self.already_existing_tracks == self.number_of_positive_examples
+        unique_scores = self.scores[unique_indices]
+        self.number_of_positive_examples = unique_scores[unique_scores==1].size()[0]
+        print("number pos examples {}".format(self.number_of_positive_examples))
+        assert len(self.samples_per_frame) == self.number_of_positive_examples
         self.sort_by_iou()
-        self.already_existing_tracks += len(self.samples_per_frame) - 1
-        self.last_frame_number = frame_number
-        print(f'Last frame number: {self.last_frame_number}')
-        #print("DONE")
 
     def sort_by_iou(self):
         for frame_number in self.samples_per_frame:
