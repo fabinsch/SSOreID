@@ -140,24 +140,59 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
     loss = 0
     true_labels = torch.tensor([])
     predicted_labels = torch.tensor([])
-
     for idx, batch in enumerate(val_dataloader):
         new_true_scores = batch['scores'].to('cpu')
         true_labels = torch.cat([true_labels, new_true_scores])
-        predicted_scores = forward_pass_for_classifier_training(
-                batch['features'], batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
-                eval=True)
-        new_predicted_labels = predicted_scores
-        new_predicted_labels[predicted_scores > 0.5] = 1
-        new_predicted_labels[predicted_scores < 0.5] = 0
+        new_predicted_scores = forward_pass_for_classifier_training(
+            batch['features'], batch['scores'], box_head_classification, box_predictor_classification,
+            return_scores=True,
+            eval=True)
+        print(f'funcking newpredicted scores: {new_predicted_scores}')
+        new_predicted_labels = torch.zeros_like(new_predicted_scores)
+        new_predicted_labels[new_predicted_scores > 0.5] = 1
+        new_predicted_labels[new_predicted_scores < 0.5] = 0
         predicted_labels = torch.cat([predicted_labels, new_predicted_labels.to('cpu')])
-        loss += forward_pass_for_classifier_training(batch['features'], batch['scores'], box_head_classification, box_predictor_classification)
+        predicted_scores = torch.cat([predicted_scores, new_predicted_scores.to('cpu')])
+        loss += forward_pass_for_classifier_training(batch['features'], batch['scores'], box_head_classification,
+                                                     box_predictor_classification)
         total_samples += batch['features'].size()[0]
-
+        reid_sucess = reid_metric(new_true_scores, new_predicted_scores)
+        print(f'Reid success: {reid_sucess} for track {id}')
     print('Loss for track {}: {}'.format(id, loss / total_samples))
     f1_score = sklearn.metrics.f1_score(true_labels, predicted_labels)
+
     print('F1 Score for track {}: {}'.format(id, f1_score))
     return f1_score
+
+
+def reid_metric(true_labels, track_scores):
+    highest_score_index = torch.argmax(track_scores)
+    highest_score = torch.max(track_scores)
+    track_scores[highest_score == track_scores] = 0
+    second_highest_score = torch.max(track_scores)
+    distance_to_second_highest_score = highest_score - second_highest_score
+
+    if distance_to_second_highest_score > 0.4 and highest_score > 0.9:
+        return int(true_labels[highest_score_index])
+    return -1
+
+    # for idx, batch in enumerate(val_dataloader):
+    #     new_true_scores = batch['scores'].to('cpu')
+    #     true_labels = torch.cat([true_labels, new_true_scores])
+    #     predicted_scores = forward_pass_for_classifier_training(
+    #             batch['features'], batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
+    #             eval=True)
+    #     new_predicted_labels = predicted_scores
+    #     new_predicted_labels[predicted_scores > 0.5] = 1
+    #     new_predicted_labels[predicted_scores < 0.5] = 0
+    #     predicted_labels = torch.cat([predicted_labels, new_predicted_labels.to('cpu')])
+    #     loss += forward_pass_for_classifier_training(batch['features'], batch['scores'], box_head_classification, box_predictor_classification)
+    #     total_samples += batch['features'].size()[0]
+    #
+    # print('Loss for track {}: {}'.format(id, loss / total_samples))
+    # f1_score = sklearn.metrics.f1_score(true_labels, predicted_labels)
+    # print('F1 Score for track {}: {}'.format(id, f1_score))
+    # return f1_score
 
 def forward_pass_for_classifier_training(features, scores, box_head_classification, box_predictor_classification, eval=False, return_scores=False):
     if eval:
