@@ -39,34 +39,39 @@ def initialize_nets(obj_detect_weights):
     box_head_classification.load_state_dict(bbox_head_weights)
     return obj_detect, box_head_classification, box_predictor_classification
 
-def get_reid_datasets(first_id, second_id):
+def get_reid_datasets(first_id, second_id, num_frames_train):
     first_dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(first_id), "rb"))
     first_dataset.post_process()
     second_dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(second_id), "rb"))
     second_dataset.post_process()
 
-    training_set, _ = first_dataset.val_test_split(num_frames_train=len(first_dataset.samples_per_frame),
+    training_set, _ = first_dataset.val_test_split(num_frames_train=num_frames_train,
                                                    num_frames_val=0,
                                                    train_val_frame_gap=0,
                                                    downsampling=False, shuffle=True)
 
-    _, validation_set = second_dataset.val_test_split(num_frames_train=0, num_frames_val=len(second_dataset.samples_per_frame),
+    _, validation_set = second_dataset.val_test_split(num_frames_train=0,
+                                                      num_frames_val=3,
                                                           train_val_frame_gap=0,
-                                                          downsampling=False, shuffle=True)
+                                                          downsampling=False, shuffle=False)
     return (training_set, validation_set)
 
 def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_predictor_classification,
-                  num_frames_train=15, num_frames_val=10, train_val_frame_gap=5, dataset=None):
-    dataset = dataset
-    if not dataset:
-        dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(id), "rb"))
-        dataset.post_process()
+                  num_frames_train=15, num_frames_val=10, train_val_frame_gap=5, dataset=None,
+                  val_data=None, train_data=None):
+    validation_set = val_data
+    training_set = train_data
+    if not val_data or not train_data:
+        dataset = dataset
+        if not dataset:
+            dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(id), "rb"))
+            dataset.post_process()
 
-    training_set, validation_set = dataset.val_test_split(num_frames_train=num_frames_train,
-                                                          num_frames_val=num_frames_val,
-                                                          train_val_frame_gap=train_val_frame_gap,
-                                                          downsampling=False,
-                                                          shuffle=True)
+        training_set, validation_set = dataset.val_test_split(num_frames_train=num_frames_train,
+                                                              num_frames_val=num_frames_val,
+                                                              train_val_frame_gap=train_val_frame_gap,
+                                                              downsampling=False,
+                                                              shuffle=True)
 
     box_predictor_classification.train()
     box_head_classification.train()
@@ -172,10 +177,31 @@ def forward_pass_for_classifier_training(features, scores, box_head_classificati
         box_head_classification.train()
     return loss
 
+def reid_exp(finetuning_config, obj_detect_weights):
+    track_ids = [21]
+    f1_per_frame_number = defaultdict(list)
+    max_frame_number_train = 40
+    f1_scores = []
+
+    for num_frames_train in range(1, max_frame_number_train + 1):
+        training_set, validation_set = get_reid_datasets(44, 76, num_frames_train)
+
+        obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
+        f1_score = do_finetuning(44, finetuning_config, None, box_head_classification,
+                                 box_predictor_classification, val_data=validation_set, train_data=training_set)
+        f1_per_frame_number[num_frames_train].append(f1_score)
+        f1_scores.append(f1_score)
+
+    print("average f1 score {}".format(np.mean(f1_scores)))
+    plotter = VisdomLinePlotter(env_name='finetune_independently', xlabel="number of positive examples")
+    for frame_number in f1_per_frame_number.keys():
+        plotter.plot('avg f1 score', "f1 score", 'positive examples vs. avg f1 score', frame_number,
+                     np.mean(f1_per_frame_number[frame_number]))
+
 def frame_number_train_exp(finetuning_config, obj_detect_weights):
     f1_scores = []
     plotter = VisdomLinePlotter(env_name='finetune_independently', xlabel="number of positive examples")
-    max_frame_number_train = 60
+    max_frame_number_train = 40
     # intersting reid 21 --> 65
     idsw_ids = [86, 14, 34, 13, 74]
     # skipped tracks: 79, 17, 40
@@ -188,7 +214,7 @@ def frame_number_train_exp(finetuning_config, obj_detect_weights):
         if len(dataset.samples_per_frame) < max_frame_number_train + 20 + 5:
             print("skipping track {}".format(track_id))
             continue
-        for num_frames_train in range(1, max_frame_number_train + 1, 4):
+        for num_frames_train in range(1, max_frame_number_train + 1):
             obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
             f1_score = do_finetuning(track_id, finetuning_config, plotter, box_head_classification,
                                      box_predictor_classification, num_frames_train=num_frames_train, num_frames_val=20,
@@ -202,8 +228,6 @@ def frame_number_train_exp(finetuning_config, obj_detect_weights):
     for frame_number in f1_per_frame_number.keys():
         plotter.plot('avg f1 score', "f1 score", 'positive examples vs. avg f1 score', frame_number,
                      np.mean(f1_per_frame_number[frame_number]))
-
-
 
 def test_multiple_tracks(finetuning_config, obj_detect_weights):
     f1_scores = []
@@ -234,4 +258,4 @@ def main(tracktor, _config, _log, _run):
     finetuning_config = tracker_cfg['finetuning']
     obj_detect_weights = _config['tracktor']['obj_detect_model']
 
-    test_multiple_tracks(finetuning_config, obj_detect_weights)
+    frame_number_train_exp(finetuning_config, obj_detect_weights)
