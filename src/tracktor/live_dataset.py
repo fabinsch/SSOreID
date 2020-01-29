@@ -40,7 +40,6 @@ class IndividualDataset(torch.utils.data.Dataset):
                 number_of_duplicates += 1
         unique_scores = self.scores[unique_indices]
         self.number_of_positive_examples = unique_scores[unique_scores==1].size()[0]
-        print("number pos examples {}".format(self.number_of_positive_examples))
         assert len(self.samples_per_frame) == self.number_of_positive_examples
         self.sort_by_iou()
 
