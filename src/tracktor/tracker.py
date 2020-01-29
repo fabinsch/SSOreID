@@ -226,7 +226,8 @@ class Tracker:
                 boxes, scores = self.obj_detect.predict_boxes(new_det_pos,
                                                              box_predictor_classification=inactive_track.box_predictor_classification,
                                                              box_head_classification=inactive_track.box_head_classification)
-
+                print(f'Size of new scores: {scores.size()}' )
+                print(f'Current size of score matrix: {score_matrix.size()}')
                 if score_matrix.size()[0] == 0:
                     score_matrix = scores.unsqueeze(1)
                 else:
@@ -560,8 +561,8 @@ class Tracker:
 
         self.im_index += 1
         self.last_image = blob['img'][0]
-        if frame == 599:
-            for t in self.tracks:
+        #if frame == 599:
+            #for t in self.tracks:
                 #pickle.dump(t.training_set,
                 #            open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
 
