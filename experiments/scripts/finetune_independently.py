@@ -178,12 +178,11 @@ def forward_pass_for_classifier_training(features, scores, box_head_classificati
     return loss
 
 def reid_exp(finetuning_config, obj_detect_weights):
-    track_ids = [21]
     f1_per_frame_number = defaultdict(list)
     max_frame_number_train = 40
     f1_scores = []
 
-    for num_frames_train in range(1, max_frame_number_train + 1):
+    for num_frames_train in range(1, max_frame_number_train + 1, 4):
         training_set, validation_set = get_reid_datasets(44, 76, num_frames_train)
 
         obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
@@ -256,4 +255,4 @@ def main(tracktor, _config, _log, _run):
     finetuning_config = tracker_cfg['finetuning']
     obj_detect_weights = _config['tracktor']['obj_detect_model']
 
-    frame_number_train_exp(finetuning_config, obj_detect_weights)
+    reid_exp(finetuning_config, obj_detect_weights)
