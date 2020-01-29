@@ -43,13 +43,16 @@ class VisdomLinePlotter(object):
         self.plots = {}
         self.xlabel = xlabel
 
-    def plot(self, var_name, split_name, title_name, x, y, erase=False, is_target=False, is_val_target=False, is_val_pred=False):
+    def plot(self, var_name, split_name, title_name, x, y, erase=False, is_target=False, is_val_target=False, is_val_pred=False,
+             color=None):
         if is_target:
             color = np.array([[128, 0, 0], ])
         elif is_val_target:
             color = np.array([[255, 0, 0], ])
         elif is_val_pred:
             color = np.array([[0, 0, 255], ])
+        elif color is not None:
+            color = color
         else:
             color = np.array([[0, 0, 128], ])
         if var_name not in self.plots:
