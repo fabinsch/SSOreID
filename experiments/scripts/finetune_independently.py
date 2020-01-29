@@ -2,6 +2,7 @@ import pickle
 
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHead
 
+from collections import defaultdict
 import numpy as np
 from torch.nn import functional as F
 from tracktor.frcnn_fpn import FRCNN_FPN
@@ -39,12 +40,18 @@ def initialize_nets(obj_detect_weights):
     box_head_classification.load_state_dict(bbox_head_weights)
     return obj_detect, box_head_classification, box_predictor_classification
 
-def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_predictor_classification):
-    dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(id), "rb"))
-    dataset.post_process()
+def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_predictor_classification,
+                  num_frames_train=15, num_frames_val=10, train_val_frame_gap=5, dataset=None):
+    dataset = dataset
+    if not dataset:
+        dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(id), "rb"))
+        dataset.post_process()
 
-    training_set, validation_set = dataset.val_test_split(num_frames_train=20, num_frames_val=10, train_val_frame_gap=5,
-                                                          downsampling=True, shuffle=True)
+    training_set, validation_set = dataset.val_test_split(num_frames_train=num_frames_train,
+                                                          num_frames_val=num_frames_val,
+                                                          train_val_frame_gap=train_val_frame_gap,
+                                                          downsampling=False,
+                                                          shuffle=True)
     box_predictor_classification.train()
     box_head_classification.train()
     optimizer = torch.optim.Adam(
@@ -144,15 +151,44 @@ def forward_pass_for_classifier_training(features, scores, box_head_classificati
         box_head_classification.train()
     return loss
 
-@ex.automain
-def main(tracktor, _config, _log, _run):
+def frame_number_train_exp(finetuning_config, obj_detect_weights):
+    f1_scores = []
+    plotter = VisdomLinePlotter(env_name='finetune_independently', xlabel="number of positive examples")
+    max_frame_number_train = 60
+    # intersting reid 21 --> 65
+    idsw_ids = [86, 14, 34, 13, 74]
+    # skipped tracks: 79, 17, 40
+    track_ids = [19, 21, 35, 82, 79, 44, 52, 80, 47, 65, 11, 41, 42, 17, 40, 18]
+    f1_per_frame_number = defaultdict(list)
+    for track_id in track_ids:
+        color = np.array([[np.random.randint(0, 255),  np.random.randint(0, 255),  np.random.randint(0, 255)], ])
+        dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(track_id), "rb"))
+        dataset.post_process()
+        print(len(dataset.samples_per_frame))
+        if len(dataset.samples_per_frame) < max_frame_number_train + 20 + 5:
+            print("skipping track {}".format(track_id))
+            continue
+        for num_frames_train in range(1, max_frame_number_train + 1, 4):
+            obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
+            f1_score = do_finetuning(track_id, finetuning_config, plotter, box_head_classification,
+                                     box_predictor_classification, num_frames_train=num_frames_train, num_frames_val=20,
+                                     train_val_frame_gap=5, dataset=dataset)
+            plotter.plot('f1 score', f"Track {track_id}", 'positive examples vs. f1 score', num_frames_train, f1_score,
+                         color=color)
+            f1_per_frame_number[num_frames_train].append(f1_score)
+            f1_scores.append(f1_score)
+    print("average f1 score {}".format(np.mean(f1_scores)))
+    plotter = VisdomLinePlotter(env_name='finetune_independently', xlabel="number of positive examples")
+    for frame_number in f1_per_frame_number.keys():
+        plotter.plot('avg f1 score', "f1 score", 'positive examples vs. avg f1 score', frame_number,
+                     np.mean(f1_per_frame_number[frame_number]))
 
-    tracker_cfg = tracktor['tracker']
-    finetuning_config = tracker_cfg['finetuning']
-    obj_detect_weights = _config['tracktor']['obj_detect_model']
+
+
+def test_multiple_tracks(finetuning_config, obj_detect_weights):
     f1_scores = []
 
-    track_ids = [6, 24, 13, 25, 27]
+    track_ids = [6, 8]
     for track_id in track_ids:
         if finetuning_config['validate'] or finetuning_config['plot_training_curves']:
             plotter = VisdomLinePlotter(env_name='finetune_independently')
@@ -161,10 +197,21 @@ def main(tracktor, _config, _log, _run):
         obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
 
         try:
-            f1_score = do_finetuning(track_id, finetuning_config, plotter, box_head_classification, box_predictor_classification)
+            f1_score = do_finetuning(track_id, finetuning_config, plotter, box_head_classification,
+                                     box_predictor_classification, num_frames_train=15, num_frames_val=10,
+                                     train_val_frame_gap=5)
             f1_scores.append(f1_score)
         except AssertionError:
             continue
-        print(np.mean(f1_scores))
-    print(np.sum(np.array(f1_scores)>0.99))
-    print(f1_scores)
+    print("Track id with lowest score: {}, score: {}".format(track_ids[np.argmin(f1_scores)], np.min(f1_scores)))
+    print("average f1 score {}".format(np.mean(f1_scores)))
+
+
+@ex.automain
+def main(tracktor, _config, _log, _run):
+
+    tracker_cfg = tracktor['tracker']
+    finetuning_config = tracker_cfg['finetuning']
+    obj_detect_weights = _config['tracktor']['obj_detect_model']
+
+    frame_number_train_exp(finetuning_config, obj_detect_weights)
