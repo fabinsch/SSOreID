@@ -68,10 +68,13 @@ class Tracker:
             if self.finetuning_config["for_reid"]:
                 box_head_copy_for_classifier = self.get_box_head()
                 box_predictor_copy_for_classifier = self.get_box_predictor()
-                #t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
-                #                          box_predictor_copy_for_classifier, early_stopping=False)
-                pickle.dump(t.training_set,
-                            open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
+                print(t.frames_since_active)
+                if t.frames_since_active > 40:
+                    t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
+                                                   box_predictor_copy_for_classifier, early_stopping=False)
+                    t.use_for_finetuning = True
+                #pickle.dump(t.training_set,
+                #            open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
 
         self.inactive_tracks += tracks
 
@@ -148,13 +151,14 @@ class Tracker:
                     if self.finetuning_config['validate']:
                         is_target = (track.id == other_classifier[2])
                         self.plotter.plot('person {} score'.format(other_classifier[2]), 'score {}'.format(track.id), "Person Scores by track {} classifier".format(other_classifier[2]), frame,
-                                          score_by_other_classifier, is_target=is_target)
+                                          score_by_other_classifier, train_positive=is_target)
             scores = torch.cat(scores)
             pos = torch.cat(pos)
         else:
             pos = self.get_pos()
             boxes, scores = self.obj_detect.predict_boxes(pos)
             pos = clip_boxes_to_image(boxes, blob['img'].shape[-2:])
+
 
         s = []
         for i in range(len(self.tracks) - 1, -1, -1):
@@ -204,51 +208,74 @@ class Tracker:
             features = torch.zeros(0).cuda()
         return features
 
-    def reid_by_finetuned_model(self, blob, new_det_pos, new_det_features, new_det_scores):
+    def reid_by_finetuned_model(self, blob, new_det_pos, new_det_features, new_det_scores, frame):
         # IDEA: evaluate all inactive track models on the new detections
         # reidentify a track, when the model has a significantly higher score on this new detection than on other detections
-        if self.do_reid:
-            print('Inactive tracks: {}'.format([x.id for x in self.inactive_tracks]))
-            if len(new_det_pos.size()) > 1:
-                remove_inactive = []
-                assigned = []
-                for inactive_track in self.inactive_tracks:
-                    boxes, scores = self.obj_detect.predict_boxes(new_det_pos,
-                                                                 box_predictor_classification=inactive_track.box_predictor_classification,
-                                                                 box_head_classification=inactive_track.box_head_classification)
-                    new_det_pos_highest_score_index = torch.argmax(scores)
+        print('Inactive tracks: {}'.format([x.id for x in self.inactive_tracks]))
 
-                    self.tracks.append(inactive_track)
-                    print(f"Reidying track {inactive_track.id}")
-                    inactive_track.count_inactive = 0
-                    inactive_track.pos = new_det_pos[new_det_pos_highest_score_index].view(1, -1)
-                    inactive_track.reset_last_pos()
-                    assigned.append(new_det_pos_highest_score_index)
-                    remove_inactive.append(inactive_track)
-                    print(inactive_track.id)
-                    print(new_det_pos)
-                    print('Last position of the inactive track: {} in {} frames ago'.format(inactive_track.last_pos[-1],
-                                                                                            inactive_track.count_inactive))
+        if len(new_det_pos.size()) > 1 and len(self.inactive_tracks) > 0:
+            remove_inactive = []
+            assigned = []
+            score_matrix = torch.tensor([]).to(device) # 1 row: scores for a new detection by the current inactive tracks
+            #idea: go over the detections, check the scores of the classifiers wheter one is significantly higher
+            inactive_tracks_to_test = [track for track in self.inactive_tracks if track.use_for_finetuning]
+            print(f'Number of relevant inactive tracks: {len(inactive_tracks_to_test)}')
+            print(f'Number of new detections: {new_det_pos.size()[0]}')
 
-                for inactive_track in remove_inactive:
-                    self.inactive_tracks.remove(inactive_track)
-
-                    #
-                    # for i in range(len(new_det_pos)):
-                    #     plot_bounding_boxes(inactive_track.im_info, new_det_pos[i].unsqueeze(0), blob['img'],
-                    #                         inactive_track.last_pos[-1], 999, 999)
-
-                keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
-                if keep.nelement() > 0:
-                    new_det_pos = new_det_pos[keep]
-                    new_det_scores = new_det_scores[keep]
-                    new_det_features = new_det_features[keep]
+            for inactive_track in inactive_tracks_to_test:
+                boxes, scores = self.obj_detect.predict_boxes(new_det_pos,
+                                                             box_predictor_classification=inactive_track.box_predictor_classification,
+                                                             box_head_classification=inactive_track.box_head_classification)
+                print(f'Size of new scores: {scores.size()}' )
+                print(f'Current size of score matrix: {score_matrix.size()}')
+                if score_matrix.size()[0] == 0:
+                    score_matrix = scores.unsqueeze(1)
                 else:
-                    new_det_pos = torch.zeros(0).to(device)
-                    new_det_scores = torch.zeros(0).to(device)
-                    new_det_features = torch.zeros(0).to(device)
+                    if len(scores.size()) == 1:
+                        scores = scores.unsqueeze(1)
+                    score_matrix = torch.cat([score_matrix, scores], dim=1)
 
-            return new_det_pos, new_det_scores
+            print(f'Shape of score matrix: {score_matrix.size()}')
+            for track_index in range(len(inactive_tracks_to_test)):
+
+                track_scores = score_matrix[:, track_index]
+                print(track_scores)
+                highest_score_index = torch.argmax(track_scores)
+                highest_score = torch.max(track_scores)
+                track_scores[highest_score_index] = 0
+                second_highest_score = torch.max(track_scores)
+                distance_to_second_highest_score = highest_score - second_highest_score
+                if distance_to_second_highest_score > 0.3:
+                    inactive_track = inactive_tracks_to_test[track_index]
+                    score_matrix[highest_score_index, track_index+1:] = 0
+                    self.tracks.append(inactive_track)
+                    print(
+                        f"Reidying track {inactive_track.id} in frame {frame} with score {highest_score} and difference {distance_to_second_highest_score}")
+                    inactive_track.count_inactive = 0
+                    inactive_track.pos = new_det_pos[highest_score_index].view(1, -1)
+                    inactive_track.reset_last_pos()
+                    assigned.append(highest_score_index)
+                    remove_inactive.append(inactive_track)
+
+            for inactive_track in remove_inactive:
+                self.inactive_tracks.remove(inactive_track)
+
+                #
+                # for i in range(len(new_det_pos)):
+                #     plot_bounding_boxes(inactive_track.im_info, new_det_pos[i].unsqueeze(0), blob['img'],
+                #                         inactive_track.last_pos[-1], 999, 999)
+
+            keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
+            if keep.nelement() > 0:
+                new_det_pos = new_det_pos[keep]
+                new_det_scores = new_det_scores[keep]
+                new_det_features = new_det_features[keep]
+            else:
+                new_det_pos = torch.zeros(0).to(device)
+                new_det_scores = torch.zeros(0).to(device)
+                new_det_features = torch.zeros(0).to(device)
+
+        return new_det_pos, new_det_scores
 
 
     def reid(self, blob, new_det_pos, new_det_features, new_det_scores):
@@ -507,10 +534,10 @@ class Tracker:
 
             # try to reidentify tracks
             new_det_features = self.reid_network.test_rois(blob['img'], new_det_pos).data
-            if self.do_reid:
-                new_det_pos, new_det_scores = self.reid(blob, new_det_pos, new_det_features, new_det_scores)
-            #if self.finetuning_config["for_reid"]:
-            #    new_det_pos, new_det_scores = self.reid_by_finetuned_model(blob, new_det_pos, new_det_features, new_det_scores)
+            #if self.do_reid:
+            #    new_det_pos, new_det_scores = self.reid(blob, new_det_pos, new_det_features, new_det_scores)
+            if self.finetuning_config["for_reid"]:
+                new_det_pos, new_det_scores = self.reid_by_finetuned_model(blob, new_det_pos, new_det_features, new_det_scores, frame)
 #
             # add new
             if new_det_pos.nelement() > 0:

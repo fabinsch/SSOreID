@@ -39,12 +39,30 @@ def initialize_nets(obj_detect_weights):
     box_head_classification.load_state_dict(bbox_head_weights)
     return obj_detect, box_head_classification, box_predictor_classification
 
+def get_reid_datasets(first_id, second_id):
+    first_dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(first_id), "rb"))
+    first_dataset.post_process()
+    second_dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(second_id), "rb"))
+    second_dataset.post_process()
+
+    training_set, _ = first_dataset.val_test_split(num_frames_train=80, num_frames_val=10,
+                                                          train_val_frame_gap=25,
+                                                          downsampling=False, shuffle=True)
+
+    _, validation_set = second_dataset.val_test_split(num_frames_train=0, num_frames_val=30,
+                                                          train_val_frame_gap=0,
+                                                          downsampling=False, shuffle=True)
+    return (training_set, validation_set)
+
 def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_predictor_classification):
     dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(id), "rb"))
     dataset.post_process()
 
-    training_set, validation_set = dataset.val_test_split(num_frames_train=20, num_frames_val=10, train_val_frame_gap=5,
-                                                          downsampling=True, shuffle=True)
+    training_set, validation_set = dataset.val_test_split(num_frames_train=40, num_frames_val=10, train_val_frame_gap=25,
+                                                          downsampling=False, shuffle=True)
+
+    training_set, validation_set = get_reid_datasets(21, 65)
+
     box_predictor_classification.train()
     box_head_classification.train()
     optimizer = torch.optim.Adam(
@@ -71,9 +89,11 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
                 eval=True)
 
         if np.mod(i, plot_every) == 0 and finetuning_config["plot_training_curves"]:
+            positive_scores = positive_scores[:10]
+            negative_scores = negative_scores[:10]
             for sample_idx, score in enumerate(positive_scores):
                 plotter.plot('score', 'positive {}'.format(sample_idx), 'Scores Evaluation Classifier for Track {}'.format(id),
-                                  i, score.cpu().numpy(), is_target=True)
+                             i, score.cpu().numpy(), train_positive=True) # dark red
             for sample_idx, score in enumerate(negative_scores):
                 plotter.plot('score', 'negative {}'.format(sample_idx), 'Scores Evaluation Classifier for Track {}'.format(id),
                                   i, score.cpu().numpy())
@@ -92,12 +112,15 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
                         eval=True)
 
                 if finetuning_config["validate"]:
+                    val_positive_scores = val_positive_scores[:10]
+                    val_negative_scores = val_negative_scores[:10]
                     for sample_idx, score in enumerate(val_positive_scores):
                         plotter.plot('score', 'val positive {}'.format(sample_idx), 'Scores Evaluation Classifier for Track {}'.format(id),
-                                          i, score.cpu().numpy(), is_val_target=True)
+                                     i, score.cpu().numpy(), val_positive=True) #light red
                     for sample_idx, score in enumerate(val_negative_scores):
                         plotter.plot('score', 'val negative {}'.format(sample_idx), 'Scores Evaluation Classifier for Track {}'.format(id),
-                                          i, score.cpu().numpy(), is_val_pred=True)
+                                     i, score.cpu().numpy(), val_negative=True) #light blue
+                break
 
 
         box_predictor_classification.eval()

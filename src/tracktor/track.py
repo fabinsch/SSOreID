@@ -39,7 +39,9 @@ class Track(object):
         self.plotter = VisdomLinePlotter(env_name='training')
         self.checkpoints = dict()
         self.training_set = IndividualDataset(self.id)
+        self.training_set.__init__(self.id)
         self.box_roi_pool = box_roi_pool
+        self.use_for_finetuning = False
 
     def has_positive_area(self):
         return self.pos[0, 2] > self.pos[0, 0] and self.pos[0, 3] > self.pos[0, 1]
@@ -121,6 +123,7 @@ class Track(object):
 
         if not include_previous_frames:
             self.training_set = IndividualDataset(self.id)
+            print(self.training_set.last_frame_number)
         self.training_set.append_samples(training_set_dict)
 
     def generate_validation_set_classfication(self, batch_size, additional_dets, fpn_features, shuffle=False):
@@ -150,6 +153,11 @@ class Track(object):
 
     def finetune_classification(self, finetuning_config, box_head_classification, box_predictor_classification,
                                 early_stopping=False):
+        print('\n\n\nFinetuning classifier for track {}'.format(self.id))
+        self.training_set.post_process()
+        training_set, _ = self.training_set.val_test_split(num_frames_train=self.frames_since_active,
+                                                             num_frames_val=0, train_val_frame_gap=0, downsampling=False)
+
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
 
@@ -158,15 +166,8 @@ class Track(object):
         optimizer = torch.optim.Adam(
             list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()), lr=float(finetuning_config["learning_rate"]) )
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 2, gamma=finetuning_config['gamma'])
-        dataloader = torch.utils.data.DataLoader(self.training_set, batch_size=512)
+        dataloader = torch.utils.data.DataLoader(training_set, batch_size=512)
 
-        # if finetuning_config["validate"]:# and additional_dets is not None:
-        #     if not self.plotter:
-        #         self.plotter = VisdomLinePlotter(env_name='training')
-        #     additional_dets = additional_dets[:-1]
-        #     val_dets = additional_dets[-1:]
-        #     validation_set = self.generate_validation_set_classfication(float(int(finetuning_config["batch_size_val"])),
-          #                                                               val_dets, fpn_features)
         print("Finetuning track {}".format(self.id))
         for i in range(int(finetuning_config["iterations"])):
             for i_sample, sample_batch in enumerate(dataloader):
@@ -178,13 +179,19 @@ class Track(object):
                     positive_scores = self.forward_pass_for_classifier_training(sample_batch['features'][sample_batch['scores']==1], sample_batch['scores'], return_scores=True, eval=True)
                     negative_scores = self.forward_pass_for_classifier_training(sample_batch['features'][sample_batch['scores']==0], sample_batch['scores'], return_scores=True, eval=True)
 
-                if finetuning_config["validate"]:
-                    for score in positive_scores:
-                        self.plotter.plot('score', 'positive', 'Scores Evaluation Classifier for Track {}'.format(self.id), i, score.cpu().numpy(), is_target=True)
-                    for score in negative_scores:
-                        self.plotter.plot('score', 'negative', 'Scores Evaluation Classifier for Track {}'.format(self.id), i, score.cpu().numpy())
+            if finetuning_config["plot_training_curves"]:
+                positive_scores = positive_scores[:10]
+                negative_scores = negative_scores[:10]
+                for sample_idx, score in enumerate(positive_scores):
+                    self.plotter.plot('score', 'positive {}'.format(sample_idx),
+                                 'Scores Evaluation Classifier for Track {}'.format(self.id),
+                                 i, score.cpu().numpy(), train_positive=True)  # dark red
+                for sample_idx, score in enumerate(negative_scores):
+                    self.plotter.plot('score', 'negative {}'.format(sample_idx),
+                                 'Scores Evaluation Classifier for Track {}'.format(self.id),
+                                 i, score.cpu().numpy())
 
-                    if early_stopping and torch.min(positive_scores) - torch.max(negative_scores) > 0.8:
+                if early_stopping and torch.min(positive_scores) - torch.max(negative_scores) > 0.2:
                         break
 
                 loss.backward()
