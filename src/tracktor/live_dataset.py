@@ -18,15 +18,17 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.num_frames = 0
 
     def append_samples(self, training_set_dict):
+        self.num_frames += 1
         self.features = torch.cat((self.features, training_set_dict['features']))
         self.boxes = torch.cat((self.boxes, training_set_dict['boxes']))
         self.scores = torch.cat((self.scores, training_set_dict['scores']))
-        self.num_frames += 1
         if self.num_frames == self.keep_frames:
             self.remove_samples()
 
     def remove_samples(self):
+        #TODO remove first batch size big samples
         return
+
 
     # Filter out all duplicates and add frame number tensor for each data point
     NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES = 15

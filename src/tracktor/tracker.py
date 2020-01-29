@@ -74,8 +74,8 @@ class Tracker:
                     t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
                                                    box_predictor_copy_for_classifier, early_stopping=False)
                     t.use_for_finetuning = True
-                #pickle.dump(t.training_set,
-                #            open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
+            pickle.dump(t.training_set,
+                        open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
 
         self.inactive_tracks += tracks
 
@@ -83,10 +83,7 @@ class Tracker:
         """Initializes new Track objects and saves them."""
         num_new = new_det_pos.size(0)
         old_tracks = self.get_pos()
-        if self.finetuning_config["for_tracking"] or self.finetuning_config["for_reid"]:
-            box_roi_pool = self.obj_detect.roi_heads.box_roi_pool
-        else:
-            box_roi_pool = None
+        box_roi_pool = self.obj_detect.roi_heads.box_roi_pool
         for i in range(num_new):
             track = Track(new_det_pos[i].view(1, -1), new_det_scores[i], self.track_num + i,
                           new_det_features[i].view(1, -1), self.inactive_patience, self.max_features_num,
@@ -478,13 +475,13 @@ class Tracker:
                         for j in range(len(self.tracks)):
                             if j != i:
                                 other_pedestrians_bboxes = torch.cat((other_pedestrians_bboxes, self.tracks[j].pos))
-                        if self.finetuning_config["for_tracking"] or self.finetuning_config["for_reid"]:
-                            if self.finetuning_config["build_up_training_set"] and np.mod(track.frames_since_active,
-                                                            self.finetuning_config["feature_collection_interval"]) == 0:
-                                track.update_training_set_classification(self.finetuning_config['batch_size'],
-                                                other_pedestrians_bboxes,
-                                                self.obj_detect.fpn_features,
-                                                include_previous_frames=True)
+
+                        if self.finetuning_config["build_up_training_set"] and np.mod(track.frames_since_active,
+                                                        self.finetuning_config["feature_collection_interval"]) == 0:
+                            track.update_training_set_classification(self.finetuning_config['batch_size'],
+                                            other_pedestrians_bboxes,
+                                            self.obj_detect.fpn_features,
+                                            include_previous_frames=True)
 
                         if self.finetuning_config["for_tracking"] and self.finetuning_config["finetune_repeatedly"]:
                             box_head_copy = self.get_box_head()
@@ -559,10 +556,9 @@ class Tracker:
 
         self.im_index += 1
         self.last_image = blob['img'][0]
-        #if frame == 599:
-            #for t in self.tracks:
-                #pickle.dump(t.training_set,
-                #            open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
+        if frame == 599:
+            for t in self.tracks:
+                pickle.dump(t.training_set, open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
 
     def get_results(self):
         return self.results

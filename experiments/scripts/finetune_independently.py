@@ -181,27 +181,30 @@ def reid_exp(finetuning_config, obj_detect_weights):
     f1_per_frame_number = defaultdict(list)
     max_frame_number_train = 40
     f1_scores = []
+    reid_tuples = [(49, 90), (3, 74), (52, 81), (57, 84), (45, 79), (39, 46), (93, 104), (79, 89), (18, 56), (41, 54),
+                   (1, 28), (2, 29)]
+    for reid_tuple in reid_tuples:
+        original_track_id = reid_tuple[0]
+        new_track_id = reid_tuple[1]
+        for num_frames_train in range(1, max_frame_number_train + 1, 4):
+            training_set, validation_set = get_reid_datasets(original_track_id, new_track_id, num_frames_train)
 
-    for num_frames_train in range(1, max_frame_number_train + 1, 4):
-        training_set, validation_set = get_reid_datasets(44, 76, num_frames_train)
+            obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
+            f1_score = do_finetuning(44, finetuning_config, None, box_head_classification,
+                                     box_predictor_classification, val_data=validation_set, train_data=training_set)
+            f1_per_frame_number[num_frames_train].append(f1_score)
+            f1_scores.append(f1_score)
 
-        obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
-        f1_score = do_finetuning(44, finetuning_config, None, box_head_classification,
-                                 box_predictor_classification, val_data=validation_set, train_data=training_set)
-        f1_per_frame_number[num_frames_train].append(f1_score)
-        f1_scores.append(f1_score)
-
-    print("average f1 score {}".format(np.mean(f1_scores)))
-    plotter = VisdomLinePlotter(env_name='finetune_independently', xlabel="number of positive examples")
-    for frame_number in f1_per_frame_number.keys():
-        plotter.plot('avg f1 score', "f1 score", 'positive examples vs. avg f1 score', frame_number,
-                     np.mean(f1_per_frame_number[frame_number]))
+        print("average f1 score {}".format(np.mean(f1_scores)))
+        plotter = VisdomLinePlotter(env_name='finetune_independently', xlabel="number of positive examples")
+        for frame_number in f1_per_frame_number.keys():
+            plotter.plot('avg f1 score', "f1 score", 'positive examples vs. avg f1 score', frame_number,
+                         np.mean(f1_per_frame_number[frame_number]))
 
 def frame_number_train_exp(finetuning_config, obj_detect_weights):
     f1_scores = []
     plotter = VisdomLinePlotter(env_name='finetune_independently', xlabel="number of positive examples")
     max_frame_number_train = 40
-    # intersting reid 21 --> 65
     idsw_ids = [86, 14, 34, 13, 74]
     # skipped tracks: 79, 17, 40
     track_ids = [19, 21, 35, 82, 79, 44, 52, 80, 47, 65, 11, 41, 42, 17, 40, 18]
