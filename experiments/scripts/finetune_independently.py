@@ -154,7 +154,6 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
         loss += forward_pass_for_classifier_training(batch['features'], batch['scores'], box_head_classification, box_predictor_classification)
         total_samples += batch['features'].size()[0]
 
-    print('Loss for track {}: {}'.format(id, loss / total_samples))
     f1_score = sklearn.metrics.f1_score(true_labels, predicted_labels)
     print('F1 Score for track {}: {}'.format(id, f1_score))
     return f1_score
@@ -178,28 +177,33 @@ def forward_pass_for_classifier_training(features, scores, box_head_classificati
     return loss
 
 def reid_exp(finetuning_config, obj_detect_weights):
-    f1_per_frame_number = defaultdict(list)
-    max_frame_number_train = 40
     f1_scores = []
     reid_tuples = [(49, 90), (3, 74), (52, 81), (57, 84), (45, 79), (39, 46), (93, 104), (79, 89), (18, 56), (41, 54),
                    (1, 28), (2, 29)]
     for reid_tuple in reid_tuples:
         original_track_id = reid_tuple[0]
         new_track_id = reid_tuple[1]
-        for num_frames_train in range(1, max_frame_number_train + 1, 4):
-            training_set, validation_set = get_reid_datasets(original_track_id, new_track_id, num_frames_train)
+        first_dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(original_track_id), "rb"))
+        first_dataset.post_process()
+        second_dataset = pickle.load(open("training_set/feature_training_set_track_{}.pkl".format(new_track_id), "rb"))
+        second_dataset.post_process()
 
-            obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
-            f1_score = do_finetuning(44, finetuning_config, None, box_head_classification,
-                                     box_predictor_classification, val_data=validation_set, train_data=training_set)
-            f1_per_frame_number[num_frames_train].append(f1_score)
-            f1_scores.append(f1_score)
+        training_set, _ = first_dataset.val_test_split(num_frames_train=len(first_dataset.samples_per_frame),
+                                                       num_frames_val=0,
+                                                       train_val_frame_gap=0,
+                                                       downsampling=False, shuffle=True)
+
+        _, validation_set = second_dataset.val_test_split(num_frames_train=0,
+                                                          num_frames_val=1,
+                                                          train_val_frame_gap=0,
+                                                          downsampling=False, shuffle=False)
+
+        obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
+        f1_score = do_finetuning(original_track_id, finetuning_config, None, box_head_classification,
+                                 box_predictor_classification, val_data=validation_set, train_data=training_set)
+        f1_scores.append(f1_score)
 
         print("average f1 score {}".format(np.mean(f1_scores)))
-        plotter = VisdomLinePlotter(env_name='finetune_independently', xlabel="number of positive examples")
-        for frame_number in f1_per_frame_number.keys():
-            plotter.plot('avg f1 score', "f1 score", 'positive examples vs. avg f1 score', frame_number,
-                         np.mean(f1_per_frame_number[frame_number]))
 
 def frame_number_train_exp(finetuning_config, obj_detect_weights):
     f1_scores = []
