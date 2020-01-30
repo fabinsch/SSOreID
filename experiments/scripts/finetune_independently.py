@@ -140,6 +140,8 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
     loss = 0
     true_labels = torch.tensor([])
     predicted_labels = torch.tensor([])
+    predicted_scores = torch.tensor([])
+    reid_results = []
     for idx, batch in enumerate(val_dataloader):
         new_true_scores = batch['scores'].to('cpu')
         true_labels = torch.cat([true_labels, new_true_scores])
@@ -147,7 +149,6 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
             batch['features'], batch['scores'], box_head_classification, box_predictor_classification,
             return_scores=True,
             eval=True)
-        print(f'funcking newpredicted scores: {new_predicted_scores}')
         new_predicted_labels = torch.zeros_like(new_predicted_scores)
         new_predicted_labels[new_predicted_scores > 0.5] = 1
         new_predicted_labels[new_predicted_scores < 0.5] = 0
@@ -156,13 +157,14 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
         loss += forward_pass_for_classifier_training(batch['features'], batch['scores'], box_head_classification,
                                                      box_predictor_classification)
         total_samples += batch['features'].size()[0]
-        reid_sucess = reid_metric(new_true_scores, new_predicted_scores)
-        print(f'Reid success: {reid_sucess} for track {id}')
+        reid_success = reid_metric(new_true_scores, new_predicted_scores)
+        print(f'Reid success: {reid_success} for track {id}')
+        reid_results.append(reid_success)
     print('Loss for track {}: {}'.format(id, loss / total_samples))
     f1_score = sklearn.metrics.f1_score(true_labels, predicted_labels)
 
     print('F1 Score for track {}: {}'.format(id, f1_score))
-    return f1_score
+    return f1_score, reid_results
 
 
 def reid_metric(true_labels, track_scores):
@@ -172,7 +174,7 @@ def reid_metric(true_labels, track_scores):
     second_highest_score = torch.max(track_scores)
     distance_to_second_highest_score = highest_score - second_highest_score
 
-    if distance_to_second_highest_score > 0.4 and highest_score > 0.9:
+    if distance_to_second_highest_score > 0.1 and highest_score > 0.9:
         return int(true_labels[highest_score_index])
     return -1
 
@@ -216,6 +218,7 @@ def reid_exp(finetuning_config, obj_detect_weights):
     f1_per_frame_number = defaultdict(list)
     max_frame_number_train = 40
     f1_scores = []
+    reid_results = []
     reid_tuples = [(49, 90), (3, 74), (52, 81), (57, 84), (45, 79), (39, 46), (93, 104), (79, 89), (18, 56), (41, 54),
                    (1, 28), (2, 29)]
     for reid_tuple in reid_tuples:
@@ -225,12 +228,16 @@ def reid_exp(finetuning_config, obj_detect_weights):
             training_set, validation_set = get_reid_datasets(original_track_id, new_track_id, num_frames_train)
 
             obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
-            f1_score = do_finetuning(44, finetuning_config, None, box_head_classification,
+            f1_score, reid_result = do_finetuning(44, finetuning_config, None, box_head_classification,
                                      box_predictor_classification, val_data=validation_set, train_data=training_set)
             f1_per_frame_number[num_frames_train].append(f1_score)
             f1_scores.append(f1_score)
 
         print("average f1 score {}".format(np.mean(f1_scores)))
+        true_positives = np.sum(reid_results == 1)
+        false_positives = np.sum(reid_results == 0)
+        precision = true_positives / (true_positives + false_positives)
+        print(f"precision: {precision}")
         plotter = VisdomLinePlotter(env_name='finetune_independently', xlabel="number of positive examples")
         for frame_number in f1_per_frame_number.keys():
             plotter.plot('avg f1 score', "f1 score", 'positive examples vs. avg f1 score', frame_number,
@@ -238,6 +245,7 @@ def reid_exp(finetuning_config, obj_detect_weights):
 
 def frame_number_train_exp(finetuning_config, obj_detect_weights):
     f1_scores = []
+    reid_results = []
     plotter = VisdomLinePlotter(env_name='finetune_independently', xlabel="number of positive examples")
     max_frame_number_train = 40
     idsw_ids = [86, 14, 34, 13, 74]
@@ -253,14 +261,19 @@ def frame_number_train_exp(finetuning_config, obj_detect_weights):
             continue
         for num_frames_train in range(1, max_frame_number_train + 1):
             obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
-            f1_score = do_finetuning(track_id, finetuning_config, plotter, box_head_classification,
+            f1_score, reid_result = do_finetuning(track_id, finetuning_config, plotter, box_head_classification,
                                      box_predictor_classification, num_frames_train=num_frames_train, num_frames_val=20,
                                      train_val_frame_gap=5, dataset=dataset)
             plotter.plot('f1 score', f"Track {track_id}", 'positive examples vs. f1 score', num_frames_train, f1_score,
                          color=color)
             f1_per_frame_number[num_frames_train].append(f1_score)
             f1_scores.append(f1_score)
+            reid_results.append(reid_result)
     print("average f1 score {}".format(np.mean(f1_scores)))
+    true_positives = np.sum(reid_results == 1)
+    false_positives = np.sum(reid_results == 0)
+    precision = true_positives / (true_positives + false_positives)
+    print(f"precision: {precision}")
     plotter = VisdomLinePlotter(env_name='finetune_independently', xlabel="number of positive examples")
     for frame_number in f1_per_frame_number.keys():
         plotter.plot('avg f1 score', "f1 score", 'positive examples vs. avg f1 score', frame_number,
@@ -268,6 +281,7 @@ def frame_number_train_exp(finetuning_config, obj_detect_weights):
 
 def test_multiple_tracks(finetuning_config, obj_detect_weights):
     f1_scores = []
+    reid_results = []
 
     track_ids = [6, 24, 13, 25, 27]
     for track_id in track_ids:
@@ -278,12 +292,16 @@ def test_multiple_tracks(finetuning_config, obj_detect_weights):
         obj_detect, box_head_classification, box_predictor_classification = initialize_nets(obj_detect_weights)
 
         try:
-            f1_score = do_finetuning(track_id, finetuning_config, plotter, box_head_classification, box_predictor_classification)
+            f1_score, reid_result = do_finetuning(track_id, finetuning_config, plotter, box_head_classification, box_predictor_classification)
             f1_scores.append(f1_score)
         except AssertionError:
             continue
     print("Track id with lowest score: {}, score: {}".format(track_ids[np.argmin(f1_scores)], np.min(f1_scores)))
     print("average f1 score {}".format(np.mean(f1_scores)))
+    true_positives = np.sum(reid_results == 1)
+    false_positives = np.sum(reid_results == 0)
+    precision = true_positives / (true_positives + false_positives)
+    print(f"precision: {precision}")
 
 
 @ex.automain
@@ -293,4 +311,5 @@ def main(tracktor, _config, _log, _run):
     finetuning_config = tracker_cfg['finetuning']
     obj_detect_weights = _config['tracktor']['obj_detect_model']
 
-    reid_exp(finetuning_config, obj_detect_weights)
+    #reid_exp(finetuning_config, obj_detect_weights)
+    test_multiple_tracks(finetuning_config, obj_detect_weights)
