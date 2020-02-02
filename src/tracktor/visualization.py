@@ -38,7 +38,7 @@ class VisdomLinePlotter(object):
     """Plots to Visdom"""
 
     def __init__(self, env_name='main', xlabel='Iteration'):
-        self.viz = Visdom(port=8097)
+        self.viz = Visdom(port=8098)
         self.env = env_name
         self.plots = {}
         self.xlabel = xlabel
