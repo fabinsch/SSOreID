@@ -91,24 +91,26 @@ class Track(object):
         # positive_examples = self.pos.repeat(num_positive_examples, 1)
         positive_examples = torch.cat((positive_examples, torch.ones([num_positive_examples, 1]).to(device)), dim=1)
         boxes = positive_examples
-        # TODO make sure additional_dets is never empty!!!!
-        if additional_dets.size(0) != 0:
-            standard_batch_size_negative_example = int(np.floor(num_positive_examples / len(additional_dets)))
-            offset = num_positive_examples - (standard_batch_size_negative_example * additional_dets.size(0))
-            for i in range(additional_dets.size(0)):
-                num_negative_example = standard_batch_size_negative_example
-                if offset != 0:
-                    num_negative_example += 1
-                    offset -= 1
-                if num_negative_example == 0:
-                    break
-                negative_example = self.generate_training_set_regression(additional_dets[i].view(1, -1),
-                                                                         0.0,
-                                                                         batch_size=num_negative_example).to(device)
-                negative_example = clip_boxes(negative_example, self.im_info)
-                # negative_example = additional_dets[i].view(1, -1).repeat(num_negative_example, 1)
-                negative_example_and_label = torch.cat((negative_example, torch.zeros([num_negative_example, 1]).to(device)), dim=1)
-                boxes = torch.cat((boxes, negative_example_and_label)).to(device)
+        if additional_dets.size(0) == 0:
+            print("Adding dummy bbox as negative example")
+            additional_dets = torch.Tensor([1892.4128,  547.1268, 1919.0000,  629.0942]).unsqueeze(0)
+
+        standard_batch_size_negative_example = int(np.floor(num_positive_examples / len(additional_dets)))
+        offset = num_positive_examples - (standard_batch_size_negative_example * additional_dets.size(0))
+        for i in range(additional_dets.size(0)):
+            num_negative_example = standard_batch_size_negative_example
+            if offset != 0:
+                num_negative_example += 1
+                offset -= 1
+            if num_negative_example == 0:
+                break
+            negative_example = self.generate_training_set_regression(additional_dets[i].view(1, -1),
+                                                                     0.0,
+                                                                     batch_size=num_negative_example).to(device)
+            negative_example = clip_boxes(negative_example, self.im_info)
+            # negative_example = additional_dets[i].view(1, -1).repeat(num_negative_example, 1)
+            negative_example_and_label = torch.cat((negative_example, torch.zeros([num_negative_example, 1]).to(device)), dim=1)
+            boxes = torch.cat((boxes, negative_example_and_label)).to(device)
         if shuffle:
             boxes = boxes[torch.randperm(boxes.size(0))]
         boxes_resized = resize_boxes(boxes[:, 0:4], self.im_info, self.transformed_image_size[0])

@@ -29,7 +29,6 @@ class IndividualDataset(torch.utils.data.Dataset):
         #TODO remove first batch size big samples
         return
 
-
     # Filter out all duplicates and add frame number tensor for each data point
     NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES = 15
     def post_process(self):
