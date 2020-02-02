@@ -91,6 +91,7 @@ class Track(object):
         # positive_examples = self.pos.repeat(num_positive_examples, 1)
         positive_examples = torch.cat((positive_examples, torch.ones([num_positive_examples, 1]).to(device)), dim=1)
         boxes = positive_examples
+        # TODO make sure additional_dets is never empty!!!!
         if additional_dets.size(0) != 0:
             standard_batch_size_negative_example = int(np.floor(num_positive_examples / len(additional_dets)))
             offset = num_positive_examples - (standard_batch_size_negative_example * additional_dets.size(0))
@@ -132,10 +133,6 @@ class Track(object):
         if eval:
             self.box_predictor_classification.eval()
             self.box_head_classification.eval()
-#        boxes_resized = resize_boxes(boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
-#        proposals = [boxes_resized]
-#        with torch.no_grad():
-#            roi_pool_feat = box_roi_pool(fpn_features, proposals, self.im_info)
         feat = self.box_head_classification(features)
         class_logits, _ = self.box_predictor_classification(feat)
         if return_scores:

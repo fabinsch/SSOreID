@@ -76,6 +76,21 @@ class IndividualDataset(torch.utils.data.Dataset):
             "There are not enough frames in the data set"
         pos_idx_train = []
         neg_idx_train = []
+        if num_frames_val == 0 and train_val_frame_gap == 0:
+            for i in range(self.number_of_positive_examples - num_frames_train, self.number_of_positive_examples):
+                pos_idx_for_frame = self.samples_per_frame[i + 1][0]
+                pos_idx_train.append(pos_idx_for_frame)
+                if downsampling:
+                    # Choose the box as negative example that has highest iou with positive example box
+                    neg_idx_train.append(self.samples_per_frame[i + 1][1])
+                else:
+                    neg_idx_for_frame = self.samples_per_frame[i + 1][1:]
+                    repeated_pos_frame = [pos_idx_for_frame] * (len(neg_idx_for_frame) - 1)
+                    pos_idx_train.extend(repeated_pos_frame)
+                    neg_idx_train.extend(neg_idx_for_frame)
+            train_idx = torch.cat((torch.LongTensor(pos_idx_train), torch.LongTensor(neg_idx_train)))
+            return  [Subset(self, train_idx), []]
+
         for frame_number in range(num_frames_train):
             pos_idx_for_frame = self.samples_per_frame[frame_number + 1][0]
             pos_idx_train.append(pos_idx_for_frame)

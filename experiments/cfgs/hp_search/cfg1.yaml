@@ -1,13 +1,13 @@
 tracktor:
-  dataset: mot17_02_FRCNN17
-  write_images: True
+  dataset: mot17_13_FRCNN17
+  write_images: False
   'tracker':
     do_reid: False
     'finetuning':
       for_tracking: False
       for_reid: False
       'iterations':  30
-      'learning_rate': 1.5e-5
+      'learning_rate': 3e-5
       'batch_size': 32
       validate: False
       plot_training_curves: False
@@ -17,7 +17,7 @@ tracktor:
       early_stopping_classifier: False
       'build_up_training_set': True
       'gamma': 0.88
-      'decay_every': 2
+      'decay_every': 4
       'replacement_probability': 0.5
       feature_collection_interval: 1
   'output_subdir': '1'
