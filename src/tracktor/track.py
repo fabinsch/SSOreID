@@ -41,7 +41,6 @@ class Track(object):
         self.training_set = IndividualDataset(self.id)
         self.training_set.__init__(self.id)
         self.box_roi_pool = box_roi_pool
-        self.use_for_finetuning = False
 
     def has_positive_area(self):
         return self.pos[0, 2] > self.pos[0, 0] and self.pos[0, 3] > self.pos[0, 1]
@@ -108,7 +107,6 @@ class Track(object):
                                                                      0.0,
                                                                      batch_size=num_negative_example).to(device)
             negative_example = clip_boxes(negative_example, self.im_info)
-            # negative_example = additional_dets[i].view(1, -1).repeat(num_negative_example, 1)
             negative_example_and_label = torch.cat((negative_example, torch.zeros([num_negative_example, 1]).to(device)), dim=1)
             boxes = torch.cat((boxes, negative_example_and_label)).to(device)
         if shuffle:
@@ -152,7 +150,6 @@ class Track(object):
     def finetune_classification(self, finetuning_config, box_head_classification, box_predictor_classification,
                                 early_stopping=False):
         self.training_set.post_process()
-        training_set = self.training_set.get_training_set()
 
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
@@ -162,10 +159,13 @@ class Track(object):
         optimizer = torch.optim.Adam(
             list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()), lr=float(finetuning_config["learning_rate"]) )
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 2, gamma=finetuning_config['gamma'])
-        dataloader = torch.utils.data.DataLoader(training_set, batch_size=256)
+
+        training_set, val_set = self.training_set.get_training_set()
+        dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=256)
+        dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=256)
 
         for i in range(int(finetuning_config["iterations"])):
-            for i_sample, sample_batch in enumerate(dataloader):
+            for i_sample, sample_batch in enumerate(dataloader_train):
 
                 optimizer.zero_grad()
                 loss = self.forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], eval=False)
@@ -173,10 +173,22 @@ class Track(object):
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
-
-            if early_stopping or finetuning_config["validate"] or finetuning_config["plot_training_curves"]:
+            if finetuning_config["validate"] or finetuning_config["plot_training_curves"]:
                 positive_scores = self.forward_pass_for_classifier_training(sample_batch['features'][sample_batch['scores']==1], sample_batch['scores'], return_scores=True, eval=True)
                 negative_scores = self.forward_pass_for_classifier_training(sample_batch['features'][sample_batch['scores']==0], sample_batch['scores'], return_scores=True, eval=True)
+
+            if early_stopping:
+                positive_scores = torch.Tensor([]).to(device)
+                negative_scores = torch.Tensor([]).to(device)
+                for val_batch_idx, val_batch in enumerate(dataloader_val):
+                    pos_scores_batch = self.forward_pass_for_classifier_training(
+                        val_batch['features'][val_batch['scores'] == 1], val_batch['scores'],
+                        return_scores=True, eval=True)
+                    positive_scores = torch.cat((positive_scores, pos_scores_batch))
+                    neg_scores_batch = self.forward_pass_for_classifier_training(
+                        val_batch['features'][val_batch['scores'] == 0], val_batch['scores'],
+                        return_scores=True, eval=True)
+                    negative_scores = torch.cat((negative_scores, neg_scores_batch))
 
             if finetuning_config["plot_training_curves"]:
                 positive_scores = positive_scores[:10]
@@ -190,12 +202,10 @@ class Track(object):
                                  'Scores Evaluation Classifier for Track {}'.format(self.id),
                                  i, score.cpu().numpy())
 
-            if early_stopping and torch.min(positive_scores) - torch.max(negative_scores) > 0.9:
-                    break
+            if early_stopping and torch.min(positive_scores) > 0.99 and torch.min(positive_scores) - torch.max(negative_scores) > 0.99:
+                print(f"Stopping early after {i+1} iterations. max pos: {torch.min(positive_scores)}, max neg: {torch.max(negative_scores)}")
+                break
 
 
         self.box_predictor_classification.eval()
         self.box_head_classification.eval()
-
-        # dets = torch.cat((self.pos, additional_dets))
-        # print(self.forward_pass(dets, box_roi_pool, fpn_features, scores=True))
