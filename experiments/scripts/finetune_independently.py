@@ -70,7 +70,7 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
             loss = forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], box_head_classification, box_predictor_classification)
             loss.backward()
             optimizer.step()
-        plot_every = 2
+        plot_every = 1
         if np.mod(i, plot_every) == 0 and (finetuning_config["early_stopping_classifier"] or finetuning_config["plot_training_curves"]):
 
             positive_scores = forward_pass_for_classifier_training(
@@ -104,7 +104,7 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
                         eval=True)
 
                 if finetuning_config["validate"]:
-                    val_positive_scores = val_positive_scores[:1]
+                    val_positive_scores = val_positive_scores[:10]
                     val_negative_scores = val_negative_scores[:10]
                     for sample_idx, score in enumerate(val_positive_scores):
                         plotter.plot('score', 'val positive {}'.format(sample_idx), 'Scores Evaluation Classifier for Track {}'.format(id),
@@ -177,7 +177,6 @@ def reid_exp(finetuning_config, obj_detect_weights, sequence_number, reid_tuples
         new_track_id = reid_tuple[1]
         first_dataset = pickle.load(open("training_set/{}/feature_training_set_track_{}.pkl".format(sequence_number, original_track_id), "rb"))
         first_dataset.post_process()
-        print(first_dataset.number_of_positive_examples)
         second_dataset = pickle.load(open("training_set/{}/feature_training_set_track_{}.pkl".format(sequence_number, new_track_id), "rb"))
         second_dataset.post_process()
         if len(first_dataset.samples_per_frame) <  max_frame_number_train:
@@ -286,8 +285,8 @@ def main(tracktor, _config, _log, _run):
     reid_tuples_02 = [(49, 90), (3, 74), (52, 81), (57, 84), (45, 79), (39, 46), (93, 104), (79, 89), (18, 56), (41, 54),
                   (1, 28), (2, 29), (33, 76)]
     reid_tuples_13 = [
-        #(11, 17), (2, 18), (18, 19), (19, 22), (22, 23), (23, 24), (24, 25), (25, 28), (28, 30), (166, 173), (172, 176), (170, 191), (9, 121),
-        (12, 35)#(64, 85)
+        (11, 17), #(2, 18), (18, 19), (19, 22), (22, 23), (23, 24), (24, 25), (25, 28), (28, 30), (166, 173), (172, 176), (170, 191), (9, 121),
+        #(12, 35)#(64, 85)
     ]
     tracker_cfg = tracktor['tracker']
     finetuning_config = tracker_cfg['finetuning']
