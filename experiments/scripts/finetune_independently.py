@@ -16,7 +16,7 @@ from tracktor.visualization import VisdomLinePlotter
 ex = Experiment()
 
 ex.add_config('experiments/cfgs/tracktor.yaml')
-ex.add_named_config('cfg1', 'experiments/cfgs/hp_search/cfg1.yaml')
+ex.add_named_config('cfg1', 'experiments/cfgs/hp_search/cfg_classification.yaml')
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -66,31 +66,32 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
 
     for i in range(int(finetuning_config["iterations"])):
         for i_sample, sample_batch in enumerate(train_dataloader):
-            optimizer.zero_grad()
-            loss = forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], box_head_classification, box_predictor_classification)
-            loss.backward()
-            optimizer.step()
+            print('')
         plot_every = 1
-        if np.mod(i, plot_every) == 0 and (finetuning_config["early_stopping_classifier"] or finetuning_config["plot_training_curves"]):
-
+        if np.mod(i, plot_every) == 0 and (
+                finetuning_config["early_stopping_classifier"] or finetuning_config["plot_training_curves"]):
             positive_scores = forward_pass_for_classifier_training(
-                sample_batch['features'][sample_batch['scores'] == 1], sample_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
+                sample_batch['features'][sample_batch['scores'] == 1], sample_batch['scores'], box_head_classification,
+                box_predictor_classification, return_scores=True,
                 eval=True)
             negative_scores = forward_pass_for_classifier_training(
-                sample_batch['features'][sample_batch['scores'] == 0], sample_batch['scores'], box_head_classification, box_predictor_classification, return_scores=True,
+                sample_batch['features'][sample_batch['scores'] == 0], sample_batch['scores'], box_head_classification,
+                box_predictor_classification, return_scores=True,
                 eval=True)
 
         if np.mod(i, plot_every) == 0 and finetuning_config["plot_training_curves"]:
             positive_scores = positive_scores[:10]
             negative_scores = negative_scores[:10]
             for sample_idx, score in enumerate(positive_scores):
-                plotter.plot('score', 'positive {}'.format(sample_idx), 'Scores Evaluation Classifier for Track {}'.format(id),
-                             i, score.cpu().numpy(), train_positive=True) # dark red
+                plotter.plot('score', 'positive {}'.format(sample_idx),
+                             'Scores Evaluation Classifier for Track {}'.format(id),
+                             i, score.cpu().numpy(), train_positive=True)  # dark red
             for sample_idx, score in enumerate(negative_scores):
-                plotter.plot('score', 'negative {}'.format(sample_idx), 'Scores Evaluation Classifier for Track {}'.format(id),
-                                  i, score.cpu().numpy())
+                plotter.plot('score', 'negative {}'.format(sample_idx),
+                             'Scores Evaluation Classifier for Track {}'.format(id),
+                             i, score.cpu().numpy())
 
-        if finetuning_config["early_stopping_classifier"] and torch.min(positive_scores) - torch.max(negative_scores) > 1.5:
+        if finetuning_config["early_stopping_classifier"] and torch.min(positive_scores) > 0.99 and torch.min(positive_scores) - torch.max(negative_scores) > 0.99:
             break
 
         if np.mod(i, plot_every) == 0 and finetuning_config["validate"]:
@@ -113,6 +114,14 @@ def do_finetuning(id, finetuning_config, plotter, box_head_classification, box_p
                         plotter.plot('score', 'val negative {}'.format(sample_idx), 'Scores Evaluation Classifier for Track {}'.format(id),
                                      i, score.cpu().numpy(), val_negative=True) #light blue
                 break
+
+
+        for i_sample, sample_batch in enumerate(train_dataloader):
+            optimizer.zero_grad()
+            loss = forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], box_head_classification, box_predictor_classification)
+            loss.backward()
+            optimizer.step()
+
 
 
         box_predictor_classification.eval()
@@ -285,7 +294,7 @@ def main(tracktor, _config, _log, _run):
     reid_tuples_02 = [(49, 90), (3, 74), (52, 81), (57, 84), (45, 79), (39, 46), (93, 104), (79, 89), (18, 56), (41, 54),
                   (1, 28), (2, 29), (33, 76)]
     reid_tuples_13 = [
-        (11, 17), #(2, 18), (18, 19), (19, 22), (22, 23), (23, 24), (24, 25), (25, 28), (28, 30), (166, 173), (172, 176), (170, 191), (9, 121),
+        (11, 17), (2, 18), (18, 19), (19, 22), (22, 23), (23, 24), (24, 25), (25, 28), (28, 30), (166, 173), (172, 176), (170, 191), (9, 121),
         #(12, 35)#(64, 85)
     ]
     tracker_cfg = tracktor['tracker']

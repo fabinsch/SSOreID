@@ -16,7 +16,7 @@ class Track(object):
     """This class contains all necessary for every individual track."""
 
     def __init__(self, pos, score, track_id, features, inactive_patience, max_features_num, mm_steps, im_info,
-                 transformed_image_size, box_roi_pool=None):
+                 transformed_image_size, plot=False, box_roi_pool=None):
         self.id = track_id
         self.pos = pos
         self.score = score
@@ -36,7 +36,8 @@ class Track(object):
         self.box_predictor_regression = None
         self.box_head_regression = None
         self.scale = self.im_info[0] / self.transformed_image_size[0][0]
-        self.plotter = VisdomLinePlotter(env_name='training')
+        if plot:
+            self.plotter = VisdomLinePlotter(env_name='training')
         self.checkpoints = dict()
         self.training_set = IndividualDataset(self.id)
         self.training_set.__init__(self.id)

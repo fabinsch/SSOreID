@@ -93,3 +93,5 @@ tracktor:
       validation_interval: 5
       checkpoint_interval: 5
       early_stopping_classifier: False
+      validate: False
+      plot_training_curves: False

@@ -208,7 +208,6 @@ class Tracker:
     def reid_by_finetuned_model(self, blob, new_det_pos, new_det_features, new_det_scores, frame):
         # IDEA: evaluate all inactive track models on the new detections
         # reidentify a track, when the model has a significantly higher score on this new detection than on other detections
-        print('Inactive tracks: {}'.format([x.id for x in self.inactive_tracks]))
         active_tracks = self.get_pos()
         if len(new_det_pos.size()) > 1 and len(self.inactive_tracks) > 0:
             remove_inactive = []

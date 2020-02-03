@@ -29,7 +29,7 @@ from tracktor.utils import interpolate, plot_sequence, get_mot_accum, evaluate_m
 
 
 
-# Deprecated please use hp_search_finetune_tracktor.py
+# Deprecated please use finetune_tracktor.py
 
 
 

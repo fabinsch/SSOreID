@@ -6,6 +6,21 @@ In addition to our supplementary document, we provide an illustrative [web-video
 
 ![Visualization of Tracktor](data/method_vis_standalone.png)
 
+## Experiments with fine-tuning
+
+To run the experiment for classification go to the branch reproduce-classification and run the command
+
+  ```
+  python experiments/scripts/finetune_tacktor.py with cfg_classification
+  ```
+
+To run the experiment for regression go to the branch reproduce-regression and run the command
+
+  ```
+  python experiments/scripts/finetune_tacktor.py with cfg_regression
+  python experiments/scripts/finetune_tacktor.py with cfg_regression_collect_training_set
+  ```
+
 ## Installation
 
 1. Clone and enter this repository:

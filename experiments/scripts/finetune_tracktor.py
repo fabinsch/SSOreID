@@ -25,11 +25,8 @@ from tracktor.utils import interpolate, plot_sequence, get_mot_accum, evaluate_m
 ex = Experiment()
 
 ex.add_config('experiments/cfgs/tracktor.yaml')
-ex.add_named_config('cfg1', 'experiments/cfgs/hp_search/cfg1.yaml')
-ex.add_named_config('cfg_caro_ws1', 'experiments/cfgs/hp_search/cfg_caro_ws1.yaml')
-ex.add_named_config('cfg_caro_ws2', 'experiments/cfgs/hp_search/cfg_caro_ws2.yaml')
-ex.add_named_config('cfg_caro_ws3', 'experiments/cfgs/hp_search/cfg_caro_ws3.yaml')
-ex.add_named_config('cfg_caro_local', 'experiments/cfgs/hp_search/cfg_caro_local.yaml')
+ex.add_named_config('cfg_classification', 'experiments/cfgs/cfg_classification.yaml')
+
 
 
 ########### DEFAULT################

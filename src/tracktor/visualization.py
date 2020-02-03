@@ -50,7 +50,7 @@ class VisdomLinePlotter(object):
         elif val_positive:
             color = np.array([[255, 0, 0], ]) #light red: val positive
         elif val_negative:
-            color = np.array([[0, 0, 255], ])#light blue: val negative
+            color = np.array([[118, 192, 245], ])#light blue: val negative
         elif color is not None:
             color = color
         else:
