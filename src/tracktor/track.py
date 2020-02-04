@@ -16,7 +16,7 @@ class Track(object):
     """This class contains all necessary for every individual track."""
 
     def __init__(self, pos, score, track_id, features, inactive_patience, max_features_num, mm_steps, im_info,
-                 transformed_image_size, plot=False, box_roi_pool=None):
+                 transformed_image_size, batch_size, plot=False, box_roi_pool=None):
         self.id = track_id
         self.pos = pos
         self.score = score
@@ -39,8 +39,7 @@ class Track(object):
         if plot:
             self.plotter = VisdomLinePlotter(env_name='training')
         self.checkpoints = dict()
-        self.training_set = IndividualDataset(self.id)
-        self.training_set.__init__(self.id)
+        self.training_set = IndividualDataset(self.id, batch_size)
         self.box_roi_pool = box_roi_pool
 
     def has_positive_area(self):
@@ -66,9 +65,6 @@ class Track(object):
         self.last_pos.clear()
         self.last_pos.append(self.pos.clone())
 
-    # TODO is displacement of roi helpful? Kinda like dropout as specific features might not be in the ROI anymore
-    # TODO only take negative examples that are close to positive example --> Makes training easier.
-    # TODO try lower learning rate and not to overfit --> best behaviour of 6 was when 0 track still had high score.
     def generate_training_set_regression(self, gt_pos, max_displacement, batch_size=8, plot=False, plot_args=None):
         gt_pos = gt_pos.to(device)
         random_displaced_bboxes = replicate_and_randomize_boxes(gt_pos,
@@ -124,11 +120,8 @@ class Track(object):
         training_set_dict = self.generate_training_set_classification(batch_size, additional_dets, fpn_features, shuffle=shuffle)
 
         if not include_previous_frames:
-            self.training_set = IndividualDataset(self.id)
+            self.training_set = IndividualDataset(self.id, batch_size)
         self.training_set.append_samples(training_set_dict)
-
-    def generate_validation_set_classfication(self, batch_size, additional_dets, fpn_features, shuffle=False):
-        return self.generate_training_set_classification(batch_size, additional_dets, fpn_features, shuffle=shuffle)
 
     def forward_pass_for_classifier_training(self, features, scores, eval=False, return_scores=False):
         if eval:

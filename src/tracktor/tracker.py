@@ -87,7 +87,8 @@ class Tracker:
             track = Track(new_det_pos[i].view(1, -1), new_det_scores[i], self.track_num + i,
                           new_det_features[i].view(1, -1), self.inactive_patience, self.max_features_num,
                           self.motion_model_cfg['n_steps'] if self.motion_model_cfg['n_steps'] > 0 else 1,
-                          image.size()[1:3], self.obj_detect.image_size, box_roi_pool=box_roi_pool)
+                          image.size()[1:3], self.obj_detect.image_size, self.finetuning_config["batch_size"],
+                          box_roi_pool=box_roi_pool)
 
             other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i + 1:], old_tracks))
             track.update_training_set_classification(self.finetuning_config['batch_size'],

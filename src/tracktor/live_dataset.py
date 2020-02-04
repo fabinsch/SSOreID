@@ -7,8 +7,10 @@ from torchvision.ops.boxes import box_iou
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class IndividualDataset(torch.utils.data.Dataset):
-    def __init__(self, id):
+    def __init__(self, id, batch_size):
         self.id = id
+        self.batch_size = batch_size
+        self.number_positive_duplicates = self.batch_size / 2 - 1
         self.features = torch.tensor([]).to(device)
         self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
@@ -25,14 +27,12 @@ class IndividualDataset(torch.utils.data.Dataset):
         if self.num_frames > self.keep_frames:
             self.remove_samples()
 
-    BATCH_SIZE = 64
     def remove_samples(self):
-        self.boxes = self.boxes[self.BATCH_SIZE:, :]
-        self.scores = self.scores[self.BATCH_SIZE:]
-        self.features = self.features[self.BATCH_SIZE:, :, :, :]
+        self.boxes = self.boxes[self.batch_size:, :]
+        self.scores = self.scores[self.batch_size:]
+        self.features = self.features[self.batch_size:, :, :, :]
 
     # Filter out all duplicates and add frame number tensor for each data point
-    NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES = 31
     def post_process(self):
         self.samples_per_frame = defaultdict(list)
         unique_indices = []
@@ -42,7 +42,7 @@ class IndividualDataset(torch.utils.data.Dataset):
         saw_positive = False
         for i, box in enumerate(torch.cat((self.boxes[1:, :], torch.Tensor([[0,0,0,0]]).to(device)))):
             if not torch.equal(box, current_box):
-                if number_of_duplicates == self.NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES and not saw_positive:
+                if number_of_duplicates == self.number_positive_duplicates and not saw_positive:
                     frame_number += 1
                     saw_positive = True
                 else:
