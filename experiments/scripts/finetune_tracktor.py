@@ -98,8 +98,6 @@ def main(tracktor, reid, _config, _log, _run):
         data_loader = DataLoader(seq, batch_size=1, shuffle=False)
         for i, frame in enumerate(tqdm(data_loader)):
             if len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
-                if i == 10:
-                    break
                 tracker.step(frame, i)
                 num_frames += 1
 
@@ -123,6 +121,7 @@ def main(tracktor, reid, _config, _log, _run):
         seq.write_results(results, output_dir)
         if tracktor['write_images']:
             plot_sequence(results, seq, osp.join(output_dir, tracktor['dataset'], str(seq)))
+
         del tracker
         del obj_detect
         torch.cuda.empty_cache()
