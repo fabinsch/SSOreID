@@ -162,7 +162,8 @@ class Track(object):
             for i_sample, sample_batch in enumerate(dataloader_train):
 
                 optimizer.zero_grad()
-                loss = self.forward_pass_for_classifier_training(sample_batch['features'], sample_batch['scores'], eval=False)
+                loss = self.forward_pass_for_classifier_training(sample_batch['features'].to(device),
+                                                                 sample_batch['scores'].to(device), eval=False)
 
                 loss.backward()
                 optimizer.step()
@@ -176,11 +177,11 @@ class Track(object):
                 negative_scores = torch.Tensor([]).to(device)
                 for val_batch_idx, val_batch in enumerate(dataloader_val):
                     pos_scores_batch = self.forward_pass_for_classifier_training(
-                        val_batch['features'][val_batch['scores'] == 1], val_batch['scores'],
+                        val_batch['features'][val_batch['scores'] == 1].to(device), val_batch['scores'].to(device),
                         return_scores=True, eval=True)
                     positive_scores = torch.cat((positive_scores, pos_scores_batch))
                     neg_scores_batch = self.forward_pass_for_classifier_training(
-                        val_batch['features'][val_batch['scores'] == 0], val_batch['scores'],
+                        val_batch['features'][val_batch['scores'] == 0].to(device), val_batch['scores'].to(device),
                         return_scores=True, eval=True)
                     negative_scores = torch.cat((negative_scores, neg_scores_batch))
 

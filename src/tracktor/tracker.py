@@ -57,7 +57,7 @@ class Tracker:
     def reset(self, hard=True):
         self.tracks = []
         self.inactive_tracks = []
-
+        torch.cuda.empty_cache()
         if hard:
             self.track_num = 0
             self.results = {}

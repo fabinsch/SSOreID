@@ -11,9 +11,9 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.id = id
         self.batch_size = batch_size
         self.number_positive_duplicates = self.batch_size / 2 - 1
-        self.features = torch.tensor([]).to(device)
-        self.boxes = torch.tensor([]).to(device)
-        self.scores = torch.tensor([]).to(device)
+        self.features = torch.tensor([])
+        self.boxes = torch.tensor([])
+        self.scores = torch.tensor([])
         self.samples_per_frame = None
         self.number_of_positive_examples = None
         self.keep_frames = 40
@@ -21,9 +21,9 @@ class IndividualDataset(torch.utils.data.Dataset):
 
     def append_samples(self, training_set_dict):
         self.num_frames += 1
-        self.features = torch.cat((self.features, training_set_dict['features']))
-        self.boxes = torch.cat((self.boxes, training_set_dict['boxes']))
-        self.scores = torch.cat((self.scores, training_set_dict['scores']))
+        self.features = torch.cat((self.features, training_set_dict['features'].cpu()))
+        self.boxes = torch.cat((self.boxes, training_set_dict['boxes'].cpu()))
+        self.scores = torch.cat((self.scores, training_set_dict['scores'].cpu()))
         if self.num_frames > self.keep_frames:
             self.remove_samples()
 
@@ -40,7 +40,7 @@ class IndividualDataset(torch.utils.data.Dataset):
         frame_number = 0
         current_box = self.boxes[0, :]
         saw_positive = False
-        for i, box in enumerate(torch.cat((self.boxes[1:, :], torch.Tensor([[0,0,0,0]]).to(device)))):
+        for i, box in enumerate(torch.cat((self.boxes[1:, :], torch.Tensor([[0,0,0,0]])))):
             if not torch.equal(box, current_box):
                 if number_of_duplicates == self.number_positive_duplicates and not saw_positive:
                     frame_number += 1
