@@ -11,9 +11,9 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.id = id
         self.batch_size = batch_size
         self.number_positive_duplicates = self.batch_size / 2 - 1
-        self.features = torch.tensor([])
-        self.boxes = torch.tensor([])
-        self.scores = torch.tensor([])
+        self.features = torch.tensor([]).to(device)
+        self.boxes = torch.tensor([]).to(device)
+        self.scores = torch.tensor([]).to(device)
         self.samples_per_frame = None
         self.number_of_positive_examples = None
         self.keep_frames = 40
@@ -21,9 +21,9 @@ class IndividualDataset(torch.utils.data.Dataset):
 
     def append_samples(self, training_set_dict):
         self.num_frames += 1
-        self.features = torch.cat((self.features, training_set_dict['features'].cpu()))
-        self.boxes = torch.cat((self.boxes, training_set_dict['boxes'].cpu()))
-        self.scores = torch.cat((self.scores, training_set_dict['scores'].cpu()))
+        self.features = torch.cat((self.features, training_set_dict['features']))
+        self.boxes = torch.cat((self.boxes, training_set_dict['boxes']))
+        self.scores = torch.cat((self.scores, training_set_dict['scores']))
         if self.num_frames > self.keep_frames:
             self.remove_samples()
 
@@ -40,7 +40,7 @@ class IndividualDataset(torch.utils.data.Dataset):
         frame_number = 0
         current_box = self.boxes[0, :]
         saw_positive = False
-        for i, box in enumerate(torch.cat((self.boxes[1:, :], torch.Tensor([[0,0,0,0]])))):
+        for i, box in enumerate(torch.cat((self.boxes[1:, :], torch.Tensor([[0,0,0,0]]).to(device)))):
             if not torch.equal(box, current_box):
                 if number_of_duplicates == self.number_positive_duplicates and not saw_positive:
                     frame_number += 1
@@ -75,10 +75,6 @@ class IndividualDataset(torch.utils.data.Dataset):
         num_train = 40 if self.number_of_positive_examples > 40 else self.number_of_positive_examples
         training_set, _ = self.val_test_split(num_frames_train=num_train, num_frames_val=0, train_val_frame_gap=0,
                                               downsampling=False)
-        #if self.number_of_positive_examples >= 5:
-        #    training_set, val_set = self.val_test_split(num_frames_train=num_train-1, num_frames_val=1,
-        #                                                train_val_frame_gap=0)
-        #    return training_set, val_set
 
         return training_set, training_set
 
@@ -90,7 +86,7 @@ class IndividualDataset(torch.utils.data.Dataset):
         neg_idx_train = []
         pos_idx_val = []
         neg_idx_val = []
-        if train_val_frame_gap == 0:
+        if train_val_frame_gap == 0 and num_frames_val == 0:
             for i in range(self.number_of_positive_examples - num_frames_train - num_frames_val, self.number_of_positive_examples - num_frames_val):
                 pos_idx_for_frame = self.samples_per_frame[i + 1][0]
                 pos_idx_train.append(pos_idx_for_frame)
@@ -105,7 +101,6 @@ class IndividualDataset(torch.utils.data.Dataset):
 
             for i in range(self.number_of_positive_examples - num_frames_val, self.number_of_positive_examples):
                 pos_idx_for_frame = self.samples_per_frame[i + 1][0]
-                print(self.boxes[pos_idx_for_frame, :])
                 pos_idx_val.append(pos_idx_for_frame)
                 if downsampling:
                     # Choose the box as negative example that has highest iou with positive example box
@@ -115,7 +110,6 @@ class IndividualDataset(torch.utils.data.Dataset):
                     repeated_pos_frame = [pos_idx_for_frame] * (len(neg_idx_for_frame) - 1)
                     pos_idx_val.extend(repeated_pos_frame)
                     neg_idx_val.extend(neg_idx_for_frame)
-
             train_idx = torch.cat((torch.LongTensor(pos_idx_train), torch.LongTensor(neg_idx_train)))
             val_idx = torch.cat((torch.LongTensor(pos_idx_val), torch.LongTensor(neg_idx_val)))
             return  [Subset(self, train_idx), Subset(self, val_idx)]
