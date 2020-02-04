@@ -1,5 +1,5 @@
 tracktor:
-  'dataset': mot17_train_FRCNN17
+  'dataset': mot17_05_FRCNN17
   'write_images': False
   'tracker':
     'inactive_patience': 10
@@ -11,6 +11,8 @@ tracktor:
       'learning_rate': 5e-4
       'batch_size': 64
       'val_batch_size': 32
+      validate: False
+      plot_training_curves: False
       'finetune_repeatedly': False
       'finetuning_interval': 4
       'early_stopping_classifier': True

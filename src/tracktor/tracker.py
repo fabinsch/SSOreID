@@ -241,7 +241,6 @@ class Tracker:
                     inactive_track = self.inactive_tracks[track_index]
                     det_index_to_candidate[int(highest_score_index.cpu().numpy())].append((inactive_track, highest_score))
 
-            print(det_index_to_candidate)
             for det_index, candidates in det_index_to_candidate.items():
                 if len(candidates) == 1:
                     candidate = candidates[0]
