@@ -32,7 +32,7 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.features = self.features[self.BATCH_SIZE:, :, :, :]
 
     # Filter out all duplicates and add frame number tensor for each data point
-    NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES = 15
+    NUMBER_OF_POSITIVE_EXAMPLE_DUPLICATES = 31
     def post_process(self):
         self.samples_per_frame = defaultdict(list)
         unique_indices = []
