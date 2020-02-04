@@ -32,7 +32,7 @@ class Tracker:
         self.regression_nms_thresh = tracker_cfg['regression_nms_thresh']
         self.public_detections = tracker_cfg['public_detections']
         self.inactive_patience = tracker_cfg['inactive_patience']
-        self.reid_siamese = tracker_cfg['reid_siames']
+        self.reid_siamese = tracker_cfg['reid_siamese']
         self.max_features_num = tracker_cfg['max_features_num']
         self.reid_sim_threshold = tracker_cfg['reid_sim_threshold']
         self.reid_iou_threshold = tracker_cfg['reid_iou_threshold']
