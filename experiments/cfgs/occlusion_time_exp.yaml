@@ -1,0 +1,23 @@
+tracktor:
+  'dataset': mot17_13_FRCNN17
+  'write_images': False
+  'tracker':
+    'inactive_patience': 10
+    reid_siamese: False
+    'finetuning':
+      'for_tracking': False
+      'for_reid': False
+      'iterations':  50
+      'learning_rate': 5e-4
+      'batch_size': 64
+      'val_batch_size': 32
+      validate: True
+      plot_training_curves: False
+      'finetune_repeatedly': False
+      'finetuning_interval': 4
+      'early_stopping_classifier': True
+      'build_up_training_set': True
+      'gamma': 1
+      'decay_every': 4
+      'feature_collection_interval': 1
+  'output_subdir': '1'
