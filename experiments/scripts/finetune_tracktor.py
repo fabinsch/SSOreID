@@ -8,6 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 import motmetrics as mm
+
 mm.lap.default_solver = 'lap'
 
 import torchvision
@@ -22,12 +23,11 @@ from tracktor.oracle_tracker import OracleTracker
 from tracktor.tracker import Tracker
 from tracktor.reid.resnet import resnet50
 from tracktor.utils import interpolate, plot_sequence, get_mot_accum, evaluate_mot_accums
+
 ex = Experiment()
 
 ex.add_config('experiments/cfgs/tracktor.yaml')
 ex.add_named_config('cfg_classification', 'experiments/cfgs/cfg_classification.yaml')
-
-
 
 ########### DEFAULT################
 
@@ -38,9 +38,9 @@ ex.add_named_config('oracle', 'experiments/cfgs/oracle_tracktor.yaml')
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+
 @ex.automain
 def main(tracktor, reid, _config, _log, _run):
-
     sacred.commands.print_config(_run)
 
     # set all seeds
@@ -64,23 +64,14 @@ def main(tracktor, reid, _config, _log, _run):
     # object detection
     _log.info("Initializing object detector.")
 
-    obj_detect = FRCNN_FPN(num_classes=2).to(device)
-    obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
-                                          map_location=lambda storage, loc: storage))
+    reid_network = None
 
-    obj_detect.eval()
-
-    # reid
-    reid_network = resnet50(pretrained=False, **reid['cnn']).to(device)
-    reid_network.load_state_dict(torch.load(tracktor['reid_weights'],
-                                            map_location=lambda storage, loc: storage))
-    reid_network.eval()
-
-    # tracktor
-    if 'oracle' in tracktor:
-        tracker = OracleTracker(obj_detect, reid_network, tracktor['tracker'], tracktor['oracle'])
-    else:
-        tracker = Tracker(obj_detect, reid_network, tracktor['tracker'])
+    if tracktor['tracker']['reid_siamese']:
+        # reid
+        reid_network = resnet50(pretrained=False, **reid['cnn']).to(device)
+        reid_network.load_state_dict(torch.load(tracktor['reid_weights'],
+                                                map_location=lambda storage, loc: storage))
+        reid_network.eval()
 
     time_total = 0
     num_frames = 0
@@ -89,48 +80,65 @@ def main(tracktor, reid, _config, _log, _run):
 
     for seq in dataset:
 
-         tracker.reset()
+        obj_detect = FRCNN_FPN(num_classes=2).to(device)
+        obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
+                                              map_location=lambda storage, loc: storage))
+        obj_detect.eval()
 
-         start = time.time()
+        # tracktor
+        if 'oracle' in tracktor:
+            tracker = OracleTracker(obj_detect, reid_network, tracktor['tracker'], tracktor['oracle'])
+        else:
+            tracker = Tracker(obj_detect, reid_network, tracktor['tracker'])
 
-         _log.info(f"Tracking: {seq}")
+        start = time.time()
 
-         data_loader = DataLoader(seq, batch_size=1, shuffle=False)
-         for i, frame in enumerate(tqdm(data_loader)):
-             if len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
-                 tracker.step(frame, i)
-                 num_frames += 1
+        _log.info(f"Tracking: {seq}")
 
-         results = tracker.get_results()
+        data_loader = DataLoader(seq, batch_size=1, shuffle=False)
+        for i, frame in enumerate(tqdm(data_loader)):
+            if len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
+                if i == 10:
+                    break
+                tracker.step(frame, i)
+                num_frames += 1
 
-         time_total += time.time() - start
+        results = tracker.get_results()
 
-         _log.info(f"Tracks found: {len(results)}")
-         _log.info(f"Runtime for {seq}: {time.time() - start :.1f} s.")
+        time_total += time.time() - start
 
-         if tracktor['interpolate']:
-             results = interpolate(results)
+        _log.info(f"Tracks found: {len(results)}")
+        _log.info(f"Runtime for {seq}: {time.time() - start :.1f} s.")
 
-         if seq.no_gt:
-             _log.info(f"No GT data for evaluation available.")
-         else:
-             mot_accums.append(get_mot_accum(results, seq))
+        if tracktor['interpolate']:
+            results = interpolate(results)
 
-         _log.info(f"Writing predictions to: {output_dir}")
+        if seq.no_gt:
+            _log.info(f"No GT data for evaluation available.")
+        else:
+            mot_accums.append(get_mot_accum(results, seq))
 
-         seq.write_results(results, output_dir)
+        _log.info(f"Writing predictions to: {output_dir}")
 
-         if tracktor['write_images']:
-             plot_sequence(results, seq, osp.join(output_dir, tracktor['dataset'], str(seq)))
+        seq.write_results(results, output_dir)
+        if tracktor['write_images']:
+            plot_sequence(results, seq, osp.join(output_dir, tracktor['dataset'], str(seq)))
+        del tracker
+        del obj_detect
+        torch.cuda.empty_cache()
+
 
     _log.info(f"Tracking runtime for all sequences (without evaluation or image writing): "
-               f"{time_total:.1f} s ({num_frames / time_total:.1f} Hz)")
+          f"{time_total:.1f} s ({num_frames / time_total:.1f} Hz)")
 
     if mot_accums:
         summary = evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt], generate_overall=True)
         summary.to_pickle("output/finetuning_results/results_{}_{}_{}_{}_{}.pkl".format(tracktor['output_subdir'],
-                                                                                           tracktor['tracker']['finetuning']['max_displacement'],
-                                                                                            tracktor['tracker']['finetuning']['batch_size'],
-                                                                                            tracktor['tracker']['finetuning']['learning_rate'],
-                                                                                            tracktor['tracker']['finetuning']['iterations']))
-
+                                                                                        tracktor['tracker']['finetuning'][
+                                                                                            'max_displacement'],
+                                                                                        tracktor['tracker']['finetuning'][
+                                                                                            'batch_size'],
+                                                                                        tracktor['tracker']['finetuning'][
+                                                                                            'learning_rate'],
+                                                                                        tracktor['tracker']['finetuning'][
+                                                                                            'iterations']))
