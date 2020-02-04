@@ -1,5 +1,3 @@
-import pickle
-
 import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
@@ -57,7 +55,6 @@ class Tracker:
     def reset(self, hard=True):
         self.tracks = []
         self.inactive_tracks = []
-        torch.cuda.empty_cache()
         if hard:
             self.track_num = 0
             self.results = {}
@@ -73,19 +70,17 @@ class Tracker:
                 t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
                                           box_predictor_copy_for_classifier,
                                           early_stopping=self.finetuning_config['early_stopping_classifier'])
-            #pickle.dump(t.training_set,
-            #            open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
 
         self.inactive_tracks += tracks
 
-    def add(self, new_det_pos, new_det_scores, new_det_features, image, frame):
+    def add(self, new_det_pos, new_det_scores, image, frame, new_det_features=None):
         """Initializes new Track objects and saves them."""
         num_new = new_det_pos.size(0)
         old_tracks = self.get_pos()
         box_roi_pool = self.obj_detect.roi_heads.box_roi_pool
         for i in range(num_new):
             track = Track(new_det_pos[i].view(1, -1), new_det_scores[i], self.track_num + i,
-                          new_det_features[i].view(1, -1), self.inactive_patience, self.max_features_num,
+                          new_det_features[i].view(1, -1) if new_det_features else None, self.inactive_patience, self.max_features_num,
                           self.motion_model_cfg['n_steps'] if self.motion_model_cfg['n_steps'] > 0 else 1,
                           image.size()[1:3], self.obj_detect.image_size, self.finetuning_config["batch_size"],
                           box_roi_pool=box_roi_pool)
@@ -206,7 +201,7 @@ class Tracker:
             features = torch.zeros(0).cuda()
         return features
 
-    def reid_by_finetuned_model(self, blob, new_det_pos, new_det_features, new_det_scores, frame):
+    def reid_by_finetuned_model(self, new_det_pos, new_det_scores, frame):
         # IDEA: evaluate all inactive track models on the new detections
         # reidentify a track, when the model has a significantly higher score on this new detection than on other detections
         active_tracks = self.get_pos()
@@ -264,11 +259,9 @@ class Tracker:
             if keep.nelement() > 0:
                 new_det_pos = new_det_pos[keep]
                 new_det_scores = new_det_scores[keep]
-                new_det_features = new_det_features[keep]
             else:
                 new_det_pos = torch.zeros(0).to(device)
                 new_det_scores = torch.zeros(0).to(device)
-                new_det_features = torch.zeros(0).to(device)
 
         return new_det_pos, new_det_scores
 
@@ -528,15 +521,16 @@ class Tracker:
             new_det_scores = det_scores
 
             # try to reidentify tracks
-            new_det_features = self.reid_network.test_rois(blob['img'], new_det_pos).data
+            new_det_features=None
             if self.reid_siamese:
+                new_det_features = self.reid_network.test_rois(blob['img'], new_det_pos).data
                 new_det_pos, new_det_scores = self.reid(blob, new_det_pos, new_det_features, new_det_scores)
             elif self.finetuning_config["for_reid"]:
-                new_det_pos, new_det_scores = self.reid_by_finetuned_model(blob, new_det_pos, new_det_features, new_det_scores, frame)
+                new_det_pos, new_det_scores = self.reid_by_finetuned_model(new_det_pos, new_det_scores, frame)
 
             # add new
             if new_det_pos.nelement() > 0:
-                self.add(new_det_pos, new_det_scores, new_det_features, blob['img'][0], frame)
+                self.add(new_det_pos, new_det_scores, blob['img'][0], frame, new_det_features)
 
         ####################
         # Generate Results #
@@ -556,9 +550,6 @@ class Tracker:
 
         self.im_index += 1
         self.last_image = blob['img'][0]
-        #if frame == 599:
-        #    for t in self.tracks:
-        #        pickle.dump(t.training_set, open("training_set/feature_training_set_track_{}.pkl".format(t.id), "wb"))
 
     def get_results(self):
         return self.results
