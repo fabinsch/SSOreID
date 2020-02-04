@@ -1,9 +1,9 @@
 tracktor:
-  'dataset': mot17_05_FRCNN17
+  'dataset': mot17_train_FRCNN17
   'write_images': False
   'tracker':
     'inactive_patience': 10
-    do_reid: False
+    reid_siamese: False
     'finetuning':
       'for_tracking': False
       'for_reid': True

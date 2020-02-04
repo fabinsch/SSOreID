@@ -32,7 +32,7 @@ class Tracker:
         self.regression_nms_thresh = tracker_cfg['regression_nms_thresh']
         self.public_detections = tracker_cfg['public_detections']
         self.inactive_patience = tracker_cfg['inactive_patience']
-        self.do_reid = tracker_cfg['do_reid']
+        self.reid_siamese = tracker_cfg['reid_siames']
         self.max_features_num = tracker_cfg['max_features_num']
         self.reid_sim_threshold = tracker_cfg['reid_sim_threshold']
         self.reid_iou_threshold = tracker_cfg['reid_iou_threshold']
@@ -279,7 +279,7 @@ class Tracker:
 
         new_det_features = [zeros for _ in range(len(new_det_pos))]
 
-        if self.do_reid:
+        if self.reid_siamese:
             new_det_features = self.reid_network.test_rois(
                 blob['img'], new_det_pos).data
 
@@ -365,7 +365,7 @@ class Tracker:
                 t.pos = warp_pos(t.pos, warp_matrix)
             # t.pos = clip_boxes(Variable(pos), blob['im_info'][0][:2]).data
 
-            if self.do_reid:
+            if self.reid_siamese:
                 for t in self.inactive_tracks:
                     t.pos = warp_pos(t.pos, warp_matrix)
 
@@ -398,7 +398,7 @@ class Tracker:
             t.last_v = torch.stack(vs).mean(dim=0)
             self.motion_step(t)
 
-        if self.do_reid:
+        if self.reid_siamese:
             for t in self.inactive_tracks:
                 if t.last_v.nelement() > 0:
                     self.motion_step(t)
@@ -492,7 +492,7 @@ class Tracker:
                                                                   'early_stopping_classifier'])
 
                 if keep.nelement() > 0:
-                    if self.do_reid:
+                    if self.reid_siamese:
                         new_features = self.get_appearances(blob)
                         self.add_features(new_features)
         #####################
@@ -529,9 +529,9 @@ class Tracker:
 
             # try to reidentify tracks
             new_det_features = self.reid_network.test_rois(blob['img'], new_det_pos).data
-            #if self.do_reid:
-            #    new_det_pos, new_det_scores = self.reid(blob, new_det_pos, new_det_features, new_det_scores)
-            if self.finetuning_config["for_reid"]:
+            if self.reid_siamese:
+                new_det_pos, new_det_scores = self.reid(blob, new_det_pos, new_det_features, new_det_scores)
+            elif self.finetuning_config["for_reid"]:
                 new_det_pos, new_det_scores = self.reid_by_finetuned_model(blob, new_det_pos, new_det_features, new_det_scores, frame)
 
             # add new

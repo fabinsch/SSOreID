@@ -78,7 +78,7 @@ class OracleTracker(Tracker):
 
 	def reid(self, blob, new_det_pos, new_det_scores):
 		new_det_features = self.reid_network.test_rois(blob['app_data'][0], new_det_pos / blob['im_info'][0][2]).data
-		if len(self.inactive_tracks) >= 1 and self.do_reid:
+		if len(self.inactive_tracks) >= 1 and self.reid_siamese:
 			# calculate appearance distances
 			dist_mat = []
 			pos = []
