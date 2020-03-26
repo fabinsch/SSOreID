@@ -31,8 +31,8 @@ jupyter-console==6.0.0
 jupyter-core==4.6.1
 jupyter-http-over-ws==0.0.6
 kiwisolver==1.1.0
-lap==0.4.0
-lapsolver==1.0.2
+#lap==0.4.0
+#lapsolver==1.0.2
 MarkupSafe==1.1.1
 matplotlib==3.1.1
 mistune==0.8.4
