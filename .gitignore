@@ -25,3 +25,12 @@ __pycache__
 
 # Visual Studio Code
 .vscode
+
+.idea
+1st presentation
+adlcv_env
+build
+results
+training_set/*
+
+log/*
