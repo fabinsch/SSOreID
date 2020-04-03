@@ -7,9 +7,11 @@ from collections import defaultdict
 from tracktor.track import Track
 from tracktor.visualization import plot_compare_bounding_boxes, VisdomLinePlotter, plot_bounding_boxes
 from tracktor.utils import bbox_overlaps, warp_pos, get_center, get_height, get_width, make_pos
+from tracktor.live_dataset import InactiveDataset
 
 from torchvision.ops.boxes import clip_boxes_to_image, nms
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHead
+from torch.nn import functional as F
 
 #if not torch.cuda.is_available():
 #    matplotlib.use('TkAgg')
@@ -52,6 +54,12 @@ class Tracker:
         self.im_index = 0
         self.results = {}
 
+        self.inactive_tracks_temp = []
+        self.inactive_number_changes = 0
+        self.box_head_classification = None
+        self.box_predictor_classification = None
+        self.training_set = InactiveDataset(inactive_tracks=[], batch_size=64)
+
     def reset(self, hard=True):
         self.tracks = []
         self.inactive_tracks = []
@@ -70,8 +78,9 @@ class Tracker:
                 t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
                                           box_predictor_copy_for_classifier,
                                           early_stopping=self.finetuning_config['early_stopping_classifier'])
-
+            self.training_set.inactive_trackId.append(t.id)
         self.inactive_tracks += tracks
+
 
     def add(self, new_det_pos, new_det_scores, image, frame, new_det_features=None):
         """Initializes new Track objects and saves them."""
@@ -101,6 +110,15 @@ class Tracker:
             self.tracks.append(track)
 
         self.track_num += num_new
+
+    def get_box_predictor_(self, n=2):
+        """Get a box predictor with number of output neurons corresponding to number of inactive tracks"""
+        if n==1:
+            box_predictor = FastRCNNPredictor(1024, 2).to(device)  # at least have two classes
+        else:
+            box_predictor = FastRCNNPredictor(1024, n+1).to(device)  # plus 1 additional unknown class
+        #box_predictor.load_state_dict(self.bbox_predictor_weights)
+        return box_predictor
 
     def get_box_predictor(self):
         box_predictor = FastRCNNPredictor(1024, 2).to(device)
@@ -548,11 +566,134 @@ class Tracker:
             t for t in self.inactive_tracks if t.has_positive_area() and t.count_inactive <= self.inactive_patience
         ]
 
+        # check if inactive tracks changed after processing current frame, can be more
+        # but also less inactive frames - after inactive patience or REID
+        if self.inactive_tracks != self.inactive_tracks_temp:
+            self.inactive_number_changes += 1
+            if self.finetuning_config["for_reid"] and self.training_set.inactive_trackId_temp != self.training_set.inactive_trackId:
+                box_head_copy_for_classifier = self.get_box_head()  # get head and load weights
+                box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.training_set.inactive_trackId))  # get predictor with corrsponding output number
+                self.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
+                                          box_predictor_copy_for_classifier,
+                                          early_stopping=self.finetuning_config['early_stopping_classifier'])
+                self.training_set.inactive_trackId_temp = self.training_set.inactive_trackId.copy()
+
         self.im_index += 1
         self.last_image = blob['img'][0]
+        self.inactive_tracks_temp = self.inactive_tracks.copy()
+
 
     def get_results(self):
         return self.results
+
+
+    def forward_pass_for_classifier_training(self, features, scores, eval=False, return_scores=False):
+        if eval:
+            self.box_predictor_classification.eval()
+            self.box_head_classification.eval()
+        feat = self.box_head_classification(features)
+        class_logits, _ = self.box_predictor_classification(feat)
+        if return_scores:
+            pred_scores = F.softmax(class_logits, -1)
+            if eval:
+                self.box_predictor_classification.train()
+                self.box_head_classification.train()
+            return pred_scores[:, 1:].squeeze(dim=1).detach()
+        loss = F.cross_entropy(class_logits, scores.long())
+        if eval:
+            self.box_predictor_classification.train()
+            self.box_head_classification.train()
+        return loss
+
+
+    def finetune_classification(self, finetuning_config, box_head_classification,
+                                box_predictor_classification, early_stopping):
+
+        # process dataset for all inactive tracks which have not been processed before
+        for t in self.inactive_tracks:
+            if len(self.inactive_tracks) == 1:
+                t.training_set.post_process()
+            elif t.id not in self.training_set.inactive_trackId:
+                t.training_set.post_process()
+
+        self.box_head_classification = box_head_classification
+        self.box_predictor_classification = box_predictor_classification
+
+        self.box_predictor_classification.train()
+        self.box_head_classification.train()
+        optimizer = torch.optim.Adam(
+            list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()),
+            lr=float(finetuning_config["learning_rate"]))
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 2, gamma=finetuning_config['gamma'])
+
+        if self.training_set is None:
+            self.training_set = InactiveDataset(
+                inactive_tracks=self.inactive_tracks,
+                batch_size=64)
+        else:
+            self.training_set.add_inactive_tracks(self.inactive_tracks)
+
+        # training_set, val_set = self.training_set.get_training_set()
+        training_set, val_set = self.training_set.get_training_set()
+
+        dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=256)
+        dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=256)
+
+        for i in range(int(finetuning_config["iterations"])):
+            for i_sample, sample_batch in enumerate(dataloader_train):
+                optimizer.zero_grad()
+                loss = self.forward_pass_for_classifier_training(sample_batch['features'],
+                                                                 sample_batch['scores'], eval=False)
+
+                loss.backward()
+                optimizer.step()
+                scheduler.step()
+
+            if (i%5) == 0 :
+                    print("Loss {} in iteration {}".format(loss, i))
+
+        #     if finetuning_config["validate"] or finetuning_config["plot_training_curves"]:
+        #         positive_scores = self.forward_pass_for_classifier_training(
+        #             sample_batch['features'][sample_batch['scores'] == 1], sample_batch['scores'], return_scores=True,
+        #             eval=True)
+        #         negative_scores = self.forward_pass_for_classifier_training(
+        #             sample_batch['features'][sample_batch['scores'] == 0], sample_batch['scores'], return_scores=True,
+        #             eval=True)
+        #
+        #     if early_stopping:
+        #         positive_scores = torch.Tensor([]).to(device)
+        #         negative_scores = torch.Tensor([]).to(device)
+        #         for val_batch_idx, val_batch in enumerate(dataloader_val):
+        #             pos_scores_batch = self.forward_pass_for_classifier_training(
+        #                 val_batch['features'][val_batch['scores'] == 1], val_batch['scores'],
+        #                 return_scores=True, eval=True)
+        #             positive_scores = torch.cat((positive_scores, pos_scores_batch))
+        #             neg_scores_batch = self.forward_pass_for_classifier_training(
+        #                 val_batch['features'][val_batch['scores'] == 0], val_batch['scores'],
+        #                 return_scores=True, eval=True)
+        #             negative_scores = torch.cat((negative_scores, neg_scores_batch))
+        #
+        #     if finetuning_config["plot_training_curves"]:
+        #         positive_scores = positive_scores[:10]
+        #         negative_scores = negative_scores[:10]
+        #         for sample_idx, score in enumerate(positive_scores):
+        #             self.plotter.plot('score', 'positive {}'.format(sample_idx),
+        #                               'Scores Evaluation Classifier for Track {}'.format(self.id),
+        #                               i, score.cpu().numpy(), train_positive=True)  # dark red
+        #         for sample_idx, score in enumerate(negative_scores):
+        #             self.plotter.plot('score', 'negative {}'.format(sample_idx),
+        #                               'Scores Evaluation Classifier for Track {}'.format(self.id),
+        #                               i, score.cpu().numpy())
+        #
+        #     if early_stopping and torch.min(positive_scores) > 0.99 and torch.min(positive_scores) - torch.max(
+        #             negative_scores) > 0.99:
+        #         print(
+        #             f"Stopping early after {i + 1} iterations. max pos: {torch.min(positive_scores)}, max neg: {torch.max(negative_scores)}")
+        #         break
+        #
+        self.box_predictor_classification.eval()
+        self.box_head_classification.eval()
+
 
 #                    idf1       idp       idr    recall  precision  num_unique_objects  mostly_tracked  partially_tracked  mostly_lost  num_false_positives  num_misses  num_switches  num_fragmentations      mota      motp
 #MOT17-02-FRCNN  0.458597  0.784569  0.323987  0.411980   0.997654                  62               8                 32           22                   18       10926            57                  65  0.407944  0.079305
