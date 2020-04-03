@@ -4,6 +4,8 @@ from torch.utils.data import Subset
 from collections import defaultdict
 from torchvision.ops.boxes import box_iou
 
+import random
+
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class IndividualDataset(torch.utils.data.Dataset):
@@ -18,6 +20,8 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.number_of_positive_examples = None
         self.keep_frames = 40
         self.num_frames = 0
+
+        self.pos_unique_indices = []
 
     def append_samples(self, training_set_dict):
         self.num_frames += 1
@@ -40,23 +44,26 @@ class IndividualDataset(torch.utils.data.Dataset):
         frame_number = 0
         current_box = self.boxes[0, :]
         saw_positive = False
+        pos_unique_indices = []
         for i, box in enumerate(torch.cat((self.boxes[1:, :], torch.Tensor([[0,0,0,0]]).to(device)))):
             if not torch.equal(box, current_box):
-                if number_of_duplicates == self.number_positive_duplicates and not saw_positive:
+                if number_of_duplicates == self.number_positive_duplicates and not saw_positive:  # every image again 31 times duplicates of this person
                     frame_number += 1
-                    saw_positive = True
+                    saw_positive = True  # changes to true after the first filtering out of positive duplicates
+                    pos_unique_indices.append(i)
                 else:
                     saw_positive = False
-                unique_indices.append(i)
-                self.samples_per_frame[frame_number].append(i)
+                unique_indices.append(i)  # first i = 31, next 42, 53
+                self.samples_per_frame[frame_number].append(i)  # frame number and the corresponding unique ind per track dataset
                 current_box = box
                 number_of_duplicates = 0
             else:
                 number_of_duplicates += 1
         unique_scores = self.scores[unique_indices]
         self.number_of_positive_examples = unique_scores[unique_scores==1].size()[0]
-        assert len(self.samples_per_frame) == self.number_of_positive_examples
+        assert len(self.samples_per_frame) == self.number_of_positive_examples  # check if in every frame is the positive sample
         self.sort_by_iou()
+        self.pos_unique_indices = pos_unique_indices
 
     def sort_by_iou(self):
         for frame_number in self.samples_per_frame:
