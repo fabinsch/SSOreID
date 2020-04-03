@@ -160,3 +160,48 @@ class IndividualDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         return {'features': self.features[idx, :, :, :], 'boxes': self.boxes[idx, :], 'scores': self.scores[idx]}
+
+
+class InactiveDataset(torch.utils.data.Dataset):
+    def __init__(self, inactive_tracks, batch_size):
+        self.batch_size = batch_size
+        self.inactive_trackId = []
+        self.inactive_trackId_temp = []
+        self.boxes = torch.tensor([]).to(device)
+        self.scores = torch.tensor([]).to(device)
+        self.features = torch.tensor([]).to(device)
+        self.inactive_tracks = inactive_tracks
+
+    def __len__(self):
+        return self.features.size()[0]
+
+    def __getitem__(self, idx):
+        return {'features': self.features[idx, :, :, :], 'boxes': self.boxes[idx, :], 'scores': self.scores[idx]}
+
+    def add_inactive_tracks(self, inactive_tracks):
+        if len(inactive_tracks) > 0:
+            self.inactive_tracks.extend([t for t in inactive_tracks if t not in self.inactive_tracks])
+
+    def get_training_set(self):
+        # get a random dataset with label 0 for the first inactive track
+        if len(self.inactive_tracks) == 1 and len(self.inactive_trackId) == 1:
+            t = self.inactive_tracks[0]
+            neg_idx = []
+            for f in range(len(t.training_set.pos_unique_indices)):
+                neg_idx.append(random.choice(t.training_set.samples_per_frame[f+1][1:]))
+            self.scores = torch.zeros(len(neg_idx)).to(device)
+            self.boxes = t.training_set.boxes[neg_idx]
+            self.features = t.training_set.features[neg_idx]
+
+        # add all following inactive tracks to dataset
+        for i, t in enumerate(self.inactive_tracks):
+            if t.id not in self.inactive_trackId_temp:
+                self.scores = torch.cat((self.scores, t.training_set.scores[t.training_set.pos_unique_indices] * (i+1)))
+                self.boxes = torch.cat((self.boxes, t.training_set.boxes[t.training_set.pos_unique_indices]))
+                self.features = torch.cat((self.features, t.training_set.features[t.training_set.pos_unique_indices]))
+                self.inactive_trackId.extend([t.id for t in self.inactive_tracks if t.id not in self.inactive_trackId])
+
+
+
+        return self, self
+
