@@ -23,7 +23,7 @@ class FRCNN_FPN(FasterRCNN):
         return detections['boxes'].detach(), detections['scores'].detach()
 
     def predict_boxes(self, boxes, box_head_classification=None, box_predictor_classification=None,
-                      box_head_regression=None, box_predictor_regression=None):
+                      box_head_regression=None, box_predictor_regression=None, pred_multiclass=False):
         device = list(self.parameters())[0].device
         boxes = boxes.to(device)
 
@@ -56,10 +56,13 @@ class FRCNN_FPN(FasterRCNN):
 
         pred_boxes = self.roi_heads.box_coder.decode(box_regression, proposals)
         pred_scores = F.softmax(class_logits, -1)
-
         pred_boxes = pred_boxes[:, 1:].squeeze(dim=1).detach()
         pred_boxes = resize_boxes(
             pred_boxes, self.image_size[0], self.original_image_size[0])
+
+        if pred_multiclass:
+            return pred_boxes, pred_scores.squeeze(dim=1).detach()
+
         pred_scores = pred_scores[:, 1:].squeeze(dim=1).detach()
         return pred_boxes, pred_scores
 
