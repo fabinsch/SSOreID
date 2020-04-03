@@ -32,3 +32,5 @@ adlcv_env
 build
 results
 training_set/*
+
+log/*
