@@ -58,7 +58,7 @@ class Tracker:
         self.inactive_number_changes = 0
         self.box_head_classification = None
         self.box_predictor_classification = None
-        self.training_set = InactiveDataset(inactive_tracks=[], batch_size=64)
+        self.training_set = InactiveDataset(inactive_tracks=self.inactive_tracks, batch_size=64)
 
     def reset(self, hard=True):
         self.tracks = []
@@ -82,7 +82,7 @@ class Tracker:
                 t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
                                           box_predictor_copy_for_classifier,
                                           early_stopping=self.finetuning_config['early_stopping_classifier'])
-            self.training_set.inactive_trackId.append(t.id)
+            #self.training_set.inactive_trackId.append(t.id)
         self.inactive_tracks += tracks
 
 
@@ -135,7 +135,7 @@ class Tracker:
                                        self.obj_detect.roi_heads.box_roi_pool.output_size[0] ** 2,
                                        representation_size=1024).to(device)
             box_head.load_state_dict(self.bbox_head_weights)
-        else
+        else:
             box_head = self.box_head_classification  # do not start again we default weights
         return box_head
 
@@ -660,11 +660,11 @@ class Tracker:
         if self.inactive_tracks != self.inactive_tracks_temp:
             if self.finetuning_config["for_reid"]:
                 box_head_copy_for_classifier = self.get_box_head(reset=True)  # get head and load weights
-                box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.training_set.inactive_trackId))  # get predictor with corrsponding output number
+                box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.inactive_tracks))  # get predictor with corrsponding output number
                 self.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
                                           box_predictor_copy_for_classifier,
                                           early_stopping=self.finetuning_config['early_stopping_classifier'])
-                self.training_set.inactive_trackId_temp = self.training_set.inactive_trackId.copy()
+                #self.training_set.inactive_trackId_temp = self.training_set.inactive_trackId.copy()
 
         self.im_index += 1
         self.last_image = blob['img'][0]
@@ -714,18 +714,14 @@ class Tracker:
             lr=float(finetuning_config["learning_rate"]))
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 2, gamma=finetuning_config['gamma'])
 
-        if self.training_set is None:
-            self.training_set = InactiveDataset(
-                inactive_tracks=self.inactive_tracks,
-                batch_size=64)
-        else:
-            self.training_set.add_inactive_tracks(self.inactive_tracks)
-
-        # training_set, val_set = self.training_set.get_training_set()
-        training_set, val_set = self.training_set.get_training_set()
+        training_set, val_set = self.training_set.get_training_set(self.inactive_tracks)
 
         dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=256)
         dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=256)
+
+        # do not train when no tracks
+        if len(self.inactive_tracks)==0:
+            return
 
         for i in range(int(finetuning_config["iterations"])):
             for i_sample, sample_batch in enumerate(dataloader_train):
