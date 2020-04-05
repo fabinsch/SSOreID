@@ -58,7 +58,7 @@ class Tracker:
         self.inactive_number_changes = 0
         self.box_head_classification = None
         self.box_predictor_classification = None
-        self.training_set = InactiveDataset(inactive_tracks=self.inactive_tracks, batch_size=64)
+        self.training_set = None
 
     def reset(self, hard=True):
         self.tracks = []
@@ -295,7 +295,7 @@ class Tracker:
     def reid_by_finetuned_model_(self, new_det_pos, new_det_scores, frame):
         """Do reid with one model predicting the score for each inactive track"""
         active_tracks = self.get_pos()
-        if len(new_det_pos.size()) > 1 and len(self.training_set.inactive_trackId) > 0:
+        if len(new_det_pos.size()) > 1:
             remove_inactive = []
             det_index_to_candidate = defaultdict(list)
             assigned = []
@@ -699,10 +699,9 @@ class Tracker:
 
         # process dataset for all inactive tracks which have not been processed before
         for t in self.inactive_tracks:
-            if len(self.inactive_tracks) == 1:
                 t.training_set.post_process()
-            elif t.id not in self.training_set.inactive_trackId:
-                t.training_set.post_process()
+
+        self.training_set = InactiveDataset(batch_size=64)
 
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification

@@ -163,15 +163,11 @@ class IndividualDataset(torch.utils.data.Dataset):
 
 
 class InactiveDataset(torch.utils.data.Dataset):
-    def __init__(self, inactive_tracks, batch_size):
+    def __init__(self, batch_size):
         self.batch_size = batch_size
-        self.inactive_trackId = []
-        self.inactive_trackId_temp = []
         self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
         self.features = torch.tensor([]).to(device)
-        #self.inactive_tracks = inactive_tracks
-        self.mapping = {}
 
     def __len__(self):
         return self.features.size()[0]
@@ -179,32 +175,17 @@ class InactiveDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         return {'features': self.features[idx, :, :, :], 'boxes': self.boxes[idx, :], 'scores': self.scores[idx]}
 
-    def remove_inactive_tracks(self, remove_inactive):
-        self.inactive_trackId = [Id for Id in self.inactive_trackId if Id not in remove_inactive]
-        for rm_id in remove_inactive:
-            rm_scores = torch.ones(self.scores.shape).to(device)*self.mapping[rm_id]
-            idx = (self.scores != rm_scores)
-            self.scores = self.scores[idx]  # adjust scores
-            self.features = self.features[idx]
-            self.boxes = self.boxes[idx]
-
-            try:
-                del self.mapping[rm_id]
-            except KeyError:
-                print("Key not found")
-
-    def generate_ind(pos_unique_indices, max_occ):
+    def generate_ind(self, pos_unique_indices, max_occ):
         diff = max_occ - len(pos_unique_indices)
         for i in range(diff):
             pos_unique_indices.append(random.choice(pos_unique_indices))
         return pos_unique_indices
 
     def get_training_set(self, inactive_tracks):
-        add_inactive = [t for t in inactive_tracks if t.id not in self.inactive_trackId]
         occ = [t.frames_since_active for t in inactive_tracks]
         max_occ = max(occ) if len(occ) > 0 else 0
         # get a random dataset with label 0 for the first inactive track
-        if len(inactive_tracks) == 1 and len(self.scores) == 0:
+        if len(inactive_tracks) == 1:
             t = inactive_tracks[0]
             neg_idx = []
             for f in range(max_occ):
@@ -212,22 +193,17 @@ class InactiveDataset(torch.utils.data.Dataset):
             self.scores = torch.zeros(len(neg_idx)).to(device)
             self.boxes = t.training_set.boxes[neg_idx]
             self.features = t.training_set.features[neg_idx]
-            self.mapping[0] = 0  # gives mapping track ID to score
 
         # add all following inactive tracks to dataset
-        for i, t in enumerate(add_inactive):
-            cl = int(torch.max(self.scores))+i+1
+        for i, t in enumerate(inactive_tracks):
             # balance dataset, same number of examples for each class
             if len(t.training_set.pos_unique_indices) < max_occ:
-                pos_unique_indices = self.generate_ind(pos_unique_indices, max_occ)
+                pos_unique_indices = self.generate_ind(t.training_set.pos_unique_indices, max_occ)
+            else:
+                pos_unique_indices = t.training_set.pos_unique_indices
+            self.scores = torch.cat((self.scores, t.training_set.scores[pos_unique_indices] * (i+1)))
+            self.boxes = torch.cat((self.boxes, t.training_set.boxes[pos_unique_indices]))
+            self.features = torch.cat((self.features, t.training_set.features[pos_unique_indices]))
 
-            self.scores = torch.cat((self.scores, t.training_set.scores[t.training_set.pos_unique_indices] * cl))
-            self.boxes = torch.cat((self.boxes, t.training_set.boxes[t.training_set.pos_unique_indices]))
-            self.features = torch.cat((self.features, t.training_set.features[t.training_set.pos_unique_indices]))
-            self.inactive_trackId.extend([t.id for t in inactive_tracks if t.id not in self.inactive_trackId])
-            self.mapping[t.id] = cl
-
-        remove_inactive = [id for id in self.inactive_trackId if id not in [t.id for t in inactive_tracks]]
-        self.remove_inactive_tracks(remove_inactive)
         return self, self
 
