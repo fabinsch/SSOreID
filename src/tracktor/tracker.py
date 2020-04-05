@@ -63,6 +63,8 @@ class Tracker:
     def reset(self, hard=True):
         self.tracks = []
         self.inactive_tracks = []
+        self.inactive_tracks_temp = []
+        self.inactive_number_changes = 0
         if hard:
             self.track_num = 0
             self.results = {}
@@ -72,6 +74,8 @@ class Tracker:
         self.tracks = [t for t in self.tracks if t not in tracks]
         for t in tracks:
             t.pos = t.last_pos[-1]
+            self.inactive_number_changes += 1
+            # train new model with inactive track added to output neurons
             if self.finetuning_config["for_reid"]:
                 box_head_copy_for_classifier = self.get_box_head()
                 box_predictor_copy_for_classifier = self.get_box_predictor()
@@ -125,11 +129,14 @@ class Tracker:
         box_predictor.load_state_dict(self.bbox_predictor_weights)
         return box_predictor
 
-    def get_box_head(self):
-        box_head =  TwoMLPHead(self.obj_detect.backbone.out_channels *
-                                   self.obj_detect.roi_heads.box_roi_pool.output_size[0] ** 2,
-                                   representation_size=1024).to(device)
-        box_head.load_state_dict(self.bbox_head_weights)
+    def get_box_head(self, reset=True):
+        if reset:
+            box_head =  TwoMLPHead(self.obj_detect.backbone.out_channels *
+                                       self.obj_detect.roi_heads.box_roi_pool.output_size[0] ** 2,
+                                       representation_size=1024).to(device)
+            box_head.load_state_dict(self.bbox_head_weights)
+        else
+            box_head = self.box_head_classification  # do not start again we default weights
         return box_head
 
     def regress_tracks(self, blob, plot_compare=False, frame=None):
@@ -267,6 +274,7 @@ class Tracker:
                     remove_inactive.append(inactive_track)
 
             for inactive_track in remove_inactive:
+                self.inactive_number_changes += 1
                 self.inactive_tracks.remove(inactive_track)
                 inactive_track.update_training_set_classification(self.finetuning_config['batch_size'],
                                                                   active_tracks,
@@ -298,6 +306,8 @@ class Tracker:
                                                           pred_multiclass=True)
 
             print("The scores are: "+ str(scores.data.cpu().numpy()))
+
+            ### do REID procedure
 
         #     score_matrix = torch.tensor([]).to(device) # 1 row: scores for a new detection by the current inactive tracks
         #     #idea: go over the detections, check the scores of the classifiers wheter one is significantly higher
@@ -405,6 +415,7 @@ class Tracker:
 
                 for t in remove_inactive:
                     self.inactive_tracks.remove(t)
+                    self.inactive_number_changes += 1
 
                 keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
                 if keep.nelement() > 0:
@@ -634,6 +645,12 @@ class Tracker:
         for t in self.inactive_tracks:
             t.count_inactive += 1
 
+        # inactive tracks change when inactive_patience is overpassed
+        for t in self.inactive_tracks:
+            if t.count_inactive > self.inactive_patience:
+                self.inactive_number_changes += 1
+
+        # delete track from inactive_tracks when inactive_aptience is overpassed
         self.inactive_tracks = [
             t for t in self.inactive_tracks if t.has_positive_area() and t.count_inactive <= self.inactive_patience
         ]
@@ -641,9 +658,8 @@ class Tracker:
         # check if inactive tracks changed after processing current frame, can be more
         # but also less inactive frames - after inactive patience or REID
         if self.inactive_tracks != self.inactive_tracks_temp:
-            self.inactive_number_changes += 1
-            if self.finetuning_config["for_reid"] and self.training_set.inactive_trackId_temp != self.training_set.inactive_trackId:
-                box_head_copy_for_classifier = self.get_box_head()  # get head and load weights
+            if self.finetuning_config["for_reid"]:
+                box_head_copy_for_classifier = self.get_box_head(reset=True)  # get head and load weights
                 box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.training_set.inactive_trackId))  # get predictor with corrsponding output number
                 self.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
                                           box_predictor_copy_for_classifier,
