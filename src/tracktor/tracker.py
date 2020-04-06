@@ -3,6 +3,7 @@ import torch
 from scipy.optimize import linear_sum_assignment
 import cv2
 from collections import defaultdict
+import datetime
 
 from tracktor.track import Track
 from tracktor.visualization import plot_compare_bounding_boxes, VisdomLinePlotter, plot_bounding_boxes
@@ -46,8 +47,9 @@ class Tracker:
             self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
             self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
 
-        if self.finetuning_config["validate"] or self.finetuning_config["plot_training_curves"]:
-            self.plotter = VisdomLinePlotter(env_name='person_scores', xlabel="Frames")
+        # if self.finetuning_config["validate"] or self.finetuning_config["plot_training_curves"]:
+        #     self.plotter = VisdomLinePlotter(env_name='loss', xlabel="Epoch")
+            #self.plotter_acc = VisdomLinePlotter(env_name='Accuracy per epoch', xlabel="Epoch")
         self.tracks = []
         self.inactive_tracks = []
         self.track_num = 0
@@ -59,6 +61,8 @@ class Tracker:
         self.box_head_classification = None
         self.box_predictor_classification = None
         self.training_set = None
+        now = datetime.datetime.now()
+        self.run_name = now.strftime("%Y-%m-%d %H:%M")
 
     def reset(self, hard=True):
         self.tracks = []
@@ -75,13 +79,14 @@ class Tracker:
         for t in tracks:
             t.pos = t.last_pos[-1]
             self.inactive_number_changes += 1
-            # train new model with inactive track added to output neurons
-            if self.finetuning_config["for_reid"]:
-                box_head_copy_for_classifier = self.get_box_head()
-                box_predictor_copy_for_classifier = self.get_box_predictor()
-                t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
-                                          box_predictor_copy_for_classifier,
-                                          early_stopping=self.finetuning_config['early_stopping_classifier'])
+
+            # old finetune classification per track
+            # if self.finetuning_config["for_reid"]:
+            #     box_head_copy_for_classifier = self.get_box_head()
+            #     box_predictor_copy_for_classifier = self.get_box_predictor()
+            #     t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
+            #                               box_predictor_copy_for_classifier,
+            #                               early_stopping=self.finetuning_config['early_stopping_classifier'])
             #self.training_set.inactive_trackId.append(t.id)
         self.inactive_tracks += tracks
 
@@ -104,12 +109,12 @@ class Tracker:
                                                  self.obj_detect.fpn_features,
                                                  include_previous_frames=True)
 
-            if self.finetuning_config["for_tracking"]:
-                box_head_copy_for_classifier = self.get_box_head()
-                box_predictor_copy_for_classifier = self.get_box_predictor()
-                track.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
-                                              box_predictor_copy_for_classifier,
-                                              early_stopping=self.finetuning_config['early_stopping_classifier'])
+            # if self.finetuning_config["for_tracking"]:
+            #     box_head_copy_for_classifier = self.get_box_head()
+            #     box_predictor_copy_for_classifier = self.get_box_predictor()
+            #     track.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
+            #                                   box_predictor_copy_for_classifier,
+            #                                   early_stopping=self.finetuning_config['early_stopping_classifier'])
 
             self.tracks.append(track)
 
@@ -120,7 +125,7 @@ class Tracker:
         if n==1:
             box_predictor = FastRCNNPredictor(1024, 2).to(device)  # at least have two classes
         else:
-            box_predictor = FastRCNNPredictor(1024, n+1).to(device)  # plus 1 additional unknown class
+            box_predictor = FastRCNNPredictor(1024, n).to(device)
         #box_predictor.load_state_dict(self.bbox_predictor_weights)
         return box_predictor
 
@@ -141,42 +146,45 @@ class Tracker:
 
     def regress_tracks(self, blob, plot_compare=False, frame=None):
         """Regress the position of the tracks and also checks their scores."""
-        if self.finetuning_config["for_tracking"]:
-            scores = []
-            pos = []
-            other_classifiers = [(track.box_head_classification, track.box_predictor_classification, track.id) for track in self.tracks + self.inactive_tracks]
-            for track in self.tracks:
-                # Regress with finetuned bbox head for each track
-                assert track.box_head_classification is not None
-                assert track.box_predictor_classification is not None
+        # if self.finetuning_config["for_tracking"]:
+        #     scores = []
+        #     pos = []
+        #     other_classifiers = [(track.box_head_classification, track.box_predictor_classification, track.id) for track in self.tracks + self.inactive_tracks]
+        #     for track in self.tracks:
+        #         # Regress with finetuned bbox head for each track
+        #         assert track.box_head_classification is not None
+        #         assert track.box_predictor_classification is not None
+        #
+        #         box, score = self.obj_detect.predict_boxes(track.pos,
+        #                                                    box_head_classification=track.box_head_classification,
+        #                                                    box_predictor_classification=track.box_predictor_classification)
+        #
+        #         if plot_compare:
+        #             box_no_finetune, score_no_finetune = self.obj_detect.predict_boxes(track.pos)
+        #             plot_compare_bounding_boxes(box, box_no_finetune, blob['img'])
+        #         scores.append(score)
+        #         bbox = clip_boxes_to_image(box, blob['img'].shape[-2:])
+        #         pos.append(bbox)
+        #
+        #         for other_classifier in other_classifiers:
+        #             _, score_plot = self.obj_detect.predict_boxes(track.pos,
+        #                                                           box_head_classification=other_classifier[0],
+        #                                                           box_predictor_classification=other_classifier[1])
+        #             score_by_other_classifier = score_plot.cpu().numpy()[0]
+        #             if self.finetuning_config['validate']:
+        #                 is_target = (track.id == other_classifier[2])
+        #                 self.plotter.plot('person {} score'.format(other_classifier[2]), 'score {}'.format(track.id), "Person Scores by track {} classifier".format(other_classifier[2]), frame,
+        #                                   score_by_other_classifier, train_positive=is_target)
+        #     scores = torch.cat(scores)
+        #     pos = torch.cat(pos)
+        # else:
+        #     pos = self.get_pos()
+        #     boxes, scores = self.obj_detect.predict_boxes(pos)
+        #     pos = clip_boxes_to_image(boxes, blob['img'].shape[-2:])
 
-                box, score = self.obj_detect.predict_boxes(track.pos,
-                                                           box_head_classification=track.box_head_classification,
-                                                           box_predictor_classification=track.box_predictor_classification)
-
-                if plot_compare:
-                    box_no_finetune, score_no_finetune = self.obj_detect.predict_boxes(track.pos)
-                    plot_compare_bounding_boxes(box, box_no_finetune, blob['img'])
-                scores.append(score)
-                bbox = clip_boxes_to_image(box, blob['img'].shape[-2:])
-                pos.append(bbox)
-
-                for other_classifier in other_classifiers:
-                    _, score_plot = self.obj_detect.predict_boxes(track.pos,
-                                                                  box_head_classification=other_classifier[0],
-                                                                  box_predictor_classification=other_classifier[1])
-                    score_by_other_classifier = score_plot.cpu().numpy()[0]
-                    if self.finetuning_config['validate']:
-                        is_target = (track.id == other_classifier[2])
-                        self.plotter.plot('person {} score'.format(other_classifier[2]), 'score {}'.format(track.id), "Person Scores by track {} classifier".format(other_classifier[2]), frame,
-                                          score_by_other_classifier, train_positive=is_target)
-            scores = torch.cat(scores)
-            pos = torch.cat(pos)
-        else:
-            pos = self.get_pos()
-            boxes, scores = self.obj_detect.predict_boxes(pos)
-            pos = clip_boxes_to_image(boxes, blob['img'].shape[-2:])
-
+        pos = self.get_pos()
+        boxes, scores = self.obj_detect.predict_boxes(pos)
+        pos = clip_boxes_to_image(boxes, blob['img'].shape[-2:])
 
         s = []
         for i in range(len(self.tracks) - 1, -1, -1):
@@ -295,7 +303,7 @@ class Tracker:
     def reid_by_finetuned_model_(self, new_det_pos, new_det_scores, frame):
         """Do reid with one model predicting the score for each inactive track"""
         active_tracks = self.get_pos()
-        if len(new_det_pos.size()) > 1:
+        if len(new_det_pos.size()) > 1 and len(self.inactive_tracks) > 0:
             remove_inactive = []
             det_index_to_candidate = defaultdict(list)
             assigned = []
@@ -305,48 +313,40 @@ class Tracker:
                                                           box_head_classification=self.box_head_classification,
                                                           pred_multiclass=True)
 
-            print("The scores are: "+ str(scores.data.cpu().numpy()))
+            scores = scores.cpu().numpy()
+            max = scores.max(axis=1)
+            max_idx = scores.argmax(axis=1)
+            scores[:, max_idx] = 0
+            max2 = scores.max(axis=1)
+            max_idx2 = scores.argmax(axis=1)
+            dist = max - max2
 
-            ### do REID procedure
+            for i, d in enumerate(dist):
+                if d > 0.2 and max[i] > 0.95:
+                    if len(self.inactive_tracks) == 1:
+                        # idx = 0 means unknown background people, idx=1 is inactive
+                        print(0)
+                        if max_idx[i] == 0:
+                            pass
+                        else:
+                            inactive_track = self.inactive_tracks[0]
+                            det_index_to_candidate[int(max_idx[i])].append((inactive_track, max[i]))
+                    if len(self.inactive_tracks) > 1:
+                        # idx = 0 is first inactive person and so on..
+                        inactive_track = self.inactive_tracks[max_idx[i]]
+                        det_index_to_candidate[int(max_idx[i])].append((inactive_track, max[i]))
 
-        #     score_matrix = torch.tensor([]).to(device) # 1 row: scores for a new detection by the current inactive tracks
-        #     #idea: go over the detections, check the scores of the classifiers wheter one is significantly higher
-        #     for inactive_track in self.inactive_tracks:
-        #         boxes, scores = self.obj_detect.predict_boxes(new_det_pos,
-        #                                                      box_predictor_classification=inactive_track.box_predictor_classification,
-        #                                                      box_head_classification=inactive_track.box_head_classification)
-        #
-        #         if score_matrix.size()[0] == 0:
-        #             score_matrix = scores.unsqueeze(1)
-        #         else:
-        #             if len(scores.size()) == 1:
-        #                 scores = scores.unsqueeze(1)
-        #             score_matrix = torch.cat([score_matrix, scores], dim=1)
-        #     print(f'Score matrix: {score_matrix}')
-        #
-        #     for track_index in range(len(self.inactive_tracks)):
-        #
-        #         track_scores = score_matrix[:, track_index]
-        #         highest_score_index = torch.argmax(track_scores)
-        #         highest_score = torch.max(track_scores)
-        #         track_scores[highest_score_index] = 0
-        #         second_highest_score = torch.max(track_scores)
-        #         distance_to_second_highest_score = highest_score - second_highest_score
-        #         if distance_to_second_highest_score > 0.2 and highest_score > 0.95:
-        #             inactive_track = self.inactive_tracks[track_index]
-        #             det_index_to_candidate[int(highest_score_index.cpu().numpy())].append((inactive_track, highest_score))
-        #
-        #     for det_index, candidates in det_index_to_candidate.items():
-        #         if len(candidates) == 1:
-        #             candidate = candidates[0]
-        #             inactive_track = candidate[0]
-        #             self.tracks.append(inactive_track)
-        #             print(f"Reidying track {inactive_track.id} in frame {frame} with score {candidate[1]}")
-        #             inactive_track.count_inactive = 0
-        #             inactive_track.pos = new_det_pos[det_index].view(1, -1)
-        #             inactive_track.reset_last_pos()
-        #             assigned.append(det_index)
-        #             remove_inactive.append(inactive_track)
+            for det_index, candidates in det_index_to_candidate.items():
+                if len(candidates) == 1:
+                    candidate = candidates[0]
+                    inactive_track = candidate[0]
+                    self.tracks.append(inactive_track)
+                    print(f"Reidying track {inactive_track.id} in frame {frame} with score {candidate[1]}")
+                    inactive_track.count_inactive = 0
+                    inactive_track.pos = new_det_pos[det_index].view(1, -1)
+                    inactive_track.reset_last_pos()
+                    assigned.append(det_index)
+                    remove_inactive.append(inactive_track)
         #
         #     for inactive_track in remove_inactive:
         #         self.inactive_tracks.remove(inactive_track)
@@ -627,7 +627,7 @@ class Tracker:
                 new_det_features = self.reid_network.test_rois(blob['img'], new_det_pos).data
                 new_det_pos, new_det_scores = self.reid(blob, new_det_pos, new_det_features, new_det_scores)
             elif self.finetuning_config["for_reid"]:
-                new_det_pos, new_det_scores = self.reid_by_finetuned_model(new_det_pos, new_det_scores, frame)
+                #new_det_pos, new_det_scores = self.reid_by_finetuned_model(new_det_pos, new_det_scores, frame)
                 self.reid_by_finetuned_model_(new_det_pos, new_det_scores, frame)
             # add new
             if new_det_pos.nelement() > 0:
@@ -686,7 +686,8 @@ class Tracker:
             if eval:
                 self.box_predictor_classification.train()
                 self.box_head_classification.train()
-            return pred_scores[:, 1:].squeeze(dim=1).detach()
+            return pred_scores.detach()
+            #return pred_scores[:, 1:].squeeze(dim=1).detach()
         loss = F.cross_entropy(class_logits, scores.long())
         if eval:
             self.box_predictor_classification.train()
@@ -722,18 +723,44 @@ class Tracker:
         if len(self.inactive_tracks)==0:
             return
 
+        epoch_loss = []
+
+        if self.finetuning_config["plot_training_curves"]:
+            plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks], env=self.run_name)
+
         for i in range(int(finetuning_config["iterations"])):
+            run_loss = 0.0
             for i_sample, sample_batch in enumerate(dataloader_train):
                 optimizer.zero_grad()
                 loss = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                                  sample_batch['scores'], eval=False)
-
+                if self.finetuning_config["plot_training_curves"]:
+                    pred_scores = self.forward_pass_for_classifier_training(sample_batch['features'],
+                                                          sample_batch['scores'], eval=True, return_scores=True)
+                    mask = torch.argmax(pred_scores, dim=1, keepdim=True).squeeze()
+                    corr = torch.sum(mask == sample_batch['scores'])
+                    acc = 100 * corr.item() / len(mask)
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
 
-            if (i%5) == 0 :
-                    print("Loss {} in iteration {}".format(loss, i))
+                run_loss += loss.detach().item() / len(sample_batch['scores'])
+
+            if (i%1) == 0 :
+                #print("Loss {} in iteration {}".format(loss, i))
+                epoch_loss.append(run_loss)
+
+            if finetuning_config["plot_training_curves"]:
+
+                plotter.plot_(epoch=i, loss=loss, acc=acc)
+
+            # for i, score in enumerate(epoch_loss):
+            #             self.plotter.plot('Loss', 'positive {}'.format(i),
+            #                               'Loss per Epoch , trained on {} inactive tracks'.format(len(self.inactive_tracks)),
+            #                               i, score, train_positive=True)  # dark red
+
+
+
 
         #     if finetuning_config["validate"] or finetuning_config["plot_training_curves"]:
         #         positive_scores = self.forward_pass_for_classifier_training(
