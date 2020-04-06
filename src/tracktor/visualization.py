@@ -37,38 +37,39 @@ def plot_compare_bounding_boxes(box_finetune, box_no_finetune, image):
 class VisdomLinePlotter(object):
     """Plots to Visdom"""
 
-    def __init__(self, env_name='main', xlabel='Iteration'):
-        self.viz = Visdom(port=8098)
-        self.env = env_name
-        self.plots = {}
-        self.xlabel = xlabel
+    def __init__(self, id, env):
+        self.viz = Visdom(port=8097, env=env)
+        self.env = env
+        self.id = id
+        self.loss_window = self.viz.line(X=torch.zeros((1,)).cpu(),
+                           Y=torch.zeros((1)).cpu(),
+                           opts=dict(xlabel='epoch',
+                                     ylabel='Loss',
+                                     env=self.env,
+                                     title='Training loss inactive ID {}'.format(id),
+                                     legend=['Loss']))
+        self.accuracy_window = self.viz.line(X=torch.zeros((1,)).cpu(),
+                           Y=torch.zeros((1)).cpu(),
+                           opts=dict(xlabel='epoch',
+                                     ylabel='accuracy in %',
+                                     env=self.env,
+                                     title='Training accuracy inactive ID {}'.format(id),
+                                     legend=['accuracy']))
 
-    def plot(self, var_name, split_name, title_name, x, y, erase=False, train_positive=False, val_positive=False,
-             color=None, val_negative=False):
-        if train_positive:
-            color = np.array([[128, 0, 0], ])#dark red: train positive
-        elif val_positive:
-            color = np.array([[255, 0, 0], ]) #light red: val positive
-        elif val_negative:
-            color = np.array([[118, 192, 245], ])#light blue: val negative
-        elif color is not None:
-            color = color
-        else:
-            color = np.array([[0, 0, 128], ])
-        if var_name not in self.plots:
-            self.plots[var_name] = self.viz.line(X=np.array([x, x]), Y=np.array([y, y]), env=self.env, opts=dict(
-                #legend=[split_name],
-                title=title_name,
-                xlabel=self.xlabel,
-                ylabel=var_name,
-                linecolor=color
-            ))
-            #self.viz.line(X=np.array(range(1, 51)), Y=np.repeat(0.5, 50), env=self.env, win=self.plots[var_name],
-            #              update='insert', opts=dict(linecolor=np.array([[255, 0, 0], ])),
-            #              name="Regression Person threshold")
-        else:
-            self.viz.line(X=np.array([x]), Y=np.array([y]), env=self.env, win=self.plots[var_name], name=split_name,
-                          update='append', opts=dict(linecolor=color))
+    def plot_(self, epoch, loss, acc):
+        self.viz.line(
+            X=torch.ones((1, 1)).cpu() * epoch,
+            Y=torch.Tensor([loss]).unsqueeze(0).cpu(),
+            env=self.env,
+            win=self.loss_window,
+            update='append')
+        self.viz.line(
+            X=torch.ones((1, 1)).cpu() * epoch,
+            Y=torch.Tensor([acc]).unsqueeze(0).cpu(),
+            env=self.env,
+            win=self.accuracy_window,
+            update='append')
+
 
 
 def plot_bounding_boxes(im_info, gt_pos, image, proposals, iteration, id, validate=False):
