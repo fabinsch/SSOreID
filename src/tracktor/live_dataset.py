@@ -168,6 +168,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
         self.features = torch.tensor([]).to(device)
+        self.max_occ = 0
 
     def __len__(self):
         return self.features.size()[0]
@@ -183,13 +184,13 @@ class InactiveDataset(torch.utils.data.Dataset):
 
     def get_training_set(self, inactive_tracks):
         occ = [t.training_set.number_of_positive_examples for t in inactive_tracks]
-        max_occ = max(occ) if len(occ) > 0 else 0
+        self.max_occ = max(occ) if len(occ) > 0 else 0
         cl = 0
         # get a random dataset with label 0 if just one inactive track
         if len(inactive_tracks) == 1:
             t = inactive_tracks[0]
             neg_idx = []
-            for f in range(max_occ):
+            for f in range(self.max_occ):
                 neg_idx.append(random.choice(t.training_set.samples_per_frame[f+1][1:]))
             self.scores = torch.zeros(len(neg_idx)).to(device)
             self.boxes = t.training_set.boxes[neg_idx]
@@ -198,8 +199,8 @@ class InactiveDataset(torch.utils.data.Dataset):
 
         for i, t in enumerate(inactive_tracks):
             # balance dataset, same number of examples for each class
-            if len(t.training_set.pos_unique_indices) < max_occ:
-                pos_unique_indices = self.generate_ind(t.training_set.pos_unique_indices, max_occ)
+            if len(t.training_set.pos_unique_indices) < self.max_occ:
+                pos_unique_indices = self.generate_ind(t.training_set.pos_unique_indices, self.max_occ)
             else:
                 pos_unique_indices = t.training_set.pos_unique_indices
             self.scores = torch.cat((self.scores, t.training_set.scores[pos_unique_indices] * (cl+i)))

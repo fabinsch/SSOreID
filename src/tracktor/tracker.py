@@ -309,6 +309,7 @@ class Tracker:
         if len(new_det_pos.size()) > 1 and len(self.inactive_tracks_temp) > 0:
             remove_inactive = []
             det_index_to_candidate = defaultdict(list)
+            inactive_to_det = defaultdict(list)
             assigned = []
 
             boxes, scores = self.obj_detect.predict_boxes(new_det_pos,
@@ -333,15 +334,23 @@ class Tracker:
                         else:
                             inactive_track = self.inactive_tracks_temp[0]
                             det_index_to_candidate[i].append((inactive_track, max[i]))
+                            inactive_to_det[max_idx[i]].append(i)
                     if len(self.inactive_tracks_temp) > 1:
                         # idx = 0 is first inactive person and so on..
                         inactive_track = self.inactive_tracks_temp[max_idx[i]]
                         det_index_to_candidate[i].append((inactive_track, max[i]))
+                        inactive_to_det[max_idx[i]].append(i)
 
             for det_index, candidates in det_index_to_candidate.items():
-                if len(candidates) == 1:
-                    candidate = candidates[0]
-                    inactive_track = candidate[0]
+                candidate = candidates[0]
+                inactive_track = candidate[0]
+                # get the position of the inactive track in inactive_tracks
+                # if just one track, position "is 1" because 0 is unknown background person
+                # important for check in next if statement
+                inactive_id_in_list = self.inactive_tracks_temp.index(inactive_track) if len(self.inactive_tracks_temp)>1 else 1
+
+                if len(inactive_to_det[inactive_id_in_list]) == 1:
+                    # make sure just 1 new detection per inactive track
                     self.tracks.append(inactive_track)
                     print(f"\nReidying track {inactive_track.id} in frame {frame} with score {candidate[1]}")
                     inactive_track.count_inactive = 0
@@ -349,6 +358,8 @@ class Tracker:
                     inactive_track.reset_last_pos()
                     assigned.append(det_index)
                     remove_inactive.append(inactive_track)
+                else:
+                    print('\nerror, 2 new det for 1 inactive track')
 
             for inactive_track in remove_inactive:
                 self.inactive_tracks.remove(inactive_track)
@@ -727,7 +738,7 @@ class Tracker:
         epoch_loss = []
 
         if self.finetuning_config["plot_training_curves"]:
-            plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks], env=self.run_name)
+            plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks], env=self.run_name, n_samples=training_set.max_occ)
 
         for i in range(int(finetuning_config["iterations"])):
             run_loss = 0.0
