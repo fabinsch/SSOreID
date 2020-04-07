@@ -48,27 +48,29 @@ class VisdomLinePlotter(object):
                                      ylabel='Loss',
                                      env=self.env,
                                      title='Train loss inactive ID {} #{}'.format(id, self.n_samples),
-                                     legend=['Loss']))
+                                     legend=['train']))
         self.accuracy_window = self.viz.line(X=torch.zeros((1,)).cpu(),
                            Y=torch.zeros((1)).cpu(),
                            opts=dict(xlabel='epoch',
                                      ylabel='accuracy in %',
                                      env=self.env,
                                      title='Train accuracy inactive ID {} #{}'.format(id, self.n_samples),
-                                     legend=['accuracy']))
+                                     legend=['train']))
 
-    def plot_(self, epoch, loss, acc):
+    def plot_(self, epoch, loss, acc, split_name):
         self.viz.line(
             X=torch.ones((1, 1)).cpu() * epoch,
             Y=torch.Tensor([loss]).unsqueeze(0).cpu(),
             env=self.env,
             win=self.loss_window,
+            name=split_name,
             update='append')
         self.viz.line(
             X=torch.ones((1, 1)).cpu() * epoch,
             Y=torch.Tensor([acc]).unsqueeze(0).cpu(),
             env=self.env,
             win=self.accuracy_window,
+            name=split_name,
             update='append')
 
 

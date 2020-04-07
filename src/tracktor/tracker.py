@@ -710,6 +710,10 @@ class Tracker:
     def finetune_classification(self, finetuning_config, box_head_classification,
                                 box_predictor_classification, early_stopping):
 
+        # do not train when no tracks
+        if len(self.inactive_tracks)==0:
+            return
+
         # process dataset for all inactive tracks which have not been processed before
         for t in self.inactive_tracks:
                 t.training_set.post_process()
@@ -726,14 +730,12 @@ class Tracker:
             lr=float(finetuning_config["learning_rate"]))
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 2, gamma=finetuning_config['gamma'])
 
-        training_set, val_set = self.training_set.get_training_set(self.inactive_tracks)
+        training_set, val_set = self.training_set.get_training_set(self.inactive_tracks, finetuning_config['validate'],
+                                                                   finetuning_config['val_split'])
 
         dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=256)
         dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=256)
 
-        # do not train when no tracks
-        if len(self.inactive_tracks)==0:
-            return
 
         epoch_loss = []
 
@@ -758,13 +760,29 @@ class Tracker:
 
                 run_loss += loss.detach().item() / len(sample_batch['scores'])
 
-            if (i%1) == 0 :
-                #print("Loss {} in iteration {}".format(loss, i))
-                epoch_loss.append(run_loss)
+            # if (i%1) == 0 :
+            #     #print("Loss {} in iteration {}".format(loss, i))
+            #     epoch_loss.append(run_loss)
 
             if finetuning_config["plot_training_curves"]:
+                plotter.plot_(epoch=i, loss=loss, acc=acc, split_name='train')
 
-                plotter.plot_(epoch=i, loss=loss, acc=acc)
+            if self.finetuning_config["validate"]:
+                run_loss_val = 0.0
+                with torch.no_grad():
+                    for i_sample, sample_batch in enumerate(dataloader_val):
+                        loss_val = self.forward_pass_for_classifier_training(sample_batch['features'],
+                                                                         sample_batch['scores'], eval=True)
+                        run_loss_val += loss_val.detach().item() / len(sample_batch['scores'])
+                        pred_scores_val = self.forward_pass_for_classifier_training(sample_batch['features'],
+                                                              sample_batch['scores'], eval=True, return_scores=True)
+                        mask = torch.argmax(pred_scores_val, dim=1, keepdim=True).squeeze()
+                        corr = torch.sum(mask == sample_batch['scores'])
+                        acc_val = 100 * corr.item() / len(mask)
+
+                if finetuning_config["plot_training_curves"]:
+                    plotter.plot_(epoch=i+1, loss=loss_val, acc=acc_val, split_name='val')
+
 
 
         self.box_predictor_classification.eval()

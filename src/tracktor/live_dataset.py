@@ -80,6 +80,7 @@ class IndividualDataset(torch.utils.data.Dataset):
 
     def get_training_set(self):
         num_train = 40 if self.number_of_positive_examples > 40 else self.number_of_positive_examples
+        #num_train = 40 if self.number_of_positive_examples > 40 else self.number_of_positive_examples
         training_set, _ = self.val_test_split(num_frames_train=num_train, num_frames_val=0, train_val_frame_gap=0,
                                               downsampling=False)
 
@@ -182,16 +183,60 @@ class InactiveDataset(torch.utils.data.Dataset):
             pos_unique_indices.append(random.choice(pos_unique_indices))
         return pos_unique_indices
 
-    def get_training_set(self, inactive_tracks):
-        occ = [t.training_set.number_of_positive_examples for t in inactive_tracks]
-        self.max_occ = max(occ) if len(occ) > 0 else 0
+    def get_val_idx(self, occ, inactive_tracks, split):
+        """generates indices for validation set und removes them from training set"""
+        val_idx = []
+        min_occ = min(occ) if len(occ) > 0 else 0
+        for t in inactive_tracks:
+            idx = []
+            for i in range(int(min_occ * split)):
+                random.shuffle(t.training_set.pos_unique_indices)
+                idx.append(t.training_set.pos_unique_indices.pop())
+            val_idx.append(idx)
+        return val_idx
+
+    def get_val_set(self, val_idx, inactive_tracks):
+        val_set = InactiveDataset(batch_size=64)
         cl = 0
         # get a random dataset with label 0 if just one inactive track
         if len(inactive_tracks) == 1:
             t = inactive_tracks[0]
             neg_idx = []
-            for f in range(self.max_occ):
-                neg_idx.append(random.choice(t.training_set.samples_per_frame[f+1][1:]))
+            for f in range(len(val_idx[0])):
+                neg_idx.append(random.choice(t.training_set.samples_per_frame[f + 1][1:]))
+            val_set.scores = torch.zeros(len(neg_idx)).to(device)
+            val_set.boxes = t.training_set.boxes[neg_idx]
+            val_set.features = t.training_set.features[neg_idx]
+            cl = 1
+
+        for i, idxs in enumerate(val_idx):
+            t = inactive_tracks[i]
+            val_set.scores = torch.cat((val_set.scores, t.training_set.scores[idxs] * (cl + i)))
+            val_set.boxes = torch.cat((val_set.boxes, t.training_set.boxes[idxs]))
+            val_set.features = torch.cat((val_set.features, t.training_set.features[idxs]))
+
+        return val_set
+
+
+    def get_training_set(self, inactive_tracks, val, split):
+        occ = [t.training_set.number_of_positive_examples for t in inactive_tracks]
+        self.max_occ = max(occ) if len(occ) > 0 else 0
+
+        if val:
+            val_idx = self.get_val_idx(occ, inactive_tracks, split)
+            self.max_occ -= len(val_idx[0])
+
+        cl = 0
+        # get a random dataset with label 0 if just one inactive track
+        if len(inactive_tracks) == 1:
+            t = inactive_tracks[0]
+            neg_idx = []
+            for f in range(self.max_occ - len(val_idx[0])):
+                if val:
+                    neg_idx.append(random.choice(t.training_set.samples_per_frame[f + 1][1:]))
+                    t.training_set.samples_per_frame[f + 1].remove(neg_idx[-1])
+                else:
+                    neg_idx.append(random.choice(t.training_set.samples_per_frame[f+1][1:]))
             self.scores = torch.zeros(len(neg_idx)).to(device)
             self.boxes = t.training_set.boxes[neg_idx]
             self.features = t.training_set.features[neg_idx]
@@ -206,6 +251,10 @@ class InactiveDataset(torch.utils.data.Dataset):
             self.scores = torch.cat((self.scores, t.training_set.scores[pos_unique_indices] * (cl+i)))
             self.boxes = torch.cat((self.boxes, t.training_set.boxes[pos_unique_indices]))
             self.features = torch.cat((self.features, t.training_set.features[pos_unique_indices]))
+
+        if val:
+            val_set = self.get_val_set(val_idx, inactive_tracks)
+            return self, val_set
 
         return self, self
 
