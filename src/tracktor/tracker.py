@@ -301,9 +301,12 @@ class Tracker:
 
 
     def reid_by_finetuned_model_(self, new_det_pos, new_det_scores, frame):
-        """Do reid with one model predicting the score for each inactive track"""
+        """Do reid with one model predicting the score for each inactive track
+        Note: work with self.inactive_tracks_temp because model was trained on those, self.inactive_tracks might
+        already have been changed by regress_tracks method
+        """
         active_tracks = self.get_pos()
-        if len(new_det_pos.size()) > 1 and len(self.inactive_tracks) > 0:
+        if len(new_det_pos.size()) > 1 and len(self.inactive_tracks_temp) > 0:
             remove_inactive = []
             det_index_to_candidate = defaultdict(list)
             assigned = []
@@ -323,47 +326,46 @@ class Tracker:
 
             for i, d in enumerate(dist):
                 if d > 0.2 and max[i] > 0.95:
-                    if len(self.inactive_tracks) == 1:
+                    if len(self.inactive_tracks_temp) == 1:
                         # idx = 0 means unknown background people, idx=1 is inactive
-                        print(0)
                         if max_idx[i] == 0:
                             pass
                         else:
-                            inactive_track = self.inactive_tracks[0]
-                            det_index_to_candidate[int(max_idx[i])].append((inactive_track, max[i]))
-                    if len(self.inactive_tracks) > 1:
+                            inactive_track = self.inactive_tracks_temp[0]
+                            det_index_to_candidate[i].append((inactive_track, max[i]))
+                    if len(self.inactive_tracks_temp) > 1:
                         # idx = 0 is first inactive person and so on..
-                        inactive_track = self.inactive_tracks[max_idx[i]]
-                        det_index_to_candidate[int(max_idx[i])].append((inactive_track, max[i]))
+                        inactive_track = self.inactive_tracks_temp[max_idx[i]]
+                        det_index_to_candidate[i].append((inactive_track, max[i]))
 
             for det_index, candidates in det_index_to_candidate.items():
                 if len(candidates) == 1:
                     candidate = candidates[0]
                     inactive_track = candidate[0]
                     self.tracks.append(inactive_track)
-                    print(f"Reidying track {inactive_track.id} in frame {frame} with score {candidate[1]}")
+                    print(f"\nReidying track {inactive_track.id} in frame {frame} with score {candidate[1]}")
                     inactive_track.count_inactive = 0
                     inactive_track.pos = new_det_pos[det_index].view(1, -1)
                     inactive_track.reset_last_pos()
                     assigned.append(det_index)
                     remove_inactive.append(inactive_track)
-        #
-        #     for inactive_track in remove_inactive:
-        #         self.inactive_tracks.remove(inactive_track)
-        #         inactive_track.update_training_set_classification(self.finetuning_config['batch_size'],
-        #                                                           active_tracks,
-        #                                                           self.obj_detect.fpn_features,
-        #                                                           include_previous_frames=True)
-        #
-        #     keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
-        #     if keep.nelement() > 0:
-        #         new_det_pos = new_det_pos[keep]
-        #         new_det_scores = new_det_scores[keep]
-        #     else:
-        #         new_det_pos = torch.zeros(0).to(device)
-        #         new_det_scores = torch.zeros(0).to(device)
-        #
-        # return new_det_pos, new_det_scores
+
+            for inactive_track in remove_inactive:
+                self.inactive_tracks.remove(inactive_track)
+                inactive_track.update_training_set_classification(self.finetuning_config['batch_size'],
+                                                                  active_tracks,
+                                                                  self.obj_detect.fpn_features,
+                                                                  include_previous_frames=True)
+
+            keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
+            if keep.nelement() > 0:
+                new_det_pos = new_det_pos[keep]
+                new_det_scores = new_det_scores[keep]
+            else:
+                new_det_pos = torch.zeros(0).to(device)
+                new_det_scores = torch.zeros(0).to(device)
+
+        return new_det_pos, new_det_scores
 
 
     def reid(self, blob, new_det_pos, new_det_features, new_det_scores):
@@ -628,7 +630,7 @@ class Tracker:
                 new_det_pos, new_det_scores = self.reid(blob, new_det_pos, new_det_features, new_det_scores)
             elif self.finetuning_config["for_reid"]:
                 #new_det_pos, new_det_scores = self.reid_by_finetuned_model(new_det_pos, new_det_scores, frame)
-                self.reid_by_finetuned_model_(new_det_pos, new_det_scores, frame)
+                new_det_pos, new_det_scores = self.reid_by_finetuned_model_(new_det_pos, new_det_scores, frame)
             # add new
             if new_det_pos.nelement() > 0:
                 self.add(new_det_pos, new_det_scores, blob['img'][0], frame, new_det_features)
@@ -664,7 +666,6 @@ class Tracker:
                 self.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
                                           box_predictor_copy_for_classifier,
                                           early_stopping=self.finetuning_config['early_stopping_classifier'])
-                #self.training_set.inactive_trackId_temp = self.training_set.inactive_trackId.copy()
 
         self.im_index += 1
         self.last_image = blob['img'][0]
@@ -754,53 +755,7 @@ class Tracker:
 
                 plotter.plot_(epoch=i, loss=loss, acc=acc)
 
-            # for i, score in enumerate(epoch_loss):
-            #             self.plotter.plot('Loss', 'positive {}'.format(i),
-            #                               'Loss per Epoch , trained on {} inactive tracks'.format(len(self.inactive_tracks)),
-            #                               i, score, train_positive=True)  # dark red
 
-
-
-
-        #     if finetuning_config["validate"] or finetuning_config["plot_training_curves"]:
-        #         positive_scores = self.forward_pass_for_classifier_training(
-        #             sample_batch['features'][sample_batch['scores'] == 1], sample_batch['scores'], return_scores=True,
-        #             eval=True)
-        #         negative_scores = self.forward_pass_for_classifier_training(
-        #             sample_batch['features'][sample_batch['scores'] == 0], sample_batch['scores'], return_scores=True,
-        #             eval=True)
-        #
-        #     if early_stopping:
-        #         positive_scores = torch.Tensor([]).to(device)
-        #         negative_scores = torch.Tensor([]).to(device)
-        #         for val_batch_idx, val_batch in enumerate(dataloader_val):
-        #             pos_scores_batch = self.forward_pass_for_classifier_training(
-        #                 val_batch['features'][val_batch['scores'] == 1], val_batch['scores'],
-        #                 return_scores=True, eval=True)
-        #             positive_scores = torch.cat((positive_scores, pos_scores_batch))
-        #             neg_scores_batch = self.forward_pass_for_classifier_training(
-        #                 val_batch['features'][val_batch['scores'] == 0], val_batch['scores'],
-        #                 return_scores=True, eval=True)
-        #             negative_scores = torch.cat((negative_scores, neg_scores_batch))
-        #
-        #     if finetuning_config["plot_training_curves"]:
-        #         positive_scores = positive_scores[:10]
-        #         negative_scores = negative_scores[:10]
-        #         for sample_idx, score in enumerate(positive_scores):
-        #             self.plotter.plot('score', 'positive {}'.format(sample_idx),
-        #                               'Scores Evaluation Classifier for Track {}'.format(self.id),
-        #                               i, score.cpu().numpy(), train_positive=True)  # dark red
-        #         for sample_idx, score in enumerate(negative_scores):
-        #             self.plotter.plot('score', 'negative {}'.format(sample_idx),
-        #                               'Scores Evaluation Classifier for Track {}'.format(self.id),
-        #                               i, score.cpu().numpy())
-        #
-        #     if early_stopping and torch.min(positive_scores) > 0.99 and torch.min(positive_scores) - torch.max(
-        #             negative_scores) > 0.99:
-        #         print(
-        #             f"Stopping early after {i + 1} iterations. max pos: {torch.min(positive_scores)}, max neg: {torch.max(negative_scores)}")
-        #         break
-        #
         self.box_predictor_classification.eval()
         self.box_head_classification.eval()
 

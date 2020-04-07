@@ -182,7 +182,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         return pos_unique_indices
 
     def get_training_set(self, inactive_tracks):
-        occ = [t.frames_since_active for t in inactive_tracks]
+        occ = [t.training_set.number_of_positive_examples for t in inactive_tracks]
         max_occ = max(occ) if len(occ) > 0 else 0
         cl = 0
         # get a random dataset with label 0 if just one inactive track
