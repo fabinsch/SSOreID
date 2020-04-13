@@ -16,7 +16,7 @@ class Track(object):
     """This class contains all necessary for every individual track."""
 
     def __init__(self, pos, score, track_id, features, inactive_patience, max_features_num, mm_steps, im_info,
-                 transformed_image_size, batch_size, plot=False, box_roi_pool=None):
+                 transformed_image_size, batch_size, keep_frames, plot=False, box_roi_pool=None):
         self.id = track_id
         self.pos = pos
         self.score = score
@@ -39,7 +39,7 @@ class Track(object):
         if plot:
             self.plotter = VisdomLinePlotter(env_name='training')
         self.checkpoints = dict()
-        self.training_set = IndividualDataset(self.id, batch_size)
+        self.training_set = IndividualDataset(self.id, batch_size, keep_frames)
         self.box_roi_pool = box_roi_pool
 
     def has_positive_area(self):

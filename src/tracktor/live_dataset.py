@@ -9,7 +9,7 @@ import random
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class IndividualDataset(torch.utils.data.Dataset):
-    def __init__(self, id, batch_size):
+    def __init__(self, id, batch_size, keep_frames):
         self.id = id
         self.batch_size = batch_size
         self.number_positive_duplicates = self.batch_size / 2 - 1
@@ -18,7 +18,7 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.scores = torch.tensor([]).to(device)
         self.samples_per_frame = None
         self.number_of_positive_examples = None
-        self.keep_frames = 40
+        self.keep_frames = keep_frames
         self.num_frames = 0
 
         self.pos_unique_indices = []
@@ -79,7 +79,9 @@ class IndividualDataset(torch.utils.data.Dataset):
             self.samples_per_frame[frame_number] = box_idx_in_frame_sorted
 
     def get_training_set(self):
-        num_train = 40 if self.number_of_positive_examples > 40 else self.number_of_positive_examples
+        num_train = self.number_of_positive_examples
+        if num_train > 40 :
+            print('More than 40 positive examples')
         #num_train = 40 if self.number_of_positive_examples > 40 else self.number_of_positive_examples
         training_set, _ = self.val_test_split(num_frames_train=num_train, num_frames_val=0, train_val_frame_gap=0,
                                               downsampling=False)
@@ -170,6 +172,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         self.scores = torch.tensor([]).to(device)
         self.features = torch.tensor([]).to(device)
         self.max_occ = 0
+        self.min_occ = 0
 
     def __len__(self):
         return self.features.size()[0]
@@ -186,10 +189,10 @@ class InactiveDataset(torch.utils.data.Dataset):
     def get_val_idx(self, occ, inactive_tracks, split):
         """generates indices for validation set und removes them from training set"""
         val_idx = []
-        min_occ = min(occ) if len(occ) > 0 else 0
+        self.min_occ = min(occ) if len(occ) > 0 else 0
         for t in inactive_tracks:
             idx = []
-            for i in range(int(min_occ * split)):
+            for i in range(int(self.min_occ * split)):
                 random.shuffle(t.training_set.pos_unique_indices)
                 idx.append(t.training_set.pos_unique_indices.pop())
             val_idx.append(idx)
@@ -203,7 +206,20 @@ class InactiveDataset(torch.utils.data.Dataset):
             t = inactive_tracks[0]
             neg_idx = []
             for f in range(len(val_idx[0])):
-                neg_idx.append(random.choice(t.training_set.samples_per_frame[f + 1][1:]))
+                if len(t.training_set.samples_per_frame[f + 1][1:]) > 0:
+                    neg_idx.append(random.choice(t.training_set.samples_per_frame[f + 1][1:]))
+                else:
+                    other_pers = []
+                    # problem if there is no other person in the same frame
+                    for j in range(len(t.training_set.samples_per_frame)):
+                        if len(t.training_set.samples_per_frame[j][1:]) > 0:
+                            other_pers.extend(t.training_set.samples_per_frame[j][1:])
+                    for k in range(len(val_idx[0]) - f):
+                            neg_idx.append(random.choice(other_pers))
+                    break
+
+
+
             val_set.scores = torch.zeros(len(neg_idx)).to(device)
             val_set.boxes = t.training_set.boxes[neg_idx]
             val_set.features = t.training_set.features[neg_idx]
@@ -219,6 +235,7 @@ class InactiveDataset(torch.utils.data.Dataset):
 
 
     def get_training_set(self, inactive_tracks, val, split):
+        val_idx=[[]]
         occ = [t.training_set.number_of_positive_examples for t in inactive_tracks]
         self.max_occ = max(occ) if len(occ) > 0 else 0
 
