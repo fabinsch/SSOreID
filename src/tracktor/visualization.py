@@ -37,40 +37,48 @@ def plot_compare_bounding_boxes(box_finetune, box_no_finetune, image):
 class VisdomLinePlotter(object):
     """Plots to Visdom"""
 
-    def __init__(self, id, env, n_samples):
+    def __init__(self, id, env, n_samples_train, n_samples_val):
         self.viz = Visdom(port=8097, env=env)
         self.env = env
         self.id = id
-        self.n_samples = n_samples
+        self.n_samples_train = n_samples_train
+        self.n_samples_val = n_samples_val
         self.loss_window = self.viz.line(X=torch.zeros((1,)).cpu(),
                            Y=torch.zeros((1)).cpu(),
                            opts=dict(xlabel='epoch',
                                      ylabel='Loss',
                                      env=self.env,
-                                     title='Train loss inactive ID {} #{}'.format(id, self.n_samples),
-                                     legend=['train']))
+                                     title='Loss inactive {}'.format(id),
+                                     legend=['train #{}'.format(self.n_samples_train)]))
         self.accuracy_window = self.viz.line(X=torch.zeros((1,)).cpu(),
                            Y=torch.zeros((1)).cpu(),
                            opts=dict(xlabel='epoch',
                                      ylabel='accuracy in %',
                                      env=self.env,
-                                     title='Train accuracy inactive ID {} #{}'.format(id, self.n_samples),
-                                     legend=['train']))
+                                     title='Accuracy inactive {}'.format(id),
+                                     legend=['train #{}'.format(self.n_samples_train)]))
 
     def plot_(self, epoch, loss, acc, split_name):
+        if split_name=='train':
+            name = split_name+' #{}'.format(self.n_samples_train)
+        elif split_name =='val':
+            name = split_name+' #{}'.format(int(self.n_samples_val*0.2))
+        else:
+            print('error, splitname incorrect')
+
         self.viz.line(
             X=torch.ones((1, 1)).cpu() * epoch,
             Y=torch.Tensor([loss]).unsqueeze(0).cpu(),
             env=self.env,
             win=self.loss_window,
-            name=split_name,
+            name=name,
             update='append')
         self.viz.line(
             X=torch.ones((1, 1)).cpu() * epoch,
             Y=torch.Tensor([acc]).unsqueeze(0).cpu(),
             env=self.env,
             win=self.accuracy_window,
-            name=split_name,
+            name=name,
             update='append')
 
 

@@ -101,7 +101,7 @@ class Tracker:
                           new_det_features[i].view(1, -1) if new_det_features else None, self.inactive_patience, self.max_features_num,
                           self.motion_model_cfg['n_steps'] if self.motion_model_cfg['n_steps'] > 0 else 1,
                           image.size()[1:3], self.obj_detect.image_size, self.finetuning_config["batch_size"],
-                          box_roi_pool=box_roi_pool)
+                          box_roi_pool=box_roi_pool, keep_frames=self.finetuning_config['keep_frames'])
 
             other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i + 1:], old_tracks))
             track.update_training_set_classification(self.finetuning_config['batch_size'],
@@ -740,7 +740,10 @@ class Tracker:
         epoch_loss = []
 
         if self.finetuning_config["plot_training_curves"]:
-            plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks], env=self.run_name, n_samples=training_set.max_occ)
+            plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks],
+                                        env=self.run_name,
+                                        n_samples_train=training_set.max_occ,
+                                        n_samples_val=training_set.min_occ)
 
         for i in range(int(finetuning_config["iterations"])):
             run_loss = 0.0
@@ -780,10 +783,11 @@ class Tracker:
                         corr = torch.sum(mask == sample_batch['scores'])
                         acc_val = 100 * corr.item() / len(mask)
 
-                if finetuning_config["plot_training_curves"]:
+                # if finetuning_config["plot_training_curves"] and len(val_set) > 0:
+                #     plotter.plot_(epoch=i+1, loss=loss_val, acc=acc_val, split_name='val')
+
+                if finetuning_config["plot_training_curves"] and len(val_set) > 0:
                     plotter.plot_(epoch=i+1, loss=loss_val, acc=acc_val, split_name='val')
-
-
 
         self.box_predictor_classification.eval()
         self.box_head_classification.eval()
