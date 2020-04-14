@@ -476,6 +476,10 @@ class Tracker:
                 for t in self.inactive_tracks:
                     t.pos = warp_pos(t.pos, warp_matrix)
 
+            if self.finetuning_config['for_reid']:
+                for t in self.inactive_tracks:
+                    t.pos = warp_pos(t.pos, warp_matrix)
+
             if self.motion_model_cfg['enabled']:
                 for t in self.tracks:
                     for i in range(len(t.last_pos)):
@@ -658,10 +662,10 @@ class Tracker:
         for t in self.inactive_tracks:
             t.count_inactive += 1
 
-        # inactive tracks change when inactive_patience is overpassed
-        for t in self.inactive_tracks:
+            # number of inactive tracks changes when inactive_patience is overpassed
             if t.count_inactive > self.inactive_patience:
                 self.inactive_number_changes += 1
+
 
         # delete track from inactive_tracks when inactive_aptience is overpassed
         self.inactive_tracks = [
@@ -669,7 +673,7 @@ class Tracker:
         ]
 
         # check if inactive tracks changed after processing current frame, can be more
-        # but also less inactive frames - after inactive patience or REID
+        # but also less inactive tracks - after inactive patience overpassed or REID
         if self.inactive_tracks != self.inactive_tracks_temp:
             if self.finetuning_config["for_reid"]:
                 box_head_copy_for_classifier = self.get_box_head(reset=True)  # get head and load weights
