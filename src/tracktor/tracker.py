@@ -574,7 +574,7 @@ class Tracker:
             if len(self.tracks):
                 # create nms input
 
-                # nms here if tracks overlap
+                # nms here if tracks overlap, delete tracks with lower score if IoU overpasses threshold
                 keep = nms(self.get_pos(), person_scores, self.regression_nms_thresh)
 
                 self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
@@ -718,7 +718,6 @@ class Tracker:
         if len(self.inactive_tracks)==0:
             return
 
-        # process dataset for all inactive tracks which have not been processed before
         for t in self.inactive_tracks:
                 t.training_set.post_process()
 

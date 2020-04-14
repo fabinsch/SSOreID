@@ -28,6 +28,7 @@ ex = Experiment()
 
 ex.add_config('experiments/cfgs/tracktor.yaml')
 ex.add_named_config('cfg_classification', 'experiments/cfgs/cfg_classification.yaml')
+ex.add_named_config('SLURMcfg_classification', 'experiments/cfgs/SLURMcfg_classification.yaml')
 
 ########### DEFAULT################
 
@@ -97,7 +98,7 @@ def main(tracktor, reid, _config, _log, _run):
 
         data_loader = DataLoader(seq, batch_size=1, shuffle=False)
         for i, frame in enumerate(tqdm(data_loader)):
-            if len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
+            if i>=0 and len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
                 tracker.step(frame, i)
                 num_frames += 1
 

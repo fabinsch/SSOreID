@@ -1,18 +1,21 @@
 tracktor:
-  'dataset': mot17_train_FRCNN17
-  'write_images': False
+  'dataset': mot17_13_FRCNN17
+  'write_images': True
   'tracker':
     'inactive_patience': 10
-    reid_siamese: False
+    'reid_siamese': False
     'finetuning':
+      'keep_frames': 40
       'for_tracking': False
       'for_reid': True
       'iterations':  10
       'learning_rate': 5e-4
       'batch_size': 64
       'val_batch_size': 32
-      validate: False
-      plot_training_curves: False
+      'validate': False
+      # how many samples per person should be included in val set [in %]
+      'val_split': 0.2
+      'plot_training_curves': False
       'finetune_repeatedly': False
       'finetuning_interval': 4
       'early_stopping_classifier': True
@@ -20,4 +23,4 @@ tracktor:
       'gamma': 1
       'decay_every': 4
       'feature_collection_interval': 1
-  'output_subdir': '1'
+  'output_subdir': '2'
