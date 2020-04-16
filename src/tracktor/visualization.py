@@ -3,6 +3,7 @@ import torch
 from matplotlib import pyplot as plt
 import pandas as pd
 from visdom import Visdom
+import logging
 
 
 def plot_compare_bounding_boxes(box_finetune, box_no_finetune, image):
@@ -38,7 +39,10 @@ class VisdomLinePlotter(object):
     """Plots to Visdom"""
 
     def __init__(self, id, env, n_samples_train, n_samples_val, im):
-        self.viz = Visdom(port=8097, env=env)
+        logger = logging.getLogger()
+        logger.setLevel(40)
+        self.viz = Visdom(port=8097, env=env, log_to_filename='experiments/logs/run.txt')
+        logger.setLevel(20)
         self.env = env
         self.id = id
         self.n_samples_train = n_samples_train

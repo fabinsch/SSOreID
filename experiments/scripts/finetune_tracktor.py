@@ -108,6 +108,7 @@ def main(tracktor, reid, _config, _log, _run):
 
         _log.info(f"Tracks found: {len(results)}")
         _log.info(f"Runtime for {seq}: {time.time() - start :.1f} s.")
+        _log.info(f"Total number of REIDs: {tracker.num_reids}")
 
         if tracktor['interpolate']:
             results = interpolate(results)
