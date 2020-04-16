@@ -192,9 +192,16 @@ class InactiveDataset(torch.utils.data.Dataset):
         self.min_occ = min(occ) if len(occ) > 0 else 0
         for t in inactive_tracks:
             idx = []
-            for i in range(int(self.min_occ * split)):
-                random.shuffle(t.training_set.pos_unique_indices)
-                idx.append(t.training_set.pos_unique_indices.pop())
+            num_val = int(self.min_occ * split)
+            for i in range(num_val):
+                # take random samples
+                # random.shuffle(t.training_set.pos_unique_indices)
+                # idx.append(t.training_set.pos_unique_indices.pop())
+
+                # take samples from middle of scene to avoid taking the last occluded ones
+                pos_ind = t.training_set.pos_unique_indices
+                idx_val = (int(len(pos_ind) / 2) + int(num_val * 0.5))
+                idx.append(pos_ind.pop(idx_val))
             val_idx.append(idx)
         return val_idx
 
@@ -235,7 +242,7 @@ class InactiveDataset(torch.utils.data.Dataset):
 
 
     def get_training_set(self, inactive_tracks, val, split):
-        val_idx=[[]]
+        val_idx = [[]]
         occ = [t.training_set.number_of_positive_examples for t in inactive_tracks]
         self.max_occ = max(occ) if len(occ) > 0 else 0
 
@@ -248,7 +255,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         if len(inactive_tracks) == 1:
             t = inactive_tracks[0]
             neg_idx = []
-            for f in range(self.max_occ - len(val_idx[0])):
+            for f in range(self.max_occ):
                 if val:
                     neg_idx.append(random.choice(t.training_set.samples_per_frame[f + 1][1:]))
                     t.training_set.samples_per_frame[f + 1].remove(neg_idx[-1])

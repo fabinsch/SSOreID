@@ -61,8 +61,10 @@ class FRCNN_FPN(FasterRCNN):
             pred_boxes, self.image_size[0], self.original_image_size[0])
 
         if pred_multiclass:
+            # output scores for all output neurons
             return pred_boxes, pred_scores.squeeze(dim=1).detach()
 
+        # do not output for index 0 (0=not specific person)
         pred_scores = pred_scores[:, 1:].squeeze(dim=1).detach()
         return pred_boxes, pred_scores
 
