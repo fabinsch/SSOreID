@@ -300,6 +300,9 @@ class Tracker:
         return new_det_pos, new_det_scores
 
 
+
+
+
     def reid_by_finetuned_model_(self, new_det_pos, new_det_scores, frame):
         """Do reid with one model predicting the score for each inactive track
         Note: work with self.inactive_tracks_temp because model was trained on those, self.inactive_tracks might
@@ -316,6 +319,9 @@ class Tracker:
                                                           box_predictor_classification=self.box_predictor_classification,
                                                           box_head_classification=self.box_head_classification,
                                                           pred_multiclass=True)
+
+            if frame==420:
+                print('\n scores for REID: {}'.format(scores))
 
             scores = scores.cpu().numpy()
             max = scores.max(axis=1)
@@ -341,6 +347,9 @@ class Tracker:
                         det_index_to_candidate[i].append((inactive_track, max[i]))
                         inactive_to_det[max_idx[i]].append(i)
 
+                else:
+                    print('\n no reid with score {}'.format(max[i]))
+
             for det_index, candidates in det_index_to_candidate.items():
                 candidate = candidates[0]
                 inactive_track = candidate[0]
@@ -353,13 +362,20 @@ class Tracker:
                     # make sure just 1 new detection per inactive track
                     self.tracks.append(inactive_track)
                     print(f"\nReidying track {inactive_track.id} in frame {frame} with score {candidate[1]}")
+                    print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks_temp]))
+
+                    # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
+                    if frame==4200:
+                        inactive_track.add_classifier(self.box_predictor_classification, self.box_head_classification)
+
                     inactive_track.count_inactive = 0
                     inactive_track.pos = new_det_pos[det_index].view(1, -1)
                     inactive_track.reset_last_pos()
                     assigned.append(det_index)
                     remove_inactive.append(inactive_track)
                 else:
-                    print('\nerror, 2 new det for 1 inactive track')
+                    print('\nerror, {} new det for 1 inactive track ID {}'.format(len(inactive_to_det[inactive_id_in_list]), inactive_track.id))
+                    print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks_temp]))
 
             for inactive_track in remove_inactive:
                 self.inactive_tracks.remove(inactive_track)
@@ -582,6 +598,13 @@ class Tracker:
                 for i, track in enumerate(self.tracks):
                     if i in keep:
                         track.frames_since_active += 1
+
+                        # debug
+                        if hasattr(track, 'box_predictor_classification_debug'):
+                            boxes_debug, scores_debug = self.obj_detect.predict_boxes(track.pos, track.box_predictor_classification_debug,track.box_head_classification_debug, pred_multiclass=True)
+                            print('\n scores {}'.format(scores_debug))
+
+
                         other_pedestrians_bboxes = torch.Tensor([]).to(device)
                         for j in range(len(self.tracks)):
                             if j != i:
@@ -746,7 +769,8 @@ class Tracker:
             plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks],
                                         env=self.run_name,
                                         n_samples_train=training_set.max_occ,
-                                        n_samples_val=training_set.min_occ)
+                                        n_samples_val=training_set.min_occ,
+                                        im=self.im_index)
 
         for i in range(int(finetuning_config["iterations"])):
             run_loss = 0.0
@@ -786,8 +810,7 @@ class Tracker:
                         corr = torch.sum(mask == sample_batch['scores'])
                         acc_val = 100 * corr.item() / len(mask)
 
-                # if finetuning_config["plot_training_curves"] and len(val_set) > 0:
-                #     plotter.plot_(epoch=i+1, loss=loss_val, acc=acc_val, split_name='val')
+
 
                 if finetuning_config["plot_training_curves"] and len(val_set) > 0:
                     plotter.plot_(epoch=i+1, loss=loss_val, acc=acc_val, split_name='val')

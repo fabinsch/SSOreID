@@ -204,3 +204,8 @@ class Track(object):
 
         self.box_predictor_classification.eval()
         self.box_head_classification.eval()
+
+    def add_classifier(self, box_head_classification, box_predictor_classification):
+        self.box_head_classification_debug = box_head_classification
+        self.box_predictor_classification_debug = box_predictor_classification
+
