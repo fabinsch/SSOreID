@@ -37,25 +37,26 @@ def plot_compare_bounding_boxes(box_finetune, box_no_finetune, image):
 class VisdomLinePlotter(object):
     """Plots to Visdom"""
 
-    def __init__(self, id, env, n_samples_train, n_samples_val):
+    def __init__(self, id, env, n_samples_train, n_samples_val, im):
         self.viz = Visdom(port=8097, env=env)
         self.env = env
         self.id = id
         self.n_samples_train = n_samples_train
         self.n_samples_val = n_samples_val
+        self.im = im
         self.loss_window = self.viz.line(X=torch.zeros((1,)).cpu(),
                            Y=torch.zeros((1)).cpu(),
                            opts=dict(xlabel='epoch',
                                      ylabel='Loss',
                                      env=self.env,
-                                     title='Loss inactive {}'.format(id),
+                                     title='Loss inactive {} in {}'.format(id, im),
                                      legend=['train #{}'.format(self.n_samples_train)]))
         self.accuracy_window = self.viz.line(X=torch.zeros((1,)).cpu(),
                            Y=torch.zeros((1)).cpu(),
                            opts=dict(xlabel='epoch',
                                      ylabel='accuracy in %',
                                      env=self.env,
-                                     title='Accuracy inactive {}'.format(id),
+                                     title='Accuracy inactive {} in {}'.format(id, im),
                                      legend=['train #{}'.format(self.n_samples_train)]))
 
     def plot_(self, epoch, loss, acc, split_name):
