@@ -7,7 +7,7 @@ import datetime
 
 from tracktor.track import Track
 from tracktor.visualization import plot_compare_bounding_boxes, VisdomLinePlotter, plot_bounding_boxes
-from tracktor.utils import bbox_overlaps, warp_pos, get_center, get_height, get_width, make_pos
+from tracktor.utils import bbox_overlaps, warp_pos, get_center, get_height, get_width, make_pos, EarlyStopping
 from tracktor.live_dataset import InactiveDataset
 
 from torchvision.ops.boxes import clip_boxes_to_image, nms
@@ -63,12 +63,14 @@ class Tracker:
         self.training_set = None
         now = datetime.datetime.now()
         self.run_name = now.strftime("%Y-%m-%d %H:%M")
+        self.num_reids = 0
 
     def reset(self, hard=True):
         self.tracks = []
         self.inactive_tracks = []
         self.inactive_tracks_temp = []
         self.inactive_number_changes = 0
+        self.num_reids = 0
         if hard:
             self.track_num = 0
             self.results = {}
@@ -363,6 +365,7 @@ class Tracker:
                     self.tracks.append(inactive_track)
                     print(f"\nReidying track {inactive_track.id} in frame {frame} with score {candidate[1]}")
                     print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks_temp]))
+                    self.num_reids += 1
 
                     # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
                     if frame==4200:
@@ -759,9 +762,11 @@ class Tracker:
         training_set, val_set = self.training_set.get_training_set(self.inactive_tracks, finetuning_config['validate'],
                                                                    finetuning_config['val_split'])
 
-        dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=training_set.batch_size)
+        dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=training_set.batch_size, shuffle=True)
         dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=training_set.batch_size)
 
+        if self.finetuning_config['early_stopping_classifier']:
+            early_stopping = EarlyStopping(patience=3, verbose=False, delta=1e-4)
 
         if self.finetuning_config["plot_training_curves"]:
             plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks],
@@ -808,6 +813,18 @@ class Tracker:
 
                 if finetuning_config["plot_training_curves"] and len(val_set) > 0:
                     plotter.plot_(epoch=i+1, loss=run_loss_val, acc=run_acc_val/len(dataloader_val.dataset), split_name='val')
+
+            if self.finetuning_config['early_stopping_classifier']:
+                models = [self.box_predictor_classification, self.box_head_classification]
+                early_stopping(val_loss=run_loss_val, model=models)
+                if early_stopping.early_stop:
+                    #print("Early stopping")
+                    break
+
+        if self.finetuning_config['early_stopping_classifier'] and self.finetuning_config["validate"]:
+            # load the last checkpoint with the best model
+            for i, m in enumerate(models):
+                m.load_state_dict(torch.load('checkpoint_m{}.pt'.format(i)))
 
         self.box_predictor_classification.eval()
         self.box_head_classification.eval()
