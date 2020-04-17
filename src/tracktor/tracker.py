@@ -64,6 +64,7 @@ class Tracker:
         now = datetime.datetime.now()
         self.run_name = now.strftime("%Y-%m-%d %H:%M")
         self.num_reids = 0
+        self.checkpoints = {}
 
     def reset(self, hard=True):
         self.tracks = []
@@ -766,7 +767,7 @@ class Tracker:
         dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=training_set.batch_size)
 
         if self.finetuning_config['early_stopping_classifier']:
-            early_stopping = EarlyStopping(patience=3, verbose=False, delta=1e-4)
+            early_stopping = EarlyStopping(patience=7, verbose=False, delta=1e-4, checkpoints=self.checkpoints)
 
         if self.finetuning_config["plot_training_curves"]:
             plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks],
@@ -775,7 +776,12 @@ class Tracker:
                                         n_samples_val=training_set.min_occ,
                                         im=self.im_index)
 
-        for i in range(int(finetuning_config["iterations"])):
+        if len(val_set) > 0:
+            it=int(finetuning_config["iterations"])
+        else:
+            it=10
+
+        for i in range(it):
             run_loss = 0.0
             run_acc = 0.0
             for i_sample, sample_batch in enumerate(dataloader_train):
@@ -814,17 +820,18 @@ class Tracker:
                 if finetuning_config["plot_training_curves"] and len(val_set) > 0:
                     plotter.plot_(epoch=i+1, loss=run_loss_val, acc=run_acc_val/len(dataloader_val.dataset), split_name='val')
 
-            if self.finetuning_config['early_stopping_classifier']:
+            if self.finetuning_config['early_stopping_classifier'] and len(val_set)>0:
                 models = [self.box_predictor_classification, self.box_head_classification]
                 early_stopping(val_loss=run_loss_val, model=models)
                 if early_stopping.early_stop:
                     #print("Early stopping")
                     break
 
-        if self.finetuning_config['early_stopping_classifier'] and self.finetuning_config["validate"]:
+        if self.finetuning_config['early_stopping_classifier'] and self.finetuning_config["validate"] and len(val_set)>0:
             # load the last checkpoint with the best model
             for i, m in enumerate(models):
-                m.load_state_dict(torch.load('checkpoint_m{}.pt'.format(i)))
+                m.load_state_dict(self.checkpoints[i])
+
 
         self.box_predictor_classification.eval()
         self.box_head_classification.eval()

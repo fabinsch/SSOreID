@@ -41,7 +41,8 @@ class VisdomLinePlotter(object):
     def __init__(self, id, env, n_samples_train, n_samples_val, im):
         logger = logging.getLogger()
         logger.setLevel(40)
-        self.viz = Visdom(port=8097, env=env, log_to_filename='experiments/logs/run.txt')
+        #self.viz = Visdom(port=8097, env=env, log_to_filename='experiments/logs/run.txt')
+        self.viz = Visdom(port=8097, env=env)
         logger.setLevel(20)
         self.env = env
         self.id = id

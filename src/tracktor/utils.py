@@ -397,7 +397,7 @@ def evaluate_mot_accums(accums, names, generate_overall=False):
 class EarlyStopping:
     """Early stops the training if validation loss doesn't improve after a given patience.
    from https://github.com/Bjarten/early-stopping-pytorch """
-    def __init__(self, patience=7, verbose=False, delta=0):
+    def __init__(self, patience=7, verbose=False, delta=0, checkpoints={}):
         """
         Args:
             patience (int): How long to wait after last time validation loss improved.
@@ -414,6 +414,7 @@ class EarlyStopping:
         self.early_stop = False
         self.val_loss_min = np.Inf
         self.delta = delta
+        self.checkpoints = checkpoints
 
     def __call__(self, val_loss, model):
 
@@ -438,5 +439,5 @@ class EarlyStopping:
         if self.verbose:
             print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
         for i, m in enumerate(model):
-            torch.save(m.state_dict(), 'checkpoint_m{}.pt'.format(i))
+            self.checkpoints[i] = m.state_dict()
         self.val_loss_min = val_loss
