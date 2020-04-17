@@ -1,18 +1,24 @@
 tracktor:
-  'dataset': mot17_09_FRCNN17
+  'dataset': mot17_train_FRCNN17
   'write_images': False
   'tracker':
+    motion_model:
+      enabled: False
+      # average velocity over last n_steps steps
+      n_steps: 5
+      # if true, only model the movement of the bounding box center. If false, width and height are also modeled.
+      center_only: False
     'inactive_patience': 10
     'reid_siamese': False
     'finetuning':
-      'keep_frames': 400
+      'keep_frames': 40
       'for_tracking': False
       'for_reid': True
       'iterations':  50
       'learning_rate': 5e-4
-      'batch_size': 64
+      'batch_size': 256
       'val_batch_size': 32
-      'validate': False
+      'validate': True
       # how many samples per person should be included in val set [in %]
       'val_split': 0.2
       'plot_training_curves': False
