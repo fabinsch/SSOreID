@@ -70,7 +70,7 @@ tracktor:
       for_reid: True
       feature_collection_interval: 10
       # Number of iterations each predictor is tuned
-      iterations: 7
+      epochs: 7
       # Learning rate for the finetuning
       learning_rate: 5e-5
       # number of rois generated per batch for training

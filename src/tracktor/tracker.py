@@ -334,6 +334,10 @@ class Tracker:
             max_idx2 = scores.argmax(axis=1)
             dist = max - max2
 
+            if frame==420:
+                # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
+                self.inactive_tracks_temp[max_idx[0]].add_classifier(self.box_predictor_classification, self.box_head_classification)
+
             for i, d in enumerate(dist):
                 if d > 0.2 and max[i] > 0.95:
                     if len(self.inactive_tracks_temp) == 1:
@@ -369,7 +373,7 @@ class Tracker:
                     self.num_reids += 1
 
                     # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
-                    if frame==4200:
+                    if frame==420:
                         inactive_track.add_classifier(self.box_predictor_classification, self.box_head_classification)
 
                     inactive_track.count_inactive = 0
@@ -534,6 +538,10 @@ class Tracker:
                 if t.last_v.nelement() > 0:
                     self.motion_step(t)
 
+        if self.finetuning_config['for_reid']:
+            for t in self.inactive_tracks:
+                if t.last_v.nelement() > 0:
+                    self.motion_step(t)
 
     def step(self, blob, frame=1):
         """This function should be called every timestep to perform tracking with a blob
@@ -776,10 +784,11 @@ class Tracker:
                                         n_samples_val=training_set.min_occ,
                                         im=self.im_index)
 
+        # if no val set available, not early stopping possible - make sure to optimize at least 10 epochs
         if len(val_set) > 0:
-            it=int(finetuning_config["iterations"])
+            it = int(finetuning_config["epochs"])
         else:
-            it=10
+            it = 10
 
         for i in range(it):
             run_loss = 0.0
@@ -820,7 +829,7 @@ class Tracker:
                 if finetuning_config["plot_training_curves"] and len(val_set) > 0:
                     plotter.plot_(epoch=i+1, loss=run_loss_val, acc=run_acc_val/len(dataloader_val.dataset), split_name='val')
 
-            if self.finetuning_config['early_stopping_classifier'] and len(val_set)>0:
+            if self.finetuning_config['early_stopping_classifier'] and len(val_set) > 0:
                 models = [self.box_predictor_classification, self.box_head_classification]
                 early_stopping(val_loss=run_loss_val, model=models)
                 if early_stopping.early_stop:
