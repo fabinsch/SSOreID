@@ -142,4 +142,4 @@ def main(tracktor, reid, _config, _log, _run):
                                                                                         tracktor['tracker']['finetuning'][
                                                                                             'learning_rate'],
                                                                                         tracktor['tracker']['finetuning'][
-                                                                                            'iterations']))
+                                                                                            'epochs']))
