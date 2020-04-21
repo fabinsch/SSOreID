@@ -1,4 +1,5 @@
-from collections import deque
+from collections import deque, defaultdict
+
 
 import numpy as np
 import torch
@@ -36,11 +37,9 @@ class Track(object):
         self.box_predictor_regression = None
         self.box_head_regression = None
         self.scale = self.im_info[0] / self.transformed_image_size[0][0]
-        if plot:
-            self.plotter = VisdomLinePlotter(env_name='training')
         self.checkpoints = dict()
-        self.training_set = IndividualDataset(self.id, batch_size, keep_frames)
         self.box_roi_pool = box_roi_pool
+        self.training_set = IndividualDataset(self.id, batch_size, keep_frames)
 
     def has_positive_area(self):
         return self.pos[0, 2] > self.pos[0, 0] and self.pos[0, 3] > self.pos[0, 1]
@@ -79,35 +78,20 @@ class Track(object):
         return training_boxes
 
     def generate_training_set_classification(self, batch_size, additional_dets, fpn_features, shuffle=False):
-        num_positive_examples = int(batch_size / 2)
-        positive_examples = self.generate_training_set_regression(self.pos,
-                                                                  0.0,
-                                                                  batch_size=num_positive_examples).to(device)
-        positive_examples = clip_boxes(positive_examples, self.im_info)
-        # positive_examples = self.pos.repeat(num_positive_examples, 1)
-        positive_examples = torch.cat((positive_examples, torch.ones([num_positive_examples, 1]).to(device)), dim=1)
-        boxes = positive_examples
+        boxes = clip_boxes(self.pos, self.im_info)
+        boxes = torch.cat((boxes, torch.ones([1, 1]).to(device)), dim=1)
+
         if additional_dets.size(0) == 0:
             print("Adding dummy bbox as negative example")
-            additional_dets = torch.Tensor([1892.4128,  547.1268, 1919.0000,  629.0942]).unsqueeze(0)
+            additional_dets = torch.Tensor([1892.4128,  547.1268, 1919.0000,  629.0942]).to(device).unsqueeze(0)
 
-        standard_batch_size_negative_example = int(np.floor(num_positive_examples / len(additional_dets)))
-        offset = num_positive_examples - (standard_batch_size_negative_example * additional_dets.size(0))
         for i in range(additional_dets.size(0)):
-            num_negative_example = standard_batch_size_negative_example
-            if offset != 0:
-                num_negative_example += 1
-                offset -= 1
-            if num_negative_example == 0:
-                break
-            negative_example = self.generate_training_set_regression(additional_dets[i].view(1, -1),
-                                                                     0.0,
-                                                                     batch_size=num_negative_example).to(device)
-            negative_example = clip_boxes(negative_example, self.im_info)
-            negative_example_and_label = torch.cat((negative_example, torch.zeros([num_negative_example, 1]).to(device)), dim=1)
+            negative_example = clip_boxes(additional_dets[i].view(1, -1), self.im_info)
+            negative_example_and_label = torch.cat((negative_example, torch.zeros([1, 1]).to(device)), dim=1)
             boxes = torch.cat((boxes, negative_example_and_label)).to(device)
-        if shuffle:
-            boxes = boxes[torch.randperm(boxes.size(0))]
+
+        # if shuffle:
+        #     boxes = boxes[torch.randperm(boxes.size(0))]
         boxes_resized = resize_boxes(boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
         proposals = [boxes_resized]
         with torch.no_grad():

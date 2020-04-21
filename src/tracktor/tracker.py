@@ -149,42 +149,6 @@ class Tracker:
 
     def regress_tracks(self, blob, plot_compare=False, frame=None):
         """Regress the position of the tracks and also checks their scores."""
-        # if self.finetuning_config["for_tracking"]:
-        #     scores = []
-        #     pos = []
-        #     other_classifiers = [(track.box_head_classification, track.box_predictor_classification, track.id) for track in self.tracks + self.inactive_tracks]
-        #     for track in self.tracks:
-        #         # Regress with finetuned bbox head for each track
-        #         assert track.box_head_classification is not None
-        #         assert track.box_predictor_classification is not None
-        #
-        #         box, score = self.obj_detect.predict_boxes(track.pos,
-        #                                                    box_head_classification=track.box_head_classification,
-        #                                                    box_predictor_classification=track.box_predictor_classification)
-        #
-        #         if plot_compare:
-        #             box_no_finetune, score_no_finetune = self.obj_detect.predict_boxes(track.pos)
-        #             plot_compare_bounding_boxes(box, box_no_finetune, blob['img'])
-        #         scores.append(score)
-        #         bbox = clip_boxes_to_image(box, blob['img'].shape[-2:])
-        #         pos.append(bbox)
-        #
-        #         for other_classifier in other_classifiers:
-        #             _, score_plot = self.obj_detect.predict_boxes(track.pos,
-        #                                                           box_head_classification=other_classifier[0],
-        #                                                           box_predictor_classification=other_classifier[1])
-        #             score_by_other_classifier = score_plot.cpu().numpy()[0]
-        #             if self.finetuning_config['validate']:
-        #                 is_target = (track.id == other_classifier[2])
-        #                 self.plotter.plot('person {} score'.format(other_classifier[2]), 'score {}'.format(track.id), "Person Scores by track {} classifier".format(other_classifier[2]), frame,
-        #                                   score_by_other_classifier, train_positive=is_target)
-        #     scores = torch.cat(scores)
-        #     pos = torch.cat(pos)
-        # else:
-        #     pos = self.get_pos()
-        #     boxes, scores = self.obj_detect.predict_boxes(pos)
-        #     pos = clip_boxes_to_image(boxes, blob['img'].shape[-2:])
-
         pos = self.get_pos()
         boxes, scores = self.obj_detect.predict_boxes(pos)
         pos = clip_boxes_to_image(boxes, blob['img'].shape[-2:])
@@ -343,6 +307,7 @@ class Tracker:
                     if len(self.inactive_tracks_temp) == 1:
                         # idx = 0 means unknown background people, idx=1 is inactive
                         if max_idx[i] == 0:
+                            print('\n no reid because class 0 has score {}'.format(max[i]))
                             pass
                         else:
                             inactive_track = self.inactive_tracks_temp[0]
@@ -754,7 +719,7 @@ class Tracker:
             return
 
         for t in self.inactive_tracks:
-                t.training_set.post_process()
+               t.training_set.post_process()
 
         self.training_set = InactiveDataset(batch_size=finetuning_config['batch_size'])
 
@@ -768,6 +733,20 @@ class Tracker:
             lr=float(finetuning_config["learning_rate"]))
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 2, gamma=finetuning_config['gamma'])
 
+        # debug reduce dataset for ID 22 where occluded
+        # if self.im_index==419:
+        #     for t in self.inactive_tracks:
+        #         eliminate = 6
+        #         print('\n eleminiere die {} letzten von {}'.format(eliminate, t.id))
+        #         t.training_set.pos_unique_indices = t.training_set.pos_unique_indices[:(40-eliminate)]
+        #         t.training_set.num_frames = 40-eliminate
+        # if self.im_index==419:
+        #     t = self.inactive_tracks[0]
+        #     eliminate = 6
+        #     print('\n eleminiere die {} letzten von {}'.format(eliminate,t.id))
+        #     t.training_set.pos_unique_indices = t.training_set.pos_unique_indices[:(40-eliminate)]
+        #     t.training_set.num_frames = 40-eliminate
+
         training_set, val_set = self.training_set.get_training_set(self.inactive_tracks, finetuning_config['validate'],
                                                                    finetuning_config['val_split'])
 
@@ -775,7 +754,7 @@ class Tracker:
         dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=training_set.batch_size)
 
         if self.finetuning_config['early_stopping_classifier']:
-            early_stopping = EarlyStopping(patience=7, verbose=False, delta=1e-4, checkpoints=self.checkpoints)
+            early_stopping = EarlyStopping(patience=self.finetuning_config['early_stopping_patience'], verbose=False, delta=1e-4, checkpoints=self.checkpoints)
 
         if self.finetuning_config["plot_training_curves"]:
             plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks],

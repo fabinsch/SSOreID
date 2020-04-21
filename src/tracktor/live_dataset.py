@@ -11,17 +11,16 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 class IndividualDataset(torch.utils.data.Dataset):
     def __init__(self, id, batch_size, keep_frames):
         self.id = id
-        self.batch_size = batch_size
-        self.number_positive_duplicates = self.batch_size / 2 - 1
+        #self.batch_size = batch_size
+        #self.number_positive_duplicates = self.batch_size / 2 - 1
         self.features = torch.tensor([]).to(device)
         self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
         self.samples_per_frame = None
-        self.number_of_positive_examples = None
+        #self.number_of_positive_examples = None
         self.keep_frames = keep_frames
         self.num_frames = 0
-
-        self.pos_unique_indices = []
+        self.pos_unique_indices = None
 
     def append_samples(self, training_set_dict):
         self.num_frames += 1
@@ -32,38 +31,23 @@ class IndividualDataset(torch.utils.data.Dataset):
             self.remove_samples()
 
     def remove_samples(self):
-        self.boxes = self.boxes[self.batch_size:, :]
-        self.scores = self.scores[self.batch_size:]
-        self.features = self.features[self.batch_size:, :, :, :]
+        # remove the first i entries (this is where a new pos samples starts)
+        i = (self.scores==1).nonzero()[1].item()
+        self.boxes = self.boxes[i:, :]
+        self.scores = self.scores[i:]
+        self.features = self.features[i:, :, :, :]
 
     # Filter out all duplicates and add frame number tensor for each data point
     def post_process(self):
         self.samples_per_frame = defaultdict(list)
-        unique_indices = []
-        number_of_duplicates = 0
-        frame_number = 0
-        current_box = self.boxes[0, :]
-        saw_positive = False
-        pos_unique_indices = []
-        for i, box in enumerate(torch.cat((self.boxes[1:, :], torch.Tensor([[0,0,0,0]]).to(device)))):
-            if not torch.equal(box, current_box):
-                if number_of_duplicates == self.number_positive_duplicates and not saw_positive:  # every image again 31 times duplicates of this person
-                    frame_number += 1
-                    saw_positive = True  # changes to true after the first filtering out of positive duplicates
-                    pos_unique_indices.append(i)
-                else:
-                    saw_positive = False
-                unique_indices.append(i)  # first i = 31, next 42, 53
-                self.samples_per_frame[frame_number].append(i)  # frame number and the corresponding unique ind per track dataset
-                current_box = box
-                number_of_duplicates = 0
-            else:
-                number_of_duplicates += 1
-        unique_scores = self.scores[unique_indices]
-        self.number_of_positive_examples = unique_scores[unique_scores==1].size()[0]
-        assert len(self.samples_per_frame) == self.number_of_positive_examples  # check if in every frame is the positive sample
-        self.sort_by_iou()
-        self.pos_unique_indices = pos_unique_indices
+        self.pos_unique_indices = []
+        frame_number = -1
+        for i, s in enumerate(self.scores):
+            if s == 1:
+                self.pos_unique_indices.append(i)
+                frame_number += 1
+            self.samples_per_frame[frame_number].append(i)
+
 
     def sort_by_iou(self):
         for frame_number in self.samples_per_frame:
@@ -212,9 +196,10 @@ class InactiveDataset(torch.utils.data.Dataset):
         if len(inactive_tracks) == 1:
             t = inactive_tracks[0]
             neg_idx = []
-            for f in range(len(val_idx[0])):
-                if len(t.training_set.samples_per_frame[f + 1][1:]) > 0:
-                    neg_idx.append(random.choice(t.training_set.samples_per_frame[f + 1][1:]))
+            f = int(len(t.training_set.samples_per_frame) / 2) - int(len(val_idx[0])/2)
+            for i in range(len(val_idx[0])):
+                if len(t.training_set.samples_per_frame[f+i][1:]) > 0:
+                    neg_idx.append(random.choice(t.training_set.samples_per_frame[f+i][1:]))
                 else:
                     other_pers = []
                     # problem if there is no other person in the same frame
@@ -224,8 +209,6 @@ class InactiveDataset(torch.utils.data.Dataset):
                     for k in range(len(val_idx[0]) - f):
                             neg_idx.append(random.choice(other_pers))
                     break
-
-
 
             val_set.scores = torch.zeros(len(neg_idx)).to(device)
             val_set.boxes = t.training_set.boxes[neg_idx]
@@ -243,7 +226,8 @@ class InactiveDataset(torch.utils.data.Dataset):
 
     def get_training_set(self, inactive_tracks, val, split):
         val_idx = [[]]
-        occ = [t.training_set.number_of_positive_examples for t in inactive_tracks]
+        #occ = [t.training_set.num_frames for t in inactive_tracks]
+        occ = [t.training_set.num_frames if t.training_set.num_frames < t.training_set.keep_frames else t.training_set.keep_frames for t in inactive_tracks]
         self.max_occ = max(occ) if len(occ) > 0 else 0
 
         if val:
@@ -255,12 +239,13 @@ class InactiveDataset(torch.utils.data.Dataset):
         if len(inactive_tracks) == 1:
             t = inactive_tracks[0]
             neg_idx = []
+            i = list(t.training_set.samples_per_frame.keys())[0]
             for f in range(self.max_occ):
                 if val:
-                    neg_idx.append(random.choice(t.training_set.samples_per_frame[f + 1][1:]))
-                    t.training_set.samples_per_frame[f + 1].remove(neg_idx[-1])
+                    neg_idx.append(random.choice(t.training_set.samples_per_frame[f+i][1:]))
+                    t.training_set.samples_per_frame[f+i].remove(neg_idx[-1])
                 else:
-                    neg_idx.append(random.choice(t.training_set.samples_per_frame[f+1][1:]))
+                    neg_idx.append(random.choice(t.training_set.samples_per_frame[f+i][1:]))
             self.scores = torch.zeros(len(neg_idx)).to(device)
             self.boxes = t.training_set.boxes[neg_idx]
             self.features = t.training_set.features[neg_idx]
