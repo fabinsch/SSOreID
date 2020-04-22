@@ -65,6 +65,8 @@ class Tracker:
         self.run_name = now.strftime("%Y-%m-%d %H:%M")
         self.num_reids = 0
         self.checkpoints = {}
+        self.killed_this_step = []
+        self.num_training = 0
 
     def reset(self, hard=True):
         self.tracks = []
@@ -77,11 +79,14 @@ class Tracker:
             self.results = {}
             self.im_index = 0
 
-    def tracks_to_inactive(self, tracks):
+    def tracks_to_inactive(self, tracks, this_step=True):
         self.tracks = [t for t in self.tracks if t not in tracks]
         for t in tracks:
             t.pos = t.last_pos[-1]
             self.inactive_number_changes += 1
+
+            if this_step:
+                self.killed_this_step.append(t.id)
 
             # old finetune classification per track
             # if self.finetuning_config["for_reid"]:
@@ -267,16 +272,13 @@ class Tracker:
         return new_det_pos, new_det_scores
 
 
-
-
-
     def reid_by_finetuned_model_(self, new_det_pos, new_det_scores, frame):
         """Do reid with one model predicting the score for each inactive track
         Note: work with self.inactive_tracks_temp because model was trained on those, self.inactive_tracks might
         already have been changed by regress_tracks method
         """
         active_tracks = self.get_pos()
-        if len(new_det_pos.size()) > 1 and len(self.inactive_tracks_temp) > 0:
+        if len(new_det_pos.size()) > 1 and len(self.inactive_tracks) > 0:
             remove_inactive = []
             det_index_to_candidate = defaultdict(list)
             inactive_to_det = defaultdict(list)
@@ -300,22 +302,23 @@ class Tracker:
 
             if frame==420:
                 # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
-                self.inactive_tracks_temp[max_idx[0]].add_classifier(self.box_predictor_classification, self.box_head_classification)
+                #self.inactive_tracks[max_idx[0]].add_classifier(self.box_predictor_classification, self.box_head_classification)
+                print('d')
 
             for i, d in enumerate(dist):
                 if d > 0.2 and max[i] > 0.95:
-                    if len(self.inactive_tracks_temp) == 1:
+                    if len(self.inactive_tracks) == 1:
                         # idx = 0 means unknown background people, idx=1 is inactive
                         if max_idx[i] == 0:
                             print('\n no reid because class 0 has score {}'.format(max[i]))
                             pass
                         else:
-                            inactive_track = self.inactive_tracks_temp[0]
+                            inactive_track = self.inactive_tracks[0]
                             det_index_to_candidate[i].append((inactive_track, max[i]))
                             inactive_to_det[max_idx[i]].append(i)
-                    if len(self.inactive_tracks_temp) > 1:
+                    if len(self.inactive_tracks) > 1:
                         # idx = 0 is first inactive person and so on..
-                        inactive_track = self.inactive_tracks_temp[max_idx[i]]
+                        inactive_track = self.inactive_tracks[max_idx[i]]
                         det_index_to_candidate[i].append((inactive_track, max[i]))
                         inactive_to_det[max_idx[i]].append(i)
 
@@ -328,17 +331,17 @@ class Tracker:
                 # get the position of the inactive track in inactive_tracks
                 # if just one track, position "is 1" because 0 is unknown background person
                 # important for check in next if statement
-                inactive_id_in_list = self.inactive_tracks_temp.index(inactive_track) if len(self.inactive_tracks_temp)>1 else 1
+                inactive_id_in_list = self.inactive_tracks.index(inactive_track) if len(self.inactive_tracks_temp)>1 else 1
 
                 if len(inactive_to_det[inactive_id_in_list]) == 1:
                     # make sure just 1 new detection per inactive track
                     self.tracks.append(inactive_track)
                     print(f"\nReidying track {inactive_track.id} in frame {frame} with score {candidate[1]}")
-                    print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks_temp]))
+                    print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks]))
                     self.num_reids += 1
 
                     # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
-                    if frame==420:
+                    if frame==4200:
                         inactive_track.add_classifier(self.box_predictor_classification, self.box_head_classification)
 
                     inactive_track.count_inactive = 0
@@ -348,7 +351,7 @@ class Tracker:
                     remove_inactive.append(inactive_track)
                 else:
                     print('\nerror, {} new det for 1 inactive track ID {}'.format(len(inactive_to_det[inactive_id_in_list]), inactive_track.id))
-                    print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks_temp]))
+                    print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks]))
 
             for inactive_track in remove_inactive:
                 self.inactive_tracks.remove(inactive_track)
@@ -550,7 +553,7 @@ class Tracker:
         ##################
         # Predict tracks #
         ##################
-
+        self.killed_this_step = []  # track which tracks get killed before REID
         if len(self.tracks):
             # align
             if self.do_align:
@@ -570,7 +573,6 @@ class Tracker:
                 # nms here if tracks overlap, delete tracks with lower score if IoU overpasses threshold
                 keep = nms(self.get_pos(), person_scores, self.regression_nms_thresh)
 
-                self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
 
                 for i, track in enumerate(self.tracks):
                     if i in keep:
@@ -594,13 +596,14 @@ class Tracker:
                                             self.obj_detect.fpn_features,
                                             include_previous_frames=True)
 
-                        if self.finetuning_config["for_tracking"] and self.finetuning_config["finetune_repeatedly"]:
-                            box_head_copy = self.get_box_head()
-                            box_predictor_copy = self.get_box_predictor()
-                            if np.mod(track.frames_since_active, self.finetuning_config["finetuning_interval"]) == 0:
-                                track.finetune_classification(self.finetuning_config, box_head_copy, box_predictor_copy,
-                                                              early_stopping=self.finetuning_config[
-                                                                  'early_stopping_classifier'])
+                if (self.inactive_tracks != self.inactive_tracks_temp):
+                    if self.finetuning_config["for_reid"]:
+                        box_head_copy_for_classifier = self.get_box_head(reset=True)  # get head and load weights
+                        box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.inactive_tracks))  # get predictor with corrsponding output number
+                        self.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
+                                                     box_predictor_copy_for_classifier,
+                                                     early_stopping=self.finetuning_config[
+                                                         'early_stopping_classifier'])
 
                 if keep.nelement() > 0:
                     if self.reid_siamese:
@@ -644,7 +647,6 @@ class Tracker:
                 new_det_features = self.reid_network.test_rois(blob['img'], new_det_pos).data
                 new_det_pos, new_det_scores = self.reid(blob, new_det_pos, new_det_features, new_det_scores)
             elif self.finetuning_config["for_reid"]:
-                #new_det_pos, new_det_scores = self.reid_by_finetuned_model(new_det_pos, new_det_scores, frame)
                 new_det_pos, new_det_scores = self.reid_by_finetuned_model_(new_det_pos, new_det_scores, frame)
             # add new
             if new_det_pos.nelement() > 0:
@@ -666,15 +668,24 @@ class Tracker:
             if t.count_inactive > self.inactive_patience:
                 self.inactive_number_changes += 1
 
+        # delete track from inactive_tracks when inactive_patience is overpassed
+        # for t in self.inactive_tracks:
+        #     if not t.has_positive_area() or t.count_inactive > self.inactive_patience:
+        #         self.inactive_tracks.remove(t)
+        #         self.killed_this_step = []
 
-        # delete track from inactive_tracks when inactive_aptience is overpassed
+        # delete track from inactive_tracks when inactive_patience is overpassed - Original version
         self.inactive_tracks = [
             t for t in self.inactive_tracks if t.has_positive_area() and t.count_inactive <= self.inactive_patience
         ]
 
         # check if inactive tracks changed after processing current frame, can be more
         # but also less inactive tracks - after inactive patience overpassed or REID
-        if self.inactive_tracks != self.inactive_tracks_temp:
+        # model is trained after a frame because inactive in regress_tracks and also in nms overlap check
+        # at this point just train again, if inactive tracks change because of REID
+        # or inactive patience overpass (track this by self.killed_this_step)
+
+        if (self.inactive_tracks != self.inactive_tracks_temp):
             if self.finetuning_config["for_reid"]:
                 box_head_copy_for_classifier = self.get_box_head(reset=True)  # get head and load weights
                 box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.inactive_tracks))  # get predictor with corrsponding output number
@@ -684,7 +695,7 @@ class Tracker:
 
         self.im_index += 1
         self.last_image = blob['img'][0]
-        self.inactive_tracks_temp = self.inactive_tracks.copy()
+
 
 
     def get_results(self):
@@ -716,6 +727,7 @@ class Tracker:
 
         # do not train when no tracks
         if len(self.inactive_tracks)==0:
+            self.inactive_tracks_temp = self.inactive_tracks.copy()
             return
 
         for t in self.inactive_tracks:
@@ -823,6 +835,8 @@ class Tracker:
 
         self.box_predictor_classification.eval()
         self.box_head_classification.eval()
+        self.num_training += 1
+        self.inactive_tracks_temp = self.inactive_tracks.copy()
 
 
 #                    idf1       idp       idr    recall  precision  num_unique_objects  mostly_tracked  partially_tracked  mostly_lost  num_false_positives  num_misses  num_switches  num_fragmentations      mota      motp
