@@ -14,7 +14,7 @@ tracktor:
       'keep_frames': 40
       'for_tracking': False
       'for_reid': True
-      'epochs':  50
+      'epochs':  100
       'learning_rate': 5e-4
       'batch_size': 64
       'val_batch_size': 32
@@ -25,9 +25,9 @@ tracktor:
       'finetune_repeatedly': False
       'finetuning_interval': 4
       'early_stopping_classifier': True
-      'early_stopping_patience': 7
+      'early_stopping_patience': 30
       'build_up_training_set': True
       'gamma': 1
       'decay_every': 4
       'feature_collection_interval': 1
-  'output_subdir': '8'
+  'output_subdir': '15'
