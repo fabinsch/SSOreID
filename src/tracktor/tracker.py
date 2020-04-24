@@ -8,7 +8,7 @@ import datetime
 from tracktor.track import Track
 from tracktor.visualization import plot_compare_bounding_boxes, VisdomLinePlotter, plot_bounding_boxes
 from tracktor.utils import bbox_overlaps, warp_pos, get_center, get_height, get_width, make_pos, EarlyStopping
-from tracktor.live_dataset import InactiveDataset
+from tracktor.live_dataset import InactiveDataset, IndividualDataset
 
 from torchvision.ops.boxes import clip_boxes_to_image, nms
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHead
@@ -68,7 +68,8 @@ class Tracker:
         self.killed_this_step = []
         self.num_training = 0
         self.train_on = []
-        self.counter2 = 0
+        self.counter2 = 0  # verify how often start fine_tune
+        self.count_killed_this_step_reid = 0
 
     def reset(self, hard=True):
         self.tracks = []
@@ -81,23 +82,12 @@ class Tracker:
             self.results = {}
             self.im_index = 0
 
-    def tracks_to_inactive(self, tracks, this_step=True):
+    def tracks_to_inactive(self, tracks):
         self.tracks = [t for t in self.tracks if t not in tracks]
         for t in tracks:
             t.pos = t.last_pos[-1]
             self.inactive_number_changes += 1
-
-            if this_step:
-                self.killed_this_step.append(t.id)
-
-            # old finetune classification per track
-            # if self.finetuning_config["for_reid"]:
-            #     box_head_copy_for_classifier = self.get_box_head()
-            #     box_predictor_copy_for_classifier = self.get_box_predictor()
-            #     t.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
-            #                               box_predictor_copy_for_classifier,
-            #                               early_stopping=self.finetuning_config['early_stopping_classifier'])
-            #self.training_set.inactive_trackId.append(t.id)
+            self.killed_this_step.append(t.id)
         self.inactive_tracks += tracks
 
 
@@ -118,13 +108,6 @@ class Tracker:
                                                  other_pedestrians_bboxes,
                                                  self.obj_detect.fpn_features,
                                                  include_previous_frames=True)
-
-            # if self.finetuning_config["for_tracking"]:
-            #     box_head_copy_for_classifier = self.get_box_head()
-            #     box_predictor_copy_for_classifier = self.get_box_predictor()
-            #     track.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
-            #                                   box_predictor_copy_for_classifier,
-            #                                   early_stopping=self.finetuning_config['early_stopping_classifier'])
 
             self.tracks.append(track)
 
@@ -157,6 +140,8 @@ class Tracker:
     def regress_tracks(self, blob, plot_compare=False, frame=None):
         """Regress the position of the tracks and also checks their scores."""
         pos = self.get_pos()
+
+        # regress
         boxes, scores = self.obj_detect.predict_boxes(pos)
         pos = clip_boxes_to_image(boxes, blob['img'].shape[-2:])
 
@@ -168,8 +153,10 @@ class Tracker:
                 self.tracks_to_inactive([t])
             else:
                 s.append(scores[i])
+                t.pos = pos[i].view(1, -1)  # here in original implementation
             # t.prev_pos = t.pos
-            t.pos = pos[i].view(1, -1)
+            t.pos = pos[i].view(1, -1)  # here adrian and caro
+
 
         scores_of_active_tracks = torch.Tensor(s[::-1]).to(device)
 
@@ -279,6 +266,8 @@ class Tracker:
         Note: work with self.inactive_tracks_temp because model was trained on those, self.inactive_tracks might
         already have been changed by regress_tracks method
         """
+        if self.inactive_tracks_temp!=self.inactive_tracks:
+            print('\ntemps und inactive nicht gleich')
         active_tracks = self.get_pos()
         if len(new_det_pos.size()) > 1 and len(self.inactive_tracks_temp) > 0:
             remove_inactive = []
@@ -302,10 +291,10 @@ class Tracker:
             max_idx2 = scores.argmax(axis=1)
             dist = max - max2
 
-            if frame==420:
+            if frame==4200:
                 # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
-                #self.inactive_tracks[max_idx[0]].add_classifier(self.box_predictor_classification, self.box_head_classification)
-                print('d')
+                self.inactive_tracks[max_idx[0]].add_classifier(self.box_predictor_classification, self.box_head_classification)
+                #print('d')
 
             for i, d in enumerate(dist):
                 if d > 0.2 and max[i] > 0.95:
@@ -342,13 +331,23 @@ class Tracker:
                     print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks_temp]))
                     self.num_reids += 1
 
+                    if inactive_track.id in self.killed_this_step:
+                        self.count_killed_this_step_reid +=1
+                        print('\n track {} was killed and reid in frame {}'.format(inactive_track.id, self.im_index))
+
                     # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
                     if frame==4200:
                         inactive_track.add_classifier(self.box_predictor_classification, self.box_head_classification)
 
-                    inactive_track.count_inactive = 0
+                    # reset inactive track
+                    inactive_track.count_inactive = 1
                     inactive_track.pos = new_det_pos[det_index].view(1, -1)
                     inactive_track.reset_last_pos()
+
+                    if self.finetuning_config['reset_dataset']:
+                        inactive_track.frames_since_active = 0
+                        inactive_track.training_set = IndividualDataset(inactive_track.id, 64, 40)
+
                     assigned.append(det_index)
                     remove_inactive.append(inactive_track)
                 else:
@@ -464,7 +463,7 @@ class Tracker:
 
             for t in self.tracks:
                 t.pos = warp_pos(t.pos, warp_matrix)
-            # t.pos = clip_boxes(Variable(pos), blob['im_info'][0][:2]).data
+                # t.pos = clip_boxes(Variable(pos), blob['im_info'][0][:2]).data
 
             if self.reid_siamese:
                 for t in self.inactive_tracks:
@@ -517,6 +516,7 @@ class Tracker:
         """This function should be called every timestep to perform tracking with a blob
         containing the image information.
         """
+        self.killed_this_step = []  # which track became inactive this step
         for t in self.tracks:
             # add current position to last_pos list
             t.last_pos.append(t.pos.clone())
@@ -526,6 +526,7 @@ class Tracker:
         ###########################
 
         self.obj_detect.load_image(blob['img'])
+
         if self.public_detections:
             dets = blob['dets'].squeeze(dim=0)
             if dets.nelement() > 0:
@@ -555,7 +556,7 @@ class Tracker:
         ##################
         # Predict tracks #
         ##################
-        self.killed_this_step = []  # track which tracks get killed before REID
+
         if len(self.tracks):
             # align
             if self.do_align:
@@ -598,6 +599,7 @@ class Tracker:
                                             self.obj_detect.fpn_features,
                                             include_previous_frames=True)
 
+                # train REID model new if change in active tracks happened
                 if (self.inactive_tracks != self.inactive_tracks_temp):
                     if self.finetuning_config["for_reid"]:
                         box_head_copy_for_classifier = self.get_box_head(reset=True)  # get head and load weights
@@ -607,10 +609,6 @@ class Tracker:
                                                      early_stopping=self.finetuning_config[
                                                          'early_stopping_classifier'])
 
-                if keep.nelement() > 0:
-                    if self.reid_siamese:
-                        new_features = self.get_appearances(blob)
-                        self.add_features(new_features)
         #####################
         # Create new tracks #
         #####################
@@ -757,7 +755,7 @@ class Tracker:
         #         t.training_set.num_frames = 40-eliminate
         # if self.im_index==419:
         #     t = self.inactive_tracks[0]
-        #     eliminate = 6
+        #     eliminate = 7
         #     print('\n eleminiere die {} letzten von {}'.format(eliminate,t.id))
         #     t.training_set.pos_unique_indices = t.training_set.pos_unique_indices[:(40-eliminate)]
         #     t.training_set.num_frames = 40-eliminate

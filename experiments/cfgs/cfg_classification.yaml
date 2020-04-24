@@ -1,5 +1,5 @@
 tracktor:
-  'dataset': mot17_09_FRCNN17
+  'dataset': mot17_train_FRCNN17
   'write_images': False
   'tracker':
     motion_model:
@@ -30,4 +30,5 @@ tracktor:
       'gamma': 1
       'decay_every': 4
       'feature_collection_interval': 1
-  'output_subdir': '15'
+      'reset_dataset': True
+  'output_subdir': '20'

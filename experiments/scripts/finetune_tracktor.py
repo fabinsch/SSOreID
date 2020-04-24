@@ -112,6 +112,7 @@ def main(tracktor, reid, _config, _log, _run):
         _log.info(f"Total number of Trainings: {tracker.num_training}")
         _log.info(f"Number of start fine tuning: {tracker.counter2}")
         _log.info(f"It was trained on: {tracker.train_on}")
+        _log.info(f"It happen x times that it was killed and reid in same step: {tracker.count_killed_this_step_reid}")
 
         if tracktor['interpolate']:
             results = interpolate(results)
