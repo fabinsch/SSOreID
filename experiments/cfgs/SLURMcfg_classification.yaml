@@ -1,5 +1,5 @@
 tracktor:
-  'dataset': mot17_13_FRCNN17
+  'dataset': mot17_train_FRCNN17
   'write_images': False
   'tracker':
     motion_model:
@@ -8,7 +8,7 @@ tracktor:
       n_steps: 5
       # if true, only model the movement of the bounding box center. If false, width and height are also modeled.
       center_only: False
-    'inactive_patience': 50
+    'inactive_patience': 10
     'reid_siamese': False
     'finetuning':
       'keep_frames': 40
@@ -30,4 +30,5 @@ tracktor:
       'gamma': 1
       'decay_every': 4
       'feature_collection_interval': 1
+      'reset_dataset': True
   'output_subdir': '15'

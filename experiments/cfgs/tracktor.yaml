@@ -6,6 +6,7 @@ tracktor:
   seed: 12345
   # frcnn or fpn
   network: fpn
+  output_subdir: '1'
 
   # frcnn
   # obj_detect_weights: output/frcnn/res101/mot_2017_train/180k/res101_faster_rcnn_iter_180000.pth
@@ -40,9 +41,9 @@ tracktor:
     motion_model:
       enabled: False
       # average velocity over last n_steps steps
-      n_steps: 1
+      n_steps: 5
       # if true, only model the movement of the bounding box center. If false, width and height are also modeled.
-      center_only: True
+      center_only: False
     # DPM or DPM_RAW or 0, raw includes the unfiltered (no nms) versions of the provided detections,
     # 0 tells the tracker to use private detections (Faster R-CNN)
     public_detections: True
@@ -57,7 +58,8 @@ tracktor:
     # Threshold increment between two iterations (original 0.001)
     termination_eps: 0.00001
     # Use siamese network to do reid
-    do_reid: True
+    #do_reid: True
+    reid_siamese: False
     # How much timesteps dead tracks are kept and cosidered for reid
     inactive_patience: 10
     # How similar do image and old track need to be to be considered the same person
@@ -66,32 +68,40 @@ tracktor:
     reid_iou_threshold: 0.2
     # Train finetuned bounding box predictor for each track
     finetuning:
-      for_tracking: True
+      keep_frames: 40
+      for_tracking: False
       for_reid: True
-      feature_collection_interval: 10
-      # Number of iterations each predictor is tuned
-      epochs: 7
+      feature_collection_interval: 1
+      # Number of epochs model is tuned
+      epochs: 100
       # Learning rate for the finetuning
-      learning_rate: 5e-5
+      learning_rate: 5e-4
       # number of rois generated per batch for training
-      batch_size: 128
+      batch_size: 64
       # number of pixels each bounding box is shifted randomly at max in x y w h direction
       max_displacement: 0.15
       # Finetune not only at the beginning of each track but repeatedly over the next frames
       finetune_repeatedly: False
       # Finetune on every t mod k frames
-      finetuning_interval: 50
-      #Have a validation set randomly generated
+      finetuning_interval: 4
+      build_up_training_set: True
+      # Scheduler
+      gamma: 1
+      #decay_every: 4
+      # Have a validation set randomly generated
       validate: True
+      # how many samples per person should be included in val set [in %]
+      val_split: 0.2
       # Evaluate validation set every ith iteration
-      iterations_per_validation: 1
+      #iterations_per_validation: 1
       # Number of samples used for each iteration of validation
-      batch_size_val: 32
+      #batch_size_val: 32
       # Validate performance of finetuned bbox predictor on the consecutive frames
-      validation_over_time: False
+      #validation_over_time: False
       # Validate every t mod k frames
-      validation_interval: 5
-      checkpoint_interval: 5
-      early_stopping_classifier: False
-      validate: False
+      #validation_interval: 5
+      #checkpoint_interval: 5
+      early_stopping_classifier: True
+      early_stopping_patience: 30
       plot_training_curves: False
+      reset_dataset: True

@@ -163,12 +163,16 @@ class Tracker:
         return scores_of_active_tracks
 
 
-    def get_pos(self):
-        """Get the positions of all active tracks."""
-        if len(self.tracks) == 1:
-            pos = self.tracks[0].pos
-        elif len(self.tracks) > 1:
-            pos = torch.cat([t.pos for t in self.tracks], 0)
+    def get_pos(self, active=True):
+        """Get the positions of all active/inactive tracks."""
+        if active:
+            tracks = self.tracks
+        else:
+            tracks = self.inactive_tracks
+        if len(tracks) == 1:
+            pos = tracks[0].pos
+        elif len(tracks) > 1:
+            pos = torch.cat([t.pos for t in tracks], 0)
         else:
             pos = torch.zeros(0).to(device)
         return pos
@@ -274,6 +278,7 @@ class Tracker:
             det_index_to_candidate = defaultdict(list)
             inactive_to_det = defaultdict(list)
             assigned = []
+            inactive_tracks = self.get_pos(active=False)
 
             boxes, scores = self.obj_detect.predict_boxes(new_det_pos,
                                                           box_predictor_classification=self.box_predictor_classification,
@@ -283,12 +288,20 @@ class Tracker:
             if frame==420:
                 print('\n scores for REID: {}'.format(scores))
 
+            # calculate IoU distances
+            iou = bbox_overlaps(new_det_pos, inactive_tracks)
+            if len(inactive_tracks) == 1:
+                # just 1 track as inactive - but scores for class others (idx 0 ) and inactive track (idx 1)
+                # iou has just 1 value for the inactive track -> extend
+                iou = torch.cat((torch.ones(iou.shape[0],1).to(device), iou), dim=1)
+            iou_mask = torch.ge(iou, self.reid_iou_threshold)
+            scores = scores * iou_mask
             scores = scores.cpu().numpy()
             max = scores.max(axis=1)
             max_idx = scores.argmax(axis=1)
             scores[:, max_idx] = 0
             max2 = scores.max(axis=1)
-            max_idx2 = scores.argmax(axis=1)
+            #max_idx2 = scores.argmax(axis=1)
             dist = max - max2
 
             if frame==4200:
@@ -313,7 +326,7 @@ class Tracker:
                         det_index_to_candidate[i].append((inactive_track, max[i]))
                         inactive_to_det[max_idx[i]].append(i)
 
-                else:
+                elif max[i] > 0.0 :
                     print('\n no reid with score {}'.format(max[i]))
 
             for det_index, candidates in det_index_to_candidate.items():
