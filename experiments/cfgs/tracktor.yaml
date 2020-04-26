@@ -105,3 +105,4 @@ tracktor:
       early_stopping_patience: 30
       plot_training_curves: False
       reset_dataset: True
+      reid_score_threshold: 0.95

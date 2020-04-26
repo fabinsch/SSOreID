@@ -310,7 +310,7 @@ class Tracker:
                 #print('d')
 
             for i, d in enumerate(dist):
-                if d > 0.2 and max[i] > 0.95:
+                if max[i] > self.finetuning_config['reid_score_threshold']:
                     if len(self.inactive_tracks_temp) == 1:
                         # idx = 0 means unknown background people, idx=1 is inactive
                         if max_idx[i] == 0:
@@ -612,15 +612,15 @@ class Tracker:
                                             self.obj_detect.fpn_features,
                                             include_previous_frames=True)
 
-                # train REID model new if change in active tracks happened
-                if (self.inactive_tracks != self.inactive_tracks_temp):
-                    if self.finetuning_config["for_reid"]:
-                        box_head_copy_for_classifier = self.get_box_head(reset=True)  # get head and load weights
-                        box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.inactive_tracks))  # get predictor with corrsponding output number
-                        self.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
-                                                     box_predictor_copy_for_classifier,
-                                                     early_stopping=self.finetuning_config[
-                                                         'early_stopping_classifier'])
+            # train REID model new if change in active tracks happened
+            if (self.inactive_tracks != self.inactive_tracks_temp):
+                if self.finetuning_config["for_reid"]:
+                    box_head_copy_for_classifier = self.get_box_head(reset=True)  # get head and load weights
+                    box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.inactive_tracks))  # get predictor with corrsponding output number
+                    self.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
+                                                 box_predictor_copy_for_classifier,
+                                                 early_stopping=self.finetuning_config[
+                                                     'early_stopping_classifier'])
 
         #####################
         # Create new tracks #
