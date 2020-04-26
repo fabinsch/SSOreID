@@ -165,10 +165,13 @@ class InactiveDataset(torch.utils.data.Dataset):
         return {'features': self.features[idx, :, :, :], 'boxes': self.boxes[idx, :], 'scores': self.scores[idx]}
 
     def generate_ind(self, pos_unique_indices, max_occ):
-        diff = max_occ - len(pos_unique_indices)
-        for i in range(diff):
-            pos_unique_indices.append(random.choice(pos_unique_indices))
-        return pos_unique_indices
+        if len(pos_unique_indices) > 0:
+            diff = max_occ - len(pos_unique_indices)
+            for i in range(diff):
+                pos_unique_indices.append(random.choice(pos_unique_indices))
+            return pos_unique_indices
+        else:
+            return []
 
     def get_val_idx(self, occ, inactive_tracks, split):
         """generates indices for validation set und removes them from training set"""

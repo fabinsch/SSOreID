@@ -110,11 +110,8 @@ class Tracker:
         self.track_num += num_new
 
     def get_box_predictor_(self, n=2):
-        """Get a box predictor with number of output neurons corresponding to number of inactive tracks"""
-        if n==1:
-            box_predictor = FastRCNNPredictor(1024, 2).to(device)  # at least have two classes
-        else:
-            box_predictor = FastRCNNPredictor(1024, n).to(device)
+        """Get a box predictor with number of output neurons corresponding to number of inactive tracks + 1 for others"""
+        box_predictor = FastRCNNPredictor(1024, n+1).to(device)
         #box_predictor.load_state_dict(self.bbox_predictor_weights)
         return box_predictor
 
@@ -266,8 +263,7 @@ class Tracker:
         Note: work with self.inactive_tracks_temp because model was trained on those, self.inactive_tracks might
         already have been changed by regress_tracks method
         """
-        if self.inactive_tracks_temp!=self.inactive_tracks:
-            print('\ntemps und inactive nicht gleich')
+        assert self.inactive_tracks_temp==self.inactive_tracks
         active_tracks = self.get_pos()
         if len(new_det_pos.size()) > 1 and len(self.inactive_tracks_temp) > 0:
             remove_inactive = []
@@ -599,6 +595,7 @@ class Tracker:
                         other_pedestrians_bboxes = torch.Tensor([]).to(device)
                         for j in range(len(self.tracks)):
                             if j != i:
+                                assert self.tracks[j].id not in self.killed_this_step
                                 other_pedestrians_bboxes = torch.cat((other_pedestrians_bboxes, self.tracks[j].pos))
 
                         if self.finetuning_config["build_up_training_set"] and np.mod(track.frames_since_active,
@@ -616,7 +613,8 @@ class Tracker:
                     self.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
                                                  box_predictor_copy_for_classifier,
                                                  early_stopping=self.finetuning_config[
-                                                     'early_stopping_classifier'])
+                                                     'early_stopping_classifier'],
+                                                 killed_this_step=self.killed_this_step)
 
         #####################
         # Create new tracks #
@@ -732,7 +730,7 @@ class Tracker:
 
 
     def finetune_classification(self, finetuning_config, box_head_classification,
-                                box_predictor_classification, early_stopping):
+                                box_predictor_classification, early_stopping, killed_this_step):
 
         # do not train when no tracks
         if len(self.inactive_tracks) == 0:
@@ -742,7 +740,7 @@ class Tracker:
         for t in self.inactive_tracks:
                t.training_set.post_process()
 
-        self.training_set = InactiveDataset(batch_size=finetuning_config['batch_size'])
+        self.training_set = InactiveDataset(batch_size=finetuning_config['batch_size'], killed_this_step=killed_this_step)
 
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
