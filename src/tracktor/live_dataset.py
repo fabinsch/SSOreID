@@ -150,13 +150,14 @@ class IndividualDataset(torch.utils.data.Dataset):
 
 
 class InactiveDataset(torch.utils.data.Dataset):
-    def __init__(self, batch_size):
+    def __init__(self, batch_size, killed_this_step=[]):
         self.batch_size = batch_size
         self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
         self.features = torch.tensor([]).to(device)
         self.max_occ = 0
         self.min_occ = 0
+        self.killed_this_step = killed_this_step
 
     def __len__(self):
         return self.features.size()[0]
@@ -172,6 +173,28 @@ class InactiveDataset(torch.utils.data.Dataset):
             return pos_unique_indices
         else:
             return []
+
+    def get_current_idx(self, num, inactive_tracks, split=0, val=False):
+        idx=[]
+        t = [t for t in inactive_tracks if t.id in self.killed_this_step]
+        if len(t) == 0:
+            return
+        # elif len(t) == 1:
+        #     t = t[0]
+        # else:
+        #     t = random.choice(t)[0]
+        else:
+            t = t[0]  # take always the same to avoid same person in train and val
+        last = list(t.training_set.samples_per_frame.keys())[-1]
+        if val:
+            num = num if num <= int(len(t.training_set.samples_per_frame[last][1:])*split) else int(len(t.training_set.samples_per_frame[last][1:])*split)
+        else:
+            num = num if num <= len(t.training_set.samples_per_frame[last][1:]) else len(t.training_set.samples_per_frame[last][1:])
+
+        for i in range(num):
+            idx.append(random.choice(t.training_set.samples_per_frame[last][1:]))
+            t.training_set.samples_per_frame[last].remove(idx[-1])
+        return idx, t
 
     def get_val_idx(self, occ, inactive_tracks, split):
         """generates indices for validation set und removes them from training set"""
@@ -190,37 +213,22 @@ class InactiveDataset(torch.utils.data.Dataset):
                 idx_val = (int(len(pos_ind) / 2) + int(num_val * 0.5))
                 idx.append(pos_ind.pop(idx_val))
             val_idx.append(idx)
-        return val_idx
 
-    def get_val_set(self, val_idx, inactive_tracks):
-        val_set = InactiveDataset(batch_size=64)
-        cl = 0
-        # get a random dataset with label 0 if just one inactive track
-        if len(inactive_tracks) == 1:
-            t = inactive_tracks[0]
-            neg_idx = []
-            f = int(len(t.training_set.samples_per_frame) / 2) - int(len(val_idx[0])/2)
-            for i in range(len(val_idx[0])):
-                if len(t.training_set.samples_per_frame[f+i][1:]) > 0:
-                    neg_idx.append(random.choice(t.training_set.samples_per_frame[f+i][1:]))
-                else:
-                    other_pers = []
-                    # problem if there is no other person in the same frame
-                    for j in range(len(t.training_set.samples_per_frame)):
-                        if len(t.training_set.samples_per_frame[j][1:]) > 0:
-                            other_pers.extend(t.training_set.samples_per_frame[j][1:])
-                    for k in range(len(val_idx[0]) - f):
-                            neg_idx.append(random.choice(other_pers))
-                    break
+        val_others_this_step, t_val = self.get_current_idx(num_val, inactive_tracks,split=split, val=True)  # append random idx of person that was visible in the last frame
+        if len(val_others_this_step) < num_val:
+            val_others_this_step = self.generate_ind(val_others_this_step, num_val)
+        return val_idx, val_others_this_step, t_val
 
-            val_set.scores = torch.zeros(len(neg_idx)).to(device)
-            val_set.boxes = t.training_set.boxes[neg_idx]
-            val_set.features = t.training_set.features[neg_idx]
-            cl = 1
+    def get_val_set(self, val_idx, val_others, inactive_tracks, t_val):
+        val_set = InactiveDataset(batch_size=64, killed_this_step=self.killed_this_step)
+
+        val_set.scores = torch.zeros(len(val_others)).to(device)
+        val_set.boxes = t_val.training_set.boxes[val_others]
+        val_set.features = t_val.training_set.features[val_others]
 
         for i, idxs in enumerate(val_idx):
             t = inactive_tracks[i]
-            val_set.scores = torch.cat((val_set.scores, t.training_set.scores[idxs] * (cl + i)))
+            val_set.scores = torch.cat((val_set.scores, t.training_set.scores[idxs] * (i+1)))
             val_set.boxes = torch.cat((val_set.boxes, t.training_set.boxes[idxs]))
             val_set.features = torch.cat((val_set.features, t.training_set.features[idxs]))
 
@@ -229,30 +237,23 @@ class InactiveDataset(torch.utils.data.Dataset):
 
     def get_training_set(self, inactive_tracks, val, split):
         val_idx = [[]]
+        if len(self.killed_this_step) == 0:
+            self.killed_this_step.append(inactive_tracks[-1].id)  # if no track was killed, take others from newest inactive
         #occ = [t.training_set.num_frames for t in inactive_tracks]
         occ = [t.training_set.num_frames if t.training_set.num_frames < t.training_set.keep_frames else t.training_set.keep_frames for t in inactive_tracks]
         self.max_occ = max(occ) if len(occ) > 0 else 0
 
         if val:
-            val_idx = self.get_val_idx(occ, inactive_tracks, split)
+            val_idx, val_others, t_val = self.get_val_idx(occ, inactive_tracks, split)
             self.max_occ -= len(val_idx[0])
 
-        cl = 0
         # get a random dataset with label 0 if just one inactive track
-        if len(inactive_tracks) == 1:
-            t = inactive_tracks[0]
-            neg_idx = []
-            i = list(t.training_set.samples_per_frame.keys())[0]
-            for f in range(self.max_occ):
-                if val:
-                    neg_idx.append(random.choice(t.training_set.samples_per_frame[f+i][1:]))
-                    t.training_set.samples_per_frame[f+i].remove(neg_idx[-1])
-                else:
-                    neg_idx.append(random.choice(t.training_set.samples_per_frame[f+i][1:]))
-            self.scores = torch.zeros(len(neg_idx)).to(device)
-            self.boxes = t.training_set.boxes[neg_idx]
-            self.features = t.training_set.features[neg_idx]
-            cl = 1
+        train_others, t_train = self.get_current_idx(self.max_occ, inactive_tracks)
+        if len(train_others) < self.max_occ:
+            train_others = self.generate_ind(train_others, self.max_occ)
+        self.scores = torch.zeros(len(train_others)).to(device)
+        self.boxes = t_train.training_set.boxes[train_others]
+        self.features = t_train.training_set.features[train_others]
 
         for i, t in enumerate(inactive_tracks):
             # balance dataset, same number of examples for each class
@@ -260,12 +261,12 @@ class InactiveDataset(torch.utils.data.Dataset):
                 pos_unique_indices = self.generate_ind(t.training_set.pos_unique_indices, self.max_occ)
             else:
                 pos_unique_indices = t.training_set.pos_unique_indices
-            self.scores = torch.cat((self.scores, t.training_set.scores[pos_unique_indices] * (cl+i)))
+            self.scores = torch.cat((self.scores, t.training_set.scores[pos_unique_indices] * (i+1)))
             self.boxes = torch.cat((self.boxes, t.training_set.boxes[pos_unique_indices]))
             self.features = torch.cat((self.features, t.training_set.features[pos_unique_indices]))
 
         if val:
-            val_set = self.get_val_set(val_idx, inactive_tracks)
+            val_set = self.get_val_set(val_idx, val_others, inactive_tracks, t_val)
             return self, val_set
 
         return self, self

@@ -282,10 +282,8 @@ class Tracker:
 
             # calculate IoU distances
             iou = bbox_overlaps(new_det_pos, inactive_tracks)
-            if len(inactive_tracks) == 1:
-                # just 1 track as inactive - but scores for class others (idx 0 ) and inactive track (idx 1)
-                # iou has just 1 value for the inactive track -> extend
-                iou = torch.cat((torch.ones(iou.shape[0],1).to(device), iou), dim=1)
+            # iou has just values for the inactive tracks -> extend for others class
+            iou = torch.cat((torch.ones(iou.shape[0],1).to(device), iou), dim=1)
             iou_mask = torch.ge(iou, self.reid_iou_threshold)
             scores = scores * iou_mask
             scores = scores.cpu().numpy()
@@ -303,20 +301,14 @@ class Tracker:
 
             for i, d in enumerate(dist):
                 if max[i] > self.finetuning_config['reid_score_threshold']:
-                    if len(self.inactive_tracks_temp) == 1:
-                        # idx = 0 means unknown background people, idx=1 is inactive
-                        if max_idx[i] == 0:
-                            print('\n no reid because class 0 has score {}'.format(max[i]))
-                            pass
-                        else:
-                            inactive_track = self.inactive_tracks_temp[0]
-                            det_index_to_candidate[i].append((inactive_track, max[i]))
-                            inactive_to_det[max_idx[i]].append(i)
-                    if len(self.inactive_tracks_temp) > 1:
-                        # idx = 0 is first inactive person and so on..
-                        inactive_track = self.inactive_tracks_temp[max_idx[i]]
+                    # idx = 0 means unknown background people, idx=1,2,.. is inactive
+                    if max_idx[i] == 0:
+                        print('\n no reid because class 0 has score {}'.format(max[i]))
+
+                    else:
+                        inactive_track = self.inactive_tracks_temp[max_idx[i]-1]
                         det_index_to_candidate[i].append((inactive_track, max[i]))
-                        inactive_to_det[max_idx[i]].append(i)
+                        inactive_to_det[max_idx[i]-1].append(i)
 
                 elif max[i] > 0.0 :
                     print('\n no reid with score {}'.format(max[i]))
@@ -327,7 +319,7 @@ class Tracker:
                 # get the position of the inactive track in inactive_tracks
                 # if just one track, position "is 1" because 0 is unknown background person
                 # important for check in next if statement
-                inactive_id_in_list = self.inactive_tracks_temp.index(inactive_track) if len(self.inactive_tracks_temp)>1 else 1
+                inactive_id_in_list = self.inactive_tracks_temp.index(inactive_track)
 
                 if len(inactive_to_det[inactive_id_in_list]) == 1:
                     # make sure just 1 new detection per inactive track
@@ -337,7 +329,7 @@ class Tracker:
                     self.num_reids += 1
 
                     if inactive_track.id in self.killed_this_step:
-                        self.count_killed_this_step_reid +=1
+                        self.count_killed_this_step_reid += 1
                         print('\n track {} was killed and reid in frame {}'.format(inactive_track.id, self.im_index))
 
                     # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
