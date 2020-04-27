@@ -724,6 +724,8 @@ class Tracker:
     def finetune_classification(self, finetuning_config, box_head_classification,
                                 box_predictor_classification, early_stopping, killed_this_step):
 
+        # train_acc_criterion = False
+        self.counter2 += 1
         # do not train when no tracks
         if len(self.inactive_tracks) == 0:
             self.inactive_tracks_temp = self.inactive_tracks.copy()
@@ -775,6 +777,8 @@ class Tracker:
                                         im=self.im_index)
 
         # if no val set available, not early stopping possible - make sure to optimize at least 10 epochs
+        # if len(val_set) == 0:
+        #     train_acc_criterion = True
         if len(val_set) > 0:
             it = int(finetuning_config["epochs"])
         else:
@@ -787,6 +791,7 @@ class Tracker:
                 optimizer.zero_grad()
                 loss = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                                  sample_batch['scores'], eval=False)
+                #if self.finetuning_config["plot_training_curves"] or len(val_set) == 0:
                 if self.finetuning_config["plot_training_curves"]:
                     pred_scores = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                           sample_batch['scores'], eval=True, return_scores=True)
@@ -800,6 +805,10 @@ class Tracker:
             scheduler.step()
             if finetuning_config["plot_training_curves"]:
                 plotter.plot_(epoch=i, loss=run_loss, acc=run_acc / len(dataloader_train.dataset), split_name='train')
+
+            # if train_acc_criterion and (run_acc / len(dataloader_train.dataset)) == 100:
+            #     break
+
 
             if self.finetuning_config["validate"]:
                 run_loss_val = 0.0
@@ -825,7 +834,7 @@ class Tracker:
                     #print("Early stopping")
                     break
 
-        if self.finetuning_config['early_stopping_classifier'] and self.finetuning_config["validate"] and len(val_set)>0:
+        if self.finetuning_config['early_stopping_classifier'] and self.finetuning_config["validate"] and len(val_set) > 0:
             # load the last checkpoint with the best model
             for i, m in enumerate(models):
                 m.load_state_dict(self.checkpoints[i])

@@ -222,6 +222,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         for t in inactive_tracks:
             idx = []
             num_val = int(self.min_occ * split)
+            num_val = 1 if (num_val==0 and self.min_occ>1) else num_val
             for i in range(num_val):
                 # take random samples
                 # random.shuffle(t.training_set.pos_unique_indices)
