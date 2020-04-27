@@ -175,7 +175,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         else:
             return []
 
-    def get_current_idx(self, num, inactive_tracks, newest_inactive, split=0, val=False, num_val=0):
+    def get_current_idx(self, num, inactive_tracks, newest_inactive, split=0, val=False):
         idx=[]
         t = [t for t in inactive_tracks if t.id in self.killed_this_step]
         if len(t) == 0:
@@ -189,7 +189,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         newest_inactive = newest_inactive if newest_inactive < len(t.training_set.samples_per_frame) else len(t.training_set.samples_per_frame)
         if newest_inactive == 0:
             # take all other persons from all frames as samples for 0
-            num_possible_persons = sum([len(t.training_set.samples_per_frame[f][1:]) for f in t.training_set.samples_per_frame]) - num_val
+            num_possible_persons = sum([len(t.training_set.samples_per_frame[f][1:]) for f in t.training_set.samples_per_frame])
             if val:
                 num = num if num < int(num_possible_persons*split) else int(num_possible_persons*split)
             else:
@@ -203,7 +203,7 @@ class InactiveDataset(torch.utils.data.Dataset):
             last = []
             for i in range(1, newest_inactive):
                 last.append(list(t.training_set.samples_per_frame.keys())[-i])
-            num_possible_persons = sum([len(t.training_set.samples_per_frame[f][1:]) for f in last]) - num_val
+            num_possible_persons = sum([len(t.training_set.samples_per_frame[f][1:]) for f in last])
             possible_persons = [t.training_set.samples_per_frame[f][1:] for f in last]
             possible_persons = list(itertools.chain.from_iterable(possible_persons))
             if val:
@@ -271,7 +271,7 @@ class InactiveDataset(torch.utils.data.Dataset):
             self.max_occ -= len(val_idx[0])
 
         # get a random dataset with label 0 if just one inactive track
-        train_others, t_train = self.get_current_idx(self.max_occ, inactive_tracks, newest_inactive, num_val=len(val_others))
+        train_others, t_train = self.get_current_idx(self.max_occ, inactive_tracks, newest_inactive)
         if len(train_others) < self.max_occ:
             train_others = self.generate_ind(train_others, self.max_occ)
         self.scores = torch.zeros(len(train_others)).to(device)
