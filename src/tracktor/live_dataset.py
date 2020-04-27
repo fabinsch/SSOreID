@@ -3,6 +3,7 @@ from torch import randperm
 from torch.utils.data import Subset
 from collections import defaultdict
 from torchvision.ops.boxes import box_iou
+import itertools
 
 import random
 
@@ -165,16 +166,16 @@ class InactiveDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         return {'features': self.features[idx, :, :, :], 'boxes': self.boxes[idx, :], 'scores': self.scores[idx]}
 
-    def generate_ind(self, pos_unique_indices, max_occ):
-        if len(pos_unique_indices) > 0:
-            diff = max_occ - len(pos_unique_indices)
+    def generate_ind(self, indices, occ):
+        if len(indices) > 0:
+            diff = occ - len(indices)
             for i in range(diff):
-                pos_unique_indices.append(random.choice(pos_unique_indices))
-            return pos_unique_indices
+                indices.append(random.choice(indices))
+            return indices
         else:
             return []
 
-    def get_current_idx(self, num, inactive_tracks, split=0, val=False):
+    def get_current_idx(self, num, inactive_tracks, newest_inactive, split=0, val=False, num_val=0):
         idx=[]
         t = [t for t in inactive_tracks if t.id in self.killed_this_step]
         if len(t) == 0:
@@ -185,18 +186,36 @@ class InactiveDataset(torch.utils.data.Dataset):
         #     t = random.choice(t)[0]
         else:
             t = t[0]  # take always the same to avoid same person in train and val
-        last = list(t.training_set.samples_per_frame.keys())[-1]
-        if val:
-            num = num if num <= int(len(t.training_set.samples_per_frame[last][1:])*split) else int(len(t.training_set.samples_per_frame[last][1:])*split)
-        else:
-            num = num if num <= len(t.training_set.samples_per_frame[last][1:]) else len(t.training_set.samples_per_frame[last][1:])
+        newest_inactive = newest_inactive if newest_inactive < len(t.training_set.samples_per_frame) else len(t.training_set.samples_per_frame)
+        if newest_inactive == 0:
+            # take all other persons from all frames as samples for 0
+            num_possible_persons = sum([len(t.training_set.samples_per_frame[f][1:]) for f in t.training_set.samples_per_frame]) - num_val
+            if val:
+                num = num if num < int(num_possible_persons*split) else int(num_possible_persons*split)
+            else:
+                num = num if num < num_possible_persons else num_possible_persons
+            for i in range(num):
+                f = random.choice(range(len(t.training_set.samples_per_frame)))
+                idx.append(random.choice(t.training_set.samples_per_frame[f][1:]))
+                t.training_set.samples_per_frame[f].remove(idx[-1])
 
-        for i in range(num):
-            idx.append(random.choice(t.training_set.samples_per_frame[last][1:]))
-            t.training_set.samples_per_frame[last].remove(idx[-1])
+        else:
+            last = []
+            for i in range(1, newest_inactive):
+                last.append(list(t.training_set.samples_per_frame.keys())[-i])
+            num_possible_persons = sum([len(t.training_set.samples_per_frame[f][1:]) for f in last]) - num_val
+            possible_persons = [t.training_set.samples_per_frame[f][1:] for f in last]
+            possible_persons = list(itertools.chain.from_iterable(possible_persons))
+            if val:
+                num = num if num < int(num_possible_persons*split) else int(num_possible_persons*split)
+            else:
+                num = num if num < num_possible_persons else num_possible_persons
+            for i in range(num):
+                random.shuffle(possible_persons)
+                idx.append(possible_persons.pop())
         return idx, t
 
-    def get_val_idx(self, occ, inactive_tracks, split):
+    def get_val_idx(self, occ, inactive_tracks, split, newest_inactive):
         """generates indices for validation set und removes them from training set"""
         val_idx = []
         self.min_occ = min(occ) if len(occ) > 0 else 0
@@ -214,7 +233,7 @@ class InactiveDataset(torch.utils.data.Dataset):
                 idx.append(pos_ind.pop(idx_val))
             val_idx.append(idx)
 
-        val_others_this_step, t_val = self.get_current_idx(num_val, inactive_tracks,split=split, val=True)  # append random idx of person that was visible in the last frame
+        val_others_this_step, t_val = self.get_current_idx(num_val, inactive_tracks, newest_inactive, split=split, val=True)  # append random idx of person that was visible in the last frame
         if len(val_others_this_step) < num_val:
             val_others_this_step = self.generate_ind(val_others_this_step, num_val)
         return val_idx, val_others_this_step, t_val
@@ -243,12 +262,16 @@ class InactiveDataset(torch.utils.data.Dataset):
         occ = [t.training_set.num_frames if t.training_set.num_frames < t.training_set.keep_frames else t.training_set.keep_frames for t in inactive_tracks]
         self.max_occ = max(occ) if len(occ) > 0 else 0
 
+        # check when last time a track was added before this newest killed one
+        inactive_since = [t.count_inactive for t in inactive_tracks[:-1]]
+        newest_inactive = min(inactive_since) if len(inactive_since) > 0 else 0
+
         if val:
-            val_idx, val_others, t_val = self.get_val_idx(occ, inactive_tracks, split)
+            val_idx, val_others, t_val = self.get_val_idx(occ, inactive_tracks, split, newest_inactive)
             self.max_occ -= len(val_idx[0])
 
         # get a random dataset with label 0 if just one inactive track
-        train_others, t_train = self.get_current_idx(self.max_occ, inactive_tracks)
+        train_others, t_train = self.get_current_idx(self.max_occ, inactive_tracks, newest_inactive, num_val=len(val_others))
         if len(train_others) < self.max_occ:
             train_others = self.generate_ind(train_others, self.max_occ)
         self.scores = torch.zeros(len(train_others)).to(device)
