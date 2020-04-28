@@ -185,8 +185,10 @@ class InactiveDataset(torch.utils.data.Dataset):
         # else:
         #     t = random.choice(t)[0]
         else:
-            # TODO take frame with higher number of frames since active
-            t = t[0]  # take always the same to avoid same person in train and val
+            # take frame with higher number of frames since active
+            active = [track.frames_since_active for track in t]
+            index_max = max(range(len(active)), key=active.__getitem__)
+            t = t[index_max]
         newest_inactive = newest_inactive if newest_inactive < len(t.training_set.samples_per_frame) else len(t.training_set.samples_per_frame)
         if newest_inactive == 0:
             # take all other persons from all frames as samples for 0
@@ -231,13 +233,13 @@ class InactiveDataset(torch.utils.data.Dataset):
             #num_val = 1 if (num_val==0 and self.min_occ>1) else num_val
             for i in range(num_val):
                 # take random samples
-                # random.shuffle(t.training_set.pos_unique_indices)
-                # idx.append(t.training_set.pos_unique_indices.pop())
+                random.shuffle(t.training_set.pos_unique_indices)
+                idx.append(t.training_set.pos_unique_indices.pop())
 
                 # take samples from middle of scene to avoid taking the last occluded ones
-                pos_ind = t.training_set.pos_unique_indices
-                idx_val = (int(len(pos_ind) / 2) + int(num_val * 0.5))
-                idx.append(pos_ind.pop(idx_val))
+                # pos_ind = t.training_set.pos_unique_indices
+                # idx_val = (int(len(pos_ind) / 2) + int(num_val * 0.5))
+                # idx.append(pos_ind.pop(idx_val))
             val_idx.append(idx)
 
         val_others_this_step, t_val = self.get_current_idx(num_val, inactive_tracks, newest_inactive, split=split, val=True)  # append random idx of person that was visible in the last frame

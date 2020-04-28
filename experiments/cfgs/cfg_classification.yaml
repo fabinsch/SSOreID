@@ -1,6 +1,6 @@
 tracktor:
   'dataset': mot17_13_FRCNN17
-  'write_images': True
+  'write_images': False
   'tracker':
     motion_model:
       enabled: True
