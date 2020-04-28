@@ -66,6 +66,7 @@ class Tracker:
         self.num_training = 0
         self.train_on = []
         self.count_killed_this_step_reid = 0
+        self.c_just_one_frame_active = 0
 
     def reset(self, hard=True):
         self.tracks = []
@@ -81,9 +82,13 @@ class Tracker:
     def tracks_to_inactive(self, tracks):
         self.tracks = [t for t in self.tracks if t not in tracks]
         for t in tracks:
-            t.pos = t.last_pos[-1]
-            self.inactive_number_changes += 1
-            self.killed_this_step.append(t.id)
+            if t.frames_since_active > 1:
+                t.pos = t.last_pos[-1]
+                self.inactive_number_changes += 1
+                self.killed_this_step.append(t.id)
+            else:
+                self.c_just_one_frame_active += 1
+                tracks.remove(t)
         self.inactive_tracks += tracks
 
 

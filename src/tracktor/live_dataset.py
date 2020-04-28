@@ -185,6 +185,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         # else:
         #     t = random.choice(t)[0]
         else:
+            # TODO take frame with higher number of frames since active
             t = t[0]  # take always the same to avoid same person in train and val
         newest_inactive = newest_inactive if newest_inactive < len(t.training_set.samples_per_frame) else len(t.training_set.samples_per_frame)
         if newest_inactive == 0:
@@ -195,9 +196,14 @@ class InactiveDataset(torch.utils.data.Dataset):
             else:
                 num = num if num < num_possible_persons else num_possible_persons
             for i in range(num):
-                f = random.choice(range(len(t.training_set.samples_per_frame)))
-                idx.append(random.choice(t.training_set.samples_per_frame[f][1:]))
-                t.training_set.samples_per_frame[f].remove(idx[-1])
+                while True:
+                    f = random.choice(range(len(t.training_set.samples_per_frame)))
+                    if len(t.training_set.samples_per_frame[f][1:]) == 0:
+                        pass
+                    else:
+                        idx.append(random.choice(t.training_set.samples_per_frame[f][1:]))
+                        t.training_set.samples_per_frame[f].remove(idx[-1])
+                        break
 
         else:
             last = []
@@ -222,7 +228,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         for t in inactive_tracks:
             idx = []
             num_val = int(self.min_occ * split)
-            num_val = 1 if (num_val==0 and self.min_occ>1) else num_val
+            #num_val = 1 if (num_val==0 and self.min_occ>1) else num_val
             for i in range(num_val):
                 # take random samples
                 # random.shuffle(t.training_set.pos_unique_indices)
