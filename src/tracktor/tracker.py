@@ -88,7 +88,10 @@ class Tracker:
                 self.killed_this_step.append(t.id)
             else:
                 self.c_just_one_frame_active += 1
-                tracks.remove(t)
+                #tracks.remove(t)
+                t.pos = t.last_pos[-1]
+                self.inactive_number_changes += 1
+                self.killed_this_step.append(t.id)
         self.inactive_tracks += tracks
 
 
