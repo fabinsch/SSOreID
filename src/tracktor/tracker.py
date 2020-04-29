@@ -729,8 +729,7 @@ class Tracker:
     def finetune_classification(self, finetuning_config, box_head_classification,
                                 box_predictor_classification, early_stopping, killed_this_step):
 
-        # train_acc_criterion = False
-        self.counter2 += 1
+        #train_acc_criterion = False
         # do not train when no tracks
         if len(self.inactive_tracks) == 0:
             self.inactive_tracks_temp = self.inactive_tracks.copy()

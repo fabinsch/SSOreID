@@ -17,7 +17,7 @@ tracktor:
       'validate': True
       # how many samples per person should be included in val set [in %]
       'val_split': 0.2
-      'plot_training_curves': true
+      'plot_training_curves': True
       'early_stopping_classifier': True
       'early_stopping_patience': 30
       'reset_dataset': True
