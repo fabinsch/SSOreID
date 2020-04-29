@@ -88,7 +88,10 @@ class Tracker:
                 self.killed_this_step.append(t.id)
             else:
                 self.c_just_one_frame_active += 1
-                tracks.remove(t)
+                #tracks.remove(t)
+                t.pos = t.last_pos[-1]
+                self.inactive_number_changes += 1
+                self.killed_this_step.append(t.id)
         self.inactive_tracks += tracks
 
 
@@ -580,27 +583,27 @@ class Tracker:
                 self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
 
                 for i, track in enumerate(self.tracks):
-                    if i in keep:
-                        track.frames_since_active += 1
+                    #if i in keep:
+                    track.frames_since_active += 1
 
-                        # debug
-                        if hasattr(track, 'box_predictor_classification_debug'):
-                            boxes_debug, scores_debug = self.obj_detect.predict_boxes(track.pos, track.box_predictor_classification_debug,track.box_head_classification_debug, pred_multiclass=True)
-                            print('\n scores {}'.format(scores_debug))
+                    # debug
+                    if hasattr(track, 'box_predictor_classification_debug'):
+                        boxes_debug, scores_debug = self.obj_detect.predict_boxes(track.pos, track.box_predictor_classification_debug,track.box_head_classification_debug, pred_multiclass=True)
+                        print('\n scores {}'.format(scores_debug))
 
 
-                        other_pedestrians_bboxes = torch.Tensor([]).to(device)
-                        for j in range(len(self.tracks)):
-                            if j != i:
-                                assert self.tracks[j].id not in self.killed_this_step
-                                other_pedestrians_bboxes = torch.cat((other_pedestrians_bboxes, self.tracks[j].pos))
+                    other_pedestrians_bboxes = torch.Tensor([]).to(device)
+                    for j in range(len(self.tracks)):
+                        if j != i:
+                            assert self.tracks[j].id not in self.killed_this_step
+                            other_pedestrians_bboxes = torch.cat((other_pedestrians_bboxes, self.tracks[j].pos))
 
-                        if self.finetuning_config["build_up_training_set"] and np.mod(track.frames_since_active,
-                                                        self.finetuning_config["feature_collection_interval"]) == 0:
-                            track.update_training_set_classification(self.finetuning_config['batch_size'],
-                                            other_pedestrians_bboxes,
-                                            self.obj_detect.fpn_features,
-                                            include_previous_frames=True)
+                    if self.finetuning_config["build_up_training_set"] and np.mod(track.frames_since_active,
+                                                    self.finetuning_config["feature_collection_interval"]) == 0:
+                        track.update_training_set_classification(self.finetuning_config['batch_size'],
+                                        other_pedestrians_bboxes,
+                                        self.obj_detect.fpn_features,
+                                        include_previous_frames=True)
 
             # train REID model new if change in active tracks happened
             if (self.inactive_tracks != self.inactive_tracks_temp):
