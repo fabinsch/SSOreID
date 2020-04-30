@@ -106,3 +106,4 @@ tracktor:
       plot_training_curves: False
       reset_dataset: True
       reid_score_threshold: 0.90
+      train_iou_threshold: 0.5

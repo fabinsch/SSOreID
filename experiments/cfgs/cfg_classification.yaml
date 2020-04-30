@@ -9,6 +9,7 @@ tracktor:
       # if true, only model the movement of the bounding box center. If false, width and height are also modeled.
       center_only: False
     'inactive_patience': 50
+    'reid_iou_threshold': 0.2
     'finetuning':
       'keep_frames': 40
       'epochs':  100
@@ -22,4 +23,5 @@ tracktor:
       'early_stopping_patience': 30
       'reset_dataset': True
       'reid_score_threshold': 0.90
+      'train_iou_threshold': 0.5
   'output_subdir': '2'

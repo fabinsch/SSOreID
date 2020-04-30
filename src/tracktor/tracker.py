@@ -582,15 +582,19 @@ class Tracker:
                 keep = nms(self.get_pos(), person_scores, self.regression_nms_thresh)
                 self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
 
+                # calculate IoU distances
+                iou = bbox_overlaps(self.get_pos(), self.get_pos())
                 for i, track in enumerate(self.tracks):
-                    #if i in keep:
+                    #if i in keep:  # TODO nicht sicher ob des hier stimmt nochmal zu checken, von adrian und caro
+                    if torch.sum(iou[i] > self.finetuning_config['train_iou_threshold']) > 1:
+                        #print('IuO track {} is big, do not use for training'.format(track.id))
+                        continue
                     track.frames_since_active += 1
 
                     # debug
                     if hasattr(track, 'box_predictor_classification_debug'):
                         boxes_debug, scores_debug = self.obj_detect.predict_boxes(track.pos, track.box_predictor_classification_debug,track.box_head_classification_debug, pred_multiclass=True)
                         print('\n scores {}'.format(scores_debug))
-
 
                     other_pedestrians_bboxes = torch.Tensor([]).to(device)
                     for j in range(len(self.tracks)):

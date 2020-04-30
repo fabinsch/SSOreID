@@ -15,6 +15,7 @@ mm.lap.default_solver = 'lap'
 import torchvision
 import yaml
 from tqdm import tqdm
+import random
 import sacred
 from sacred import Experiment
 from tracktor.frcnn_fpn import FRCNN_FPN
@@ -50,7 +51,7 @@ def main(tracktor, reid, _config, _log, _run):
     torch.cuda.manual_seed(tracktor['seed'])
     np.random.seed(tracktor['seed'])
     torch.backends.cudnn.deterministic = True
-    random.seed(tracktor['seed'])
+    random.seed=(tracktor['seed'])
 
     output_dir = osp.join(get_output_dir(tracktor['module_name']), tracktor['name'], tracktor['output_subdir'])
     sacred_config = osp.join(output_dir, 'sacred_config.yaml')
