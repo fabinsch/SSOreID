@@ -690,20 +690,6 @@ class Tracker:
             t for t in self.inactive_tracks if t.has_positive_area() and t.count_inactive <= self.inactive_patience
         ]
 
-        # check if inactive tracks changed after processing current frame, can be more
-        # but also less inactive tracks - after inactive patience overpassed or REID
-        # model is trained after a frame because inactive in regress_tracks and also in nms overlap check
-        # at this point just train again, if inactive tracks change because of REID
-        # or inactive patience overpass (track this by self.killed_this_step)
-
-        # if (self.inactive_tracks != self.inactive_tracks_temp):
-        #     if self.finetuning_config["for_reid"]:
-        #         box_head_copy_for_classifier = self.get_box_head(reset=True)  # get head and load weights
-        #         box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.inactive_tracks))  # get predictor with corrsponding output number
-        #         self.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
-        #                                   box_predictor_copy_for_classifier,
-        #                                   early_stopping=self.finetuning_config['early_stopping_classifier'])
-
         self.im_index += 1
         self.last_image = blob['img'][0]
 
@@ -746,7 +732,7 @@ class Tracker:
                t.training_set.post_process()
 
         self.training_set = InactiveDataset(batch_size=finetuning_config['batch_size'], killed_this_step=killed_this_step)
-
+        print(float(finetuning_config["learning_rate"]))
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
 

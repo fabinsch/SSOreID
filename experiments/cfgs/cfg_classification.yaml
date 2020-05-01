@@ -1,5 +1,5 @@
 tracktor:
-  'dataset': mot17_13_FRCNN17
+  'dataset': mot17_09_FRCNN17
   'write_images': False
   'tracker':
     motion_model:
@@ -13,7 +13,7 @@ tracktor:
     'finetuning':
       'keep_frames': 40
       'epochs':  100
-      'learning_rate': 5e-4
+      'learning_rate': 1e-3
       'batch_size': 64
       'validate': True
       # how many samples per person should be included in val set [in %]
