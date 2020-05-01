@@ -1,6 +1,7 @@
 import os
 import time
 from os import path as osp
+import random
 
 import numpy as np
 import pandas as pd
@@ -49,6 +50,7 @@ def main(tracktor, reid, _config, _log, _run):
     torch.cuda.manual_seed(tracktor['seed'])
     np.random.seed(tracktor['seed'])
     torch.backends.cudnn.deterministic = True
+    random.seed(tracktor['seed'])
 
     output_dir = osp.join(get_output_dir(tracktor['module_name']), tracktor['name'], tracktor['output_subdir'])
     sacred_config = osp.join(output_dir, 'sacred_config.yaml')
@@ -110,7 +112,6 @@ def main(tracktor, reid, _config, _log, _run):
         _log.info(f"Runtime for {seq}: {time.time() - start :.1f} s.")
         _log.info(f"Total number of REIDs: {tracker.num_reids}")
         _log.info(f"Total number of Trainings: {tracker.num_training}")
-        _log.info(f"Number of start fine tuning: {tracker.counter2}")
         _log.info(f"It was trained on: {tracker.train_on}")
         _log.info(f"It happen x times that it was killed and reid in same step: {tracker.count_killed_this_step_reid}")
 

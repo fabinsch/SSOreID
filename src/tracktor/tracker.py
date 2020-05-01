@@ -47,9 +47,6 @@ class Tracker:
             self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
             self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
 
-        # if self.finetuning_config["validate"] or self.finetuning_config["plot_training_curves"]:
-        #     self.plotter = VisdomLinePlotter(env_name='loss', xlabel="Epoch")
-            #self.plotter_acc = VisdomLinePlotter(env_name='Accuracy per epoch', xlabel="Epoch")
         self.tracks = []
         self.inactive_tracks = []
         self.track_num = 0
@@ -68,7 +65,6 @@ class Tracker:
         self.killed_this_step = []
         self.num_training = 0
         self.train_on = []
-        self.counter2 = 0  # verify how often start fine_tune
         self.count_killed_this_step_reid = 0
 
     def reset(self, hard=True):
@@ -134,7 +130,7 @@ class Tracker:
                                        representation_size=1024).to(device)
             box_head.load_state_dict(self.bbox_head_weights)
         else:
-            box_head = self.box_head_classification  # do not start again we default weights
+            box_head = self.box_head_classification  # do not start again with pretrained weights
         return box_head
 
     def regress_tracks(self, blob, plot_compare=False, frame=None):
@@ -738,9 +734,8 @@ class Tracker:
     def finetune_classification(self, finetuning_config, box_head_classification,
                                 box_predictor_classification, early_stopping):
 
-        self.counter2 += 1
         # do not train when no tracks
-        if len(self.inactive_tracks)==0:
+        if len(self.inactive_tracks) == 0:
             self.inactive_tracks_temp = self.inactive_tracks.copy()
             return
 
@@ -810,10 +805,9 @@ class Tracker:
                     run_acc += 100 * corr.item()
                 loss.backward()
                 optimizer.step()
-                scheduler.step()
-
                 run_loss += loss.detach().item() / len(sample_batch['scores'])
 
+            scheduler.step()
             if finetuning_config["plot_training_curves"]:
                 plotter.plot_(epoch=i, loss=run_loss, acc=run_acc / len(dataloader_train.dataset), split_name='train')
 
