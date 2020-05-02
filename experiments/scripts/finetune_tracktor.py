@@ -113,6 +113,7 @@ def main(tracktor, reid, _config, _log, _run):
         _log.info(f"Runtime for {seq}: {time.time() - start :.1f} s.")
         _log.info(f"Total number of REIDs: {tracker.num_reids}")
         _log.info(f"Total number of Trainings: {tracker.num_training}")
+        _log.info(f"Number of skipped samples because of IoU restriction: {tracker.c_skipped_for_train_iou}")
         _log.info(f"It was trained on: {tracker.train_on}")
         _log.info(f"It happen x times that it was killed and reid in same step: {tracker.count_killed_this_step_reid}")
         _log.info(f"Number of tracks which are just active 1 frame: {tracker.c_just_one_frame_active}")

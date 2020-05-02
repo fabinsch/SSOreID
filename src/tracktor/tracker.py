@@ -67,6 +67,7 @@ class Tracker:
         self.train_on = []
         self.count_killed_this_step_reid = 0
         self.c_just_one_frame_active = 0
+        self.c_skipped_for_train_iou = 0
 
     def reset(self, hard=True):
         self.tracks = []
@@ -588,6 +589,7 @@ class Tracker:
                     #if i in keep:  # TODO nicht sicher ob des hier stimmt nochmal zu checken, von adrian und caro
                     if torch.sum(iou[i] > self.finetuning_config['train_iou_threshold']) > 1:
                         #print('IuO track {} is big, do not use for training'.format(track.id))
+                        self.c_skipped_for_train_iou += 1
                         continue
                     track.frames_since_active += 1
 
