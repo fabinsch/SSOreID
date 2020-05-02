@@ -1,5 +1,5 @@
 tracktor:
-  'dataset': mot17_13_DPM17
+  'dataset': mot17_09_FRCNN17
   'write_images': False
   'tracker':
     motion_model:
@@ -18,6 +18,7 @@ tracktor:
       'validate': True
       # how many samples per person should be included in val set [in %]
       'val_split': 0.2
+      'val_set_random': False
       'plot_training_curves': True
       'early_stopping_classifier': True
       'early_stopping_patience': 30

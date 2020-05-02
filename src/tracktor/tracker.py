@@ -757,7 +757,7 @@ class Tracker:
         #     t.training_set.num_frames = 40-eliminate
 
         training_set, val_set = self.training_set.get_training_set(self.inactive_tracks, finetuning_config['validate'],
-                                                                   finetuning_config['val_split'])
+                                                                   finetuning_config['val_split'], finetuning_config['val_set_random'])
 
         dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=training_set.batch_size, shuffle=True)
         dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=training_set.batch_size)

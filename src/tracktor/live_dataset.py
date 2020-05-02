@@ -223,7 +223,7 @@ class InactiveDataset(torch.utils.data.Dataset):
                 idx.append(possible_persons.pop())
         return idx, t
 
-    def get_val_idx(self, occ, inactive_tracks, split, newest_inactive):
+    def get_val_idx(self, occ, inactive_tracks, split, newest_inactive, val_set_random):
         """generates indices for validation set und removes them from training set"""
         val_idx = []
         self.min_occ = min(occ) if len(occ) > 0 else 0
@@ -232,14 +232,15 @@ class InactiveDataset(torch.utils.data.Dataset):
             num_val = int(self.min_occ * split)
             #num_val = 1 if (num_val==0 and self.min_occ>1) else num_val
             for i in range(num_val):
-                # take random samples
-                random.shuffle(t.training_set.pos_unique_indices)
-                idx.append(t.training_set.pos_unique_indices.pop())
-
-                # take samples from middle of scene to avoid taking the last occluded ones
-                # pos_ind = t.training_set.pos_unique_indices
-                # idx_val = (int(len(pos_ind) / 2) + int(num_val * 0.5))
-                # idx.append(pos_ind.pop(idx_val))
+                if val_set_random:
+                    # take random samples
+                    random.shuffle(t.training_set.pos_unique_indices)
+                    idx.append(t.training_set.pos_unique_indices.pop())
+                else:
+                    # take samples from middle of scene to avoid taking the last occluded ones
+                    pos_ind = t.training_set.pos_unique_indices
+                    idx_val = (int(len(pos_ind) / 2) + int(num_val * 0.5))
+                    idx.append(pos_ind.pop(idx_val))
             val_idx.append(idx)
 
         val_others_this_step, t_val = self.get_current_idx(num_val, inactive_tracks, newest_inactive, split=split, val=True)  # append random idx of person that was visible in the last frame
@@ -263,7 +264,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         return val_set
 
 
-    def get_training_set(self, inactive_tracks, val, split):
+    def get_training_set(self, inactive_tracks, val, split, val_set_random):
         val_idx = [[]]
         if len(self.killed_this_step) == 0:
             self.killed_this_step.append(inactive_tracks[-1].id)  # if no track was killed, take others from newest inactive
@@ -276,7 +277,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         newest_inactive = min(inactive_since) if len(inactive_since) > 0 else 0
 
         if val:
-            val_idx, val_others, t_val = self.get_val_idx(occ, inactive_tracks, split, newest_inactive)
+            val_idx, val_others, t_val = self.get_val_idx(occ, inactive_tracks, split, newest_inactive, val_set_random)
             self.max_occ -= len(val_idx[0])
 
         # get a random dataset with label 0 if just one inactive track
