@@ -609,16 +609,16 @@ class Tracker:
                                         self.obj_detect.fpn_features,
                                         include_previous_frames=True)
 
-            # train REID model new if change in active tracks happened
-            if (self.inactive_tracks != self.inactive_tracks_temp):
-                if self.finetuning_config["for_reid"]:
-                    box_head_copy_for_classifier = self.get_box_head(reset=True)  # get head and load weights
-                    box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.inactive_tracks))  # get predictor with corrsponding output number
-                    self.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
-                                                 box_predictor_copy_for_classifier,
-                                                 early_stopping=self.finetuning_config[
-                                                     'early_stopping_classifier'],
-                                                 killed_this_step=self.killed_this_step)
+        # train REID model new if change in active tracks happened
+        if (self.inactive_tracks != self.inactive_tracks_temp):
+            if self.finetuning_config["for_reid"]:
+                box_head_copy_for_classifier = self.get_box_head(reset=True)  # get head and load weights
+                box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.inactive_tracks))  # get predictor with corrsponding output number
+                self.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
+                                             box_predictor_copy_for_classifier,
+                                             early_stopping=self.finetuning_config[
+                                                 'early_stopping_classifier'],
+                                             killed_this_step=self.killed_this_step)
 
         #####################
         # Create new tracks #
@@ -732,7 +732,6 @@ class Tracker:
                t.training_set.post_process()
 
         self.training_set = InactiveDataset(batch_size=finetuning_config['batch_size'], killed_this_step=killed_this_step)
-        print(float(finetuning_config["learning_rate"]))
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
 
