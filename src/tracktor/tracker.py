@@ -14,6 +14,8 @@ from torchvision.ops.boxes import clip_boxes_to_image, nms
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHead
 from torch.nn import functional as F
 
+import time
+
 #if not torch.cuda.is_available():
 #    matplotlib.use('TkAgg')
 
@@ -113,7 +115,8 @@ class Tracker:
                           new_det_features[i].view(1, -1) if new_det_features else None, self.inactive_patience, self.max_features_num,
                           self.motion_model_cfg['n_steps'] if self.motion_model_cfg['n_steps'] > 0 else 1,
                           image.size()[1:3], self.obj_detect.image_size, self.finetuning_config["batch_size"],
-                          box_roi_pool=box_roi_pool, keep_frames=self.finetuning_config['keep_frames'])
+                          box_roi_pool=box_roi_pool, keep_frames=self.finetuning_config['keep_frames'],
+                          data_augmentation = self.finetuning_config['data_augmentation'])
 
             other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i + 1:], old_tracks))
             if torch.sum(iou[i] > self.finetuning_config['train_iou_threshold']) > 1:
@@ -125,6 +128,8 @@ class Tracker:
             track.update_training_set_classification(self.finetuning_config['batch_size'],
                                                  other_pedestrians_bboxes,
                                                  self.obj_detect.fpn_features,
+                                                 self.finetuning_config['data_augmentation'],
+                                                 self.finetuning_config['max_displacement'],
                                                  include_previous_frames=True)
 
             self.tracks.append(track)
@@ -366,7 +371,11 @@ class Tracker:
 
                     if self.finetuning_config['reset_dataset']:
                         inactive_track.frames_since_active = 1
-                        inactive_track.training_set = IndividualDataset(inactive_track.id, 64, 40)
+                        inactive_track.training_set = IndividualDataset(inactive_track.id,
+                                                                        self.finetuning_config['batch_size'],
+                                                                        self.finetuning_config['keep_frames'],
+                                                                        self.finetuning_config['data_augmentation']
+                                                                        )
 
                     assigned.append(det_index)
                     remove_inactive.append(inactive_track)
@@ -379,6 +388,8 @@ class Tracker:
                 inactive_track.update_training_set_classification(self.finetuning_config['batch_size'],
                                                                   active_tracks,
                                                                   self.obj_detect.fpn_features,
+                                                                  self.finetuning_config['data_augmentation'],
+                                                                  self.finetuning_config['max_displacement'],
                                                                   include_previous_frames=True)
 
             keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
@@ -623,6 +634,8 @@ class Tracker:
                         track.update_training_set_classification(self.finetuning_config['batch_size'],
                                         other_pedestrians_bboxes,
                                         self.obj_detect.fpn_features,
+                                        self.finetuning_config['data_augmentation'],
+                                        self.finetuning_config['max_displacement'],
                                         include_previous_frames=True)
 
         # train REID model new if change in active tracks happened
@@ -744,8 +757,10 @@ class Tracker:
             self.inactive_tracks_temp = self.inactive_tracks.copy()
             return
 
+        start_time = time.time()
         for t in self.inactive_tracks:
                t.training_set.post_process()
+        #print("\n--- %s seconds --- for post process" % (time.time() - start_time))
 
         self.training_set = InactiveDataset(batch_size=finetuning_config['batch_size'], killed_this_step=killed_this_step)
         self.box_head_classification = box_head_classification
@@ -771,9 +786,11 @@ class Tracker:
         #     print('\n eleminiere die {} letzten von {}'.format(eliminate,t.id))
         #     t.training_set.pos_unique_indices = t.training_set.pos_unique_indices[:(40-eliminate)]
         #     t.training_set.num_frames = 40-eliminate
-
+        start_time = time.time()
         training_set, val_set = self.training_set.get_training_set(self.inactive_tracks, finetuning_config['validate'],
                                                                    finetuning_config['val_split'], finetuning_config['val_set_random'])
+        #print("\n--- %s seconds --- for getting datasets" % (time.time() - start_time))
+
         assert training_set.scores[-1] == len(self.inactive_tracks)
         dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=training_set.batch_size, shuffle=True)
         dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=training_set.batch_size)
@@ -797,6 +814,7 @@ class Tracker:
             it = 10
 
         for i in range(it):
+            start_time = time.time()
             run_loss = 0.0
             run_acc = 0.0
             for i_sample, sample_batch in enumerate(dataloader_train):
@@ -845,6 +863,9 @@ class Tracker:
                 if early_stopping.early_stop:
                     #print("Early stopping")
                     break
+
+            #print("\n--- %s seconds --- for 1 epoch" % (time.time() - start_time))
+
 
         if self.finetuning_config['early_stopping_classifier'] and self.finetuning_config["validate"] and len(val_set) > 0:
             # load the last checkpoint with the best model

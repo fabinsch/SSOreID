@@ -108,3 +108,4 @@ tracktor:
       reid_score_threshold: 0.90
       train_iou_threshold: 0.5
       val_set_random: False
+      data_augmentation: 5
