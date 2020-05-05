@@ -40,6 +40,7 @@ class Track(object):
         self.checkpoints = dict()
         self.box_roi_pool = box_roi_pool
         self.training_set = IndividualDataset(self.id, batch_size, keep_frames)
+        self.skipped_for_train = 0
 
     def has_positive_area(self):
         return self.pos[0, 2] > self.pos[0, 0] and self.pos[0, 3] > self.pos[0, 1]

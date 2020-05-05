@@ -68,6 +68,7 @@ class Tracker:
         self.count_killed_this_step_reid = 0
         self.c_just_one_frame_active = 0
         self.c_skipped_for_train_iou = 0
+        self.c_skipped_and_just_and_frame_active = 0
 
     def reset(self, hard=True):
         self.tracks = []
@@ -87,12 +88,17 @@ class Tracker:
                 t.pos = t.last_pos[-1]
                 self.inactive_number_changes += 1
                 self.killed_this_step.append(t.id)
+                if t.skipped_for_train == 1:
+                    self.c_skipped_and_just_and_frame_active += 1
             else:
                 self.c_just_one_frame_active += 1
+                # remove tracks with just 1 active frame
                 #tracks.remove(t)
                 t.pos = t.last_pos[-1]
                 self.inactive_number_changes += 1
                 self.killed_this_step.append(t.id)
+                if t.skipped_for_train == 1:
+                    self.c_skipped_and_just_and_frame_active += 1
         self.inactive_tracks += tracks
 
 
@@ -101,6 +107,7 @@ class Tracker:
         num_new = new_det_pos.size(0)
         old_tracks = self.get_pos()
         box_roi_pool = self.obj_detect.roi_heads.box_roi_pool
+        iou = bbox_overlaps(torch.cat((new_det_pos, old_tracks)), torch.cat((new_det_pos, old_tracks)))
         for i in range(num_new):
             track = Track(new_det_pos[i].view(1, -1), new_det_scores[i], self.track_num + i,
                           new_det_features[i].view(1, -1) if new_det_features else None, self.inactive_patience, self.max_features_num,
@@ -109,6 +116,12 @@ class Tracker:
                           box_roi_pool=box_roi_pool, keep_frames=self.finetuning_config['keep_frames'])
 
             other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i + 1:], old_tracks))
+            if torch.sum(iou[i] > self.finetuning_config['train_iou_threshold']) > 1:
+                print('\nSKIP SKIP SKIP beim Adden')
+                self.c_skipped_for_train_iou += 1
+                track.skipped_for_train += 1
+                self.tracks.append(track)
+                continue
             track.update_training_set_classification(self.finetuning_config['batch_size'],
                                                  other_pedestrians_bboxes,
                                                  self.obj_detect.fpn_features,
@@ -339,7 +352,7 @@ class Tracker:
 
                     if inactive_track.id in self.killed_this_step:
                         self.count_killed_this_step_reid += 1
-                        print('\n track {} was killed and reid in frame {}'.format(inactive_track.id, self.im_index))
+                        #print('\n track {} was killed and reid in frame {}'.format(inactive_track.id, self.im_index))
 
                     # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
                     if frame==4200:
@@ -349,9 +362,10 @@ class Tracker:
                     inactive_track.count_inactive = 1
                     inactive_track.pos = new_det_pos[det_index].view(1, -1)
                     inactive_track.reset_last_pos()
+                    inactive_track.skipped_for_train = 0
 
                     if self.finetuning_config['reset_dataset']:
-                        inactive_track.frames_since_active = 0
+                        inactive_track.frames_since_active = 1
                         inactive_track.training_set = IndividualDataset(inactive_track.id, 64, 40)
 
                     assigned.append(det_index)
@@ -586,12 +600,12 @@ class Tracker:
                 # calculate IoU distances
                 iou = bbox_overlaps(self.get_pos(), self.get_pos())
                 for i, track in enumerate(self.tracks):
+                    track.frames_since_active += 1
                     #if i in keep:  # TODO nicht sicher ob des hier stimmt nochmal zu checken, von adrian und caro
                     if torch.sum(iou[i] > self.finetuning_config['train_iou_threshold']) > 1:
-                        #print('IuO track {} is big, do not use for training'.format(track.id))
                         self.c_skipped_for_train_iou += 1
+                        track.skipped_for_train += 1
                         continue
-                    track.frames_since_active += 1
 
                     # debug
                     if hasattr(track, 'box_predictor_classification_debug'):
@@ -760,7 +774,7 @@ class Tracker:
 
         training_set, val_set = self.training_set.get_training_set(self.inactive_tracks, finetuning_config['validate'],
                                                                    finetuning_config['val_split'], finetuning_config['val_set_random'])
-
+        assert training_set.scores[-1] == len(self.inactive_tracks)
         dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=training_set.batch_size, shuffle=True)
         dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=training_set.batch_size)
 
