@@ -1,5 +1,5 @@
 from collections import deque, defaultdict
-
+import time
 
 import numpy as np
 import torch
@@ -17,7 +17,7 @@ class Track(object):
     """This class contains all necessary for every individual track."""
 
     def __init__(self, pos, score, track_id, features, inactive_patience, max_features_num, mm_steps, im_info,
-                 transformed_image_size, batch_size, keep_frames, plot=False, box_roi_pool=None):
+                 transformed_image_size, batch_size, keep_frames, data_augmentation, plot=False, box_roi_pool=None):
         self.id = track_id
         self.pos = pos
         self.score = score
@@ -39,7 +39,7 @@ class Track(object):
         self.scale = self.im_info[0] / self.transformed_image_size[0][0]
         self.checkpoints = dict()
         self.box_roi_pool = box_roi_pool
-        self.training_set = IndividualDataset(self.id, batch_size, keep_frames)
+        self.training_set = IndividualDataset(self.id, batch_size, keep_frames, data_augmentation)
         self.skipped_for_train = 0
 
     def has_positive_area(self):
@@ -78,9 +78,17 @@ class Track(object):
 
         return training_boxes
 
-    def generate_training_set_classification(self, batch_size, additional_dets, fpn_features, shuffle=False):
-        boxes = clip_boxes(self.pos, self.im_info)
-        boxes = torch.cat((boxes, torch.ones([1, 1]).to(device)), dim=1)
+    def generate_training_set_classification(self, batch_size, additional_dets, fpn_features,
+                                             data_augmentation, max_displacement, shuffle=False):
+        if data_augmentation > 0:
+            start_time = time.time()
+            boxes = self.generate_training_set_regression(self.pos, max_displacement, data_augmentation, fpn_features)
+            #print("\n--- %s seconds --- for random augmention" % (time.time() - start_time))
+        else:
+            boxes = clip_boxes(self.pos, self.im_info)
+
+        #boxes = torch.cat((boxes, torch.ones([1, 1]).to(device)), dim=1)
+        boxes = torch.cat((boxes, torch.ones([boxes.shape[0], 1]).to(device)), dim=1)
 
         if additional_dets.size(0) == 0:
             print("Adding dummy bbox as negative example")
@@ -96,13 +104,15 @@ class Track(object):
         boxes_resized = resize_boxes(boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
         proposals = [boxes_resized]
         with torch.no_grad():
+            start_time = time.time()
             roi_pool_feat = self.box_roi_pool(fpn_features, proposals, self.im_info).to(device)
-
+            #print("\n--- %s seconds --- for roi pooling" % (time.time() - start_time))
         return {'features': roi_pool_feat, 'boxes': boxes[:, 0:4], 'scores': boxes[:, 4]}
 
-    def update_training_set_classification(self, batch_size, additional_dets, fpn_features,
-                                           include_previous_frames=False, shuffle=False):
-        training_set_dict = self.generate_training_set_classification(batch_size, additional_dets, fpn_features, shuffle=shuffle)
+    def update_training_set_classification(self, batch_size, additional_dets, fpn_features, data_augmentation,
+                                           max_displacement, include_previous_frames=False, shuffle=False):
+        training_set_dict = self.generate_training_set_classification(batch_size, additional_dets, fpn_features,
+                                                                      data_augmentation, max_displacement, shuffle=shuffle)
 
         if not include_previous_frames:
             self.training_set = IndividualDataset(self.id, batch_size)

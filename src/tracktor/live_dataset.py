@@ -10,7 +10,7 @@ import random
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class IndividualDataset(torch.utils.data.Dataset):
-    def __init__(self, id, batch_size, keep_frames):
+    def __init__(self, id, batch_size, keep_frames, data_augmentation):
         self.id = id
         #self.batch_size = batch_size
         #self.number_positive_duplicates = self.batch_size / 2 - 1
@@ -22,6 +22,7 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.keep_frames = keep_frames
         self.num_frames = 0
         self.pos_unique_indices = None
+        self.data_augmentation = data_augmentation if data_augmentation > 0 else 1
 
     def append_samples(self, training_set_dict):
         self.num_frames += 1
@@ -38,15 +39,25 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.scores = self.scores[i:]
         self.features = self.features[i:, :, :, :]
 
-    # Filter out all duplicates and add frame number tensor for each data point
+    # add frame number tensor for each data point
     def post_process(self):
         self.samples_per_frame = defaultdict(list)
         self.pos_unique_indices = []
-        frame_number = -1
+        frame_number = 0
+        c = 1
+        saw_negative = False  # TODO was ist wenn es keine negative gib ? kann das vorkommen oder ist dann dummy ?
         for i, s in enumerate(self.scores):
-            if s == 1:
+            if s == 1 and c <= self.data_augmentation:
                 self.pos_unique_indices.append(i)
-                frame_number += 1
+                c += 1
+                if saw_negative:
+                    frame_number += 1
+                    saw_negative = False
+            else:
+                if not saw_negative:
+                    c = 1
+                    saw_negative = True
+
             self.samples_per_frame[frame_number].append(i)
 
 
@@ -190,9 +201,11 @@ class InactiveDataset(torch.utils.data.Dataset):
             index_max = max(range(len(active)), key=active.__getitem__)
             t = t[index_max]
         newest_inactive = newest_inactive if newest_inactive < len(t.training_set.samples_per_frame) else len(t.training_set.samples_per_frame)
+        #d = t.training_set.data_augmentation if t.training_set.data_augmentation > 0 else 1
+        d = t.training_set.data_augmentation
         if newest_inactive == 0:
-            # take all other persons from all frames as samples for 0
-            num_possible_persons = sum([len(t.training_set.samples_per_frame[f][1:]) for f in t.training_set.samples_per_frame])
+            # take all other persons from all frames as samples for others
+            num_possible_persons = sum([len(t.training_set.samples_per_frame[f][d:]) for f in t.training_set.samples_per_frame])
             if val:
                 num = num if num < int(num_possible_persons*split) else int(num_possible_persons*split)
             else:
@@ -200,10 +213,10 @@ class InactiveDataset(torch.utils.data.Dataset):
             for i in range(num):
                 while True:
                     f = random.choice(range(len(t.training_set.samples_per_frame)))
-                    if len(t.training_set.samples_per_frame[f][1:]) == 0:
+                    if len(t.training_set.samples_per_frame[f][d:]) == 0:
                         pass
                     else:
-                        idx.append(random.choice(t.training_set.samples_per_frame[f][1:]))
+                        idx.append(random.choice(t.training_set.samples_per_frame[f][d:]))
                         t.training_set.samples_per_frame[f].remove(idx[-1])
                         break
 
@@ -211,8 +224,8 @@ class InactiveDataset(torch.utils.data.Dataset):
             last = []
             for i in range(1, newest_inactive):
                 last.append(list(t.training_set.samples_per_frame.keys())[-i])
-            num_possible_persons = sum([len(t.training_set.samples_per_frame[f][1:]) for f in last])
-            possible_persons = [t.training_set.samples_per_frame[f][1:] for f in last]
+            num_possible_persons = sum([len(t.training_set.samples_per_frame[f][d:]) for f in last])
+            possible_persons = [t.training_set.samples_per_frame[f][d:] for f in last]
             possible_persons = list(itertools.chain.from_iterable(possible_persons))
             if val:
                 num = num if num < int(num_possible_persons*split) else int(num_possible_persons*split)
@@ -269,7 +282,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         if len(self.killed_this_step) == 0:
             self.killed_this_step.append(inactive_tracks[-1].id)  # if no track was killed, take others from newest inactive
         #occ = [t.training_set.num_frames for t in inactive_tracks]
-        occ = [t.training_set.num_frames if t.training_set.num_frames < t.training_set.keep_frames else t.training_set.keep_frames for t in inactive_tracks]
+        occ = [len(t.training_set.pos_unique_indices) for t in inactive_tracks]
         self.max_occ = max(occ) if len(occ) > 0 else 0
 
         # check when last time a track was added before this newest killed one
