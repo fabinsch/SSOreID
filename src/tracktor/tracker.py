@@ -7,12 +7,13 @@ import datetime
 
 from tracktor.track import Track
 from tracktor.visualization import plot_compare_bounding_boxes, VisdomLinePlotter, plot_bounding_boxes
-from tracktor.utils import bbox_overlaps, warp_pos, get_center, get_height, get_width, make_pos, EarlyStopping
+from tracktor.utils import bbox_overlaps, warp_pos, get_center, get_height, get_width, make_pos, EarlyStopping, clip_boxes
 from tracktor.live_dataset import InactiveDataset, IndividualDataset
 
 from torchvision.ops.boxes import clip_boxes_to_image, nms
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHead
 from torch.nn import functional as F
+from torchvision.models.detection.transform import resize_boxes
 
 import time
 
@@ -55,7 +56,7 @@ class Tracker:
         self.im_index = 0
         self.results = {}
 
-        self.inactive_tracks_temp = []
+        self.inactive_tracks_id = []
         self.inactive_number_changes = 0
         self.box_head_classification = None
         self.box_predictor_classification = None
@@ -75,7 +76,7 @@ class Tracker:
     def reset(self, hard=True):
         self.tracks = []
         self.inactive_tracks = []
-        self.inactive_tracks_temp = []
+        self.inactive_tracks_id = []
         self.inactive_number_changes = 0
         self.num_reids = 0
         if hard:
@@ -110,6 +111,14 @@ class Tracker:
         old_tracks = self.get_pos()
         box_roi_pool = self.obj_detect.roi_heads.box_roi_pool
         iou = bbox_overlaps(torch.cat((new_det_pos, old_tracks)), torch.cat((new_det_pos, old_tracks)))
+
+        # do batched roi pooling
+        boxes = clip_boxes(new_det_pos, image.size()[1:3])
+        boxes_resized = resize_boxes(boxes, image.size()[1:3], self.obj_detect.image_size[0])
+        proposals = [boxes_resized]
+        with torch.no_grad():
+            roi_pool_feat = box_roi_pool(self.obj_detect.fpn_features, proposals, image.size()[1:3]).to(device)
+
         for i in range(num_new):
             track = Track(new_det_pos[i].view(1, -1), new_det_scores[i], self.track_num + i,
                           new_det_features[i].view(1, -1) if new_det_features else None, self.inactive_patience, self.max_features_num,
@@ -117,22 +126,20 @@ class Tracker:
                           image.size()[1:3], self.obj_detect.image_size, self.finetuning_config["batch_size"],
                           box_roi_pool=box_roi_pool, keep_frames=self.finetuning_config['keep_frames'],
                           data_augmentation = self.finetuning_config['data_augmentation'])
-
-            other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i + 1:], old_tracks))
+            self.tracks.append(track)
+            #other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i + 1:], old_tracks))
             if torch.sum(iou[i] > self.finetuning_config['train_iou_threshold']) > 1:
                 print('\nSKIP SKIP SKIP beim Adden')
                 self.c_skipped_for_train_iou += 1
                 track.skipped_for_train += 1
-                self.tracks.append(track)
                 continue
-            track.update_training_set_classification(self.finetuning_config['batch_size'],
-                                                 other_pedestrians_bboxes,
-                                                 self.obj_detect.fpn_features,
-                                                 self.finetuning_config['data_augmentation'],
-                                                 self.finetuning_config['max_displacement'],
-                                                 include_previous_frames=True)
+            track.update_training_set_classification(features=roi_pool_feat[i].unsqueeze(0), pos=boxes[i].unsqueeze(0))
 
-            self.tracks.append(track)
+            # track.update_training_set_classification(self.finetuning_config['batch_size'],
+            #                                      self.obj_detect.fpn_features,
+            #                                      include_previous_frames=True)
+
+
 
         self.track_num += num_new
 
@@ -287,14 +294,12 @@ class Tracker:
         return new_det_pos, new_det_scores
 
 
-    def reid_by_finetuned_model_(self, new_det_pos, new_det_scores, frame):
-        """Do reid with one model predicting the score for each inactive track
-        Note: work with self.inactive_tracks_temp because model was trained on those, self.inactive_tracks might
-        already have been changed by regress_tracks method
-        """
-        assert self.inactive_tracks_temp==self.inactive_tracks
+    def reid_by_finetuned_model_(self, new_det_pos, new_det_scores, frame, image):
+        """Do reid with one model predicting the score for each inactive track"""
+        current_inactive_tracks_id = [t.id for t in self.inactive_tracks]
+        assert current_inactive_tracks_id == self.inactive_tracks_id
         active_tracks = self.get_pos()
-        if len(new_det_pos.size()) > 1 and len(self.inactive_tracks_temp) > 0:
+        if len(new_det_pos.size()) > 1 and len(self.inactive_tracks) > 0:
             remove_inactive = []
             det_index_to_candidate = defaultdict(list)
             inactive_to_det = defaultdict(list)
@@ -335,7 +340,7 @@ class Tracker:
                         print('\n no reid because class 0 has score {}'.format(max[i]))
 
                     else:
-                        inactive_track = self.inactive_tracks_temp[max_idx[i]-1]
+                        inactive_track = self.inactive_tracks[max_idx[i]-1]
                         det_index_to_candidate[i].append((inactive_track, max[i]))
                         inactive_to_det[max_idx[i]-1].append(i)
 
@@ -348,13 +353,13 @@ class Tracker:
                 # get the position of the inactive track in inactive_tracks
                 # if just one track, position "is 1" because 0 is unknown background person
                 # important for check in next if statement
-                inactive_id_in_list = self.inactive_tracks_temp.index(inactive_track)
+                inactive_id_in_list = self.inactive_tracks.index(inactive_track)
 
                 if len(inactive_to_det[inactive_id_in_list]) == 1:
                     # make sure just 1 new detection per inactive track
                     self.tracks.append(inactive_track)
                     print(f"\nReidying track {inactive_track.id} in frame {frame} with score {candidate[1]}")
-                    print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks_temp]))
+                    print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks]))
                     self.num_reids += 1
 
                     if inactive_track.id in self.killed_this_step:
@@ -383,16 +388,25 @@ class Tracker:
                     remove_inactive.append(inactive_track)
                 else:
                     print('\nerror, {} new det for 1 inactive track ID {}'.format(len(inactive_to_det[inactive_id_in_list]), inactive_track.id))
-                    print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks_temp]))
+                    print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks]))
 
-            for inactive_track in remove_inactive:
+            if len(remove_inactive) > 0:
+                # do batched roi pooling
+                box_roi_pool = self.obj_detect.roi_heads.box_roi_pool
+                if len(remove_inactive) == 1:
+                    pos = remove_inactive[0].pos
+                else:
+                    pos = torch.cat([t.pos for t in remove_inactive], 0)
+                boxes = clip_boxes(pos, image.size()[1:3])
+                boxes_resized = resize_boxes(boxes, image.size()[1:3], self.obj_detect.image_size[0])
+                proposals = [boxes_resized]
+                with torch.no_grad():
+                    roi_pool_feat = box_roi_pool(self.obj_detect.fpn_features, proposals, image.size()[1:3]).to(device)
+
+            for i, inactive_track in enumerate(remove_inactive):
                 self.inactive_tracks.remove(inactive_track)
-                inactive_track.update_training_set_classification(self.finetuning_config['batch_size'],
-                                                                  active_tracks,
-                                                                  self.obj_detect.fpn_features,
-                                                                  self.finetuning_config['data_augmentation'],
-                                                                  self.finetuning_config['max_displacement'],
-                                                                  include_previous_frames=True)
+                inactive_track.update_training_set_classification(features=roi_pool_feat[i].unsqueeze(0),
+                                                                  pos=boxes[i].unsqueeze(0))
 
             keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
             if keep.nelement() > 0:
@@ -611,10 +625,20 @@ class Tracker:
                 self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
 
                 # calculate IoU distances
-                iou = bbox_overlaps(self.get_pos(), self.get_pos())
+                active_pos = self.get_pos()
+                iou = bbox_overlaps(active_pos, active_pos)
+
+                # do batched roi pooling
+                box_roi_pool = self.obj_detect.roi_heads.box_roi_pool
+                boxes = clip_boxes(active_pos, blob['img'][0].size()[1:3])
+                boxes_resized = resize_boxes(boxes, blob['img'][0].size()[1:3], self.obj_detect.image_size[0])
+                proposals = [boxes_resized]
+                with torch.no_grad():
+                    roi_pool_feat = box_roi_pool(self.obj_detect.fpn_features, proposals, blob['img'][0].size()[1:3]).to(device)
+
                 for i, track in enumerate(self.tracks):
                     track.frames_since_active += 1
-                    #if i in keep:  # TODO nicht sicher ob des hier stimmt nochmal zu checken, von adrian und caro
+
                     if torch.sum(iou[i] > self.finetuning_config['train_iou_threshold']) > 1:
                         self.c_skipped_for_train_iou += 1
                         track.skipped_for_train += 1
@@ -625,23 +649,12 @@ class Tracker:
                         boxes_debug, scores_debug = self.obj_detect.predict_boxes(track.pos, track.box_predictor_classification_debug,track.box_head_classification_debug, pred_multiclass=True)
                         print('\n scores {}'.format(scores_debug))
 
-                    other_pedestrians_bboxes = torch.Tensor([]).to(device)
-                    for j in range(len(self.tracks)):
-                        if j != i:
-                            assert self.tracks[j].id not in self.killed_this_step
-                            other_pedestrians_bboxes = torch.cat((other_pedestrians_bboxes, self.tracks[j].pos))
-
-                    if self.finetuning_config["build_up_training_set"] and np.mod(track.frames_since_active,
-                                                    self.finetuning_config["feature_collection_interval"]) == 0:
-                        track.update_training_set_classification(self.finetuning_config['batch_size'],
-                                        other_pedestrians_bboxes,
-                                        self.obj_detect.fpn_features,
-                                        self.finetuning_config['data_augmentation'],
-                                        self.finetuning_config['max_displacement'],
-                                        include_previous_frames=True)
+                    track.update_training_set_classification(features=roi_pool_feat[i].unsqueeze(0),
+                                                             pos=boxes[i].unsqueeze(0))
 
         # train REID model new if change in active tracks happened
-        if (self.inactive_tracks != self.inactive_tracks_temp):
+        current_inactive_tracks_id = [t.id for t in self.inactive_tracks]
+        if (current_inactive_tracks_id != self.inactive_tracks_id):
             if self.finetuning_config["for_reid"]:
                 box_head_copy_for_classifier = self.get_box_head(reset=True)  # get head and load weights
                 box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.inactive_tracks))  # get predictor with corrsponding output number
@@ -689,7 +702,7 @@ class Tracker:
                 new_det_features = self.reid_network.test_rois(blob['img'], new_det_pos).data
                 new_det_pos, new_det_scores = self.reid(blob, new_det_pos, new_det_features, new_det_scores)
             elif self.finetuning_config["for_reid"]:
-                new_det_pos, new_det_scores = self.reid_by_finetuned_model_(new_det_pos, new_det_scores, frame)
+                new_det_pos, new_det_scores = self.reid_by_finetuned_model_(new_det_pos, new_det_scores, frame, blob['img'][0])
             # add new
             if new_det_pos.nelement() > 0:
                 self.add(new_det_pos, new_det_scores, blob['img'][0], frame, new_det_features)
@@ -756,7 +769,7 @@ class Tracker:
         #train_acc_criterion = False
         # do not train when no tracks
         if len(self.inactive_tracks) == 0:
-            self.inactive_tracks_temp = self.inactive_tracks.copy()
+            self.inactive_tracks_id = [t.id for t in self.inactive_tracks]
             return
 
         start_time = time.time()
@@ -789,8 +802,9 @@ class Tracker:
         #     t.training_set.pos_unique_indices = t.training_set.pos_unique_indices[:(40-eliminate)]
         #     t.training_set.num_frames = 40-eliminate
         start_time = time.time()
-        training_set, val_set = self.training_set.get_training_set(self.inactive_tracks, finetuning_config['validate'],
-                                                                   finetuning_config['val_split'], finetuning_config['val_set_random'])
+        training_set, val_set = self.training_set.get_training_set(self.inactive_tracks, self.tracks, finetuning_config['validate'],
+                                                                   finetuning_config['val_split'], finetuning_config['val_set_random'],
+                                                                   finetuning_config['keep_frames'])
         #print("\n--- %s seconds --- for getting datasets" % (time.time() - start_time))
 
         assert training_set.scores[-1] == len(self.inactive_tracks)
@@ -878,7 +892,7 @@ class Tracker:
         self.box_predictor_classification.eval()
         self.box_head_classification.eval()
         self.num_training += 1
-        self.inactive_tracks_temp = self.inactive_tracks.copy()
+        self.inactive_tracks_id = [t.id for t in self.inactive_tracks]
         self.train_on.append(self.im_index)
 
 

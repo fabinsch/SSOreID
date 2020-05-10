@@ -78,44 +78,38 @@ class Track(object):
 
         return training_boxes
 
-    def generate_training_set_classification(self, batch_size, additional_dets, fpn_features,
-                                             data_augmentation, max_displacement, shuffle=False):
-        if data_augmentation > 0:
-            start_time = time.time()
-            boxes = self.generate_training_set_regression(self.pos, max_displacement, data_augmentation, fpn_features)
-            #print("\n--- %s seconds --- for random augmention" % (time.time() - start_time))
-        else:
-            boxes = clip_boxes(self.pos, self.im_info)
+    # def generate_training_set_classification(self, fpn_features, shuffle=False):
+    #     if data_augmentation > 0:
+    #         start_time = time.time()
+    #         boxes = self.generate_training_set_regression(self.pos, max_displacement, data_augmentation, fpn_features)
+    #         #print("\n--- %s seconds --- for random augmention" % (time.time() - start_time))
+    #     else:
+    #         boxes = clip_boxes(self.pos, self.im_info)
+    #
+    #     #boxes = torch.cat((boxes, torch.ones([1, 1]).to(device)), dim=1)
+    #     boxes = torch.cat((boxes, torch.ones([boxes.shape[0], 1]).to(device)), dim=1)
+    #
+    #     if additional_dets.size(0) == 0:
+    #         print("Adding dummy bbox as negative example")
+    #         additional_dets = torch.Tensor([1892.4128,  547.1268, 1919.0000,  629.0942]).to(device).unsqueeze(0)
+    #
+    #     for i in range(additional_dets.size(0)):
+    #         negative_example = clip_boxes(additional_dets[i].view(1, -1), self.im_info)
+    #         negative_example_and_label = torch.cat((negative_example, torch.zeros([1, 1]).to(device)), dim=1)
+    #         boxes = torch.cat((boxes, negative_example_and_label)).to(device)
+    #
+    #     # if shuffle:
+    #     #     boxes = boxes[torch.randperm(boxes.size(0))]
+    #     boxes_resized = resize_boxes(boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
+    #     proposals = [boxes_resized]
+    #     with torch.no_grad():
+    #         start_time = time.time()
+    #         roi_pool_feat = self.box_roi_pool(fpn_features, proposals, self.im_info).to(device)
+    #         #print("\n--- %s seconds --- for roi pooling" % (time.time() - start_time))
+    #     return {'features': roi_pool_feat, 'boxes': boxes[:, 0:4], 'scores': boxes[:, 4]}
 
-        #boxes = torch.cat((boxes, torch.ones([1, 1]).to(device)), dim=1)
-        boxes = torch.cat((boxes, torch.ones([boxes.shape[0], 1]).to(device)), dim=1)
-
-        if additional_dets.size(0) == 0:
-            print("Adding dummy bbox as negative example")
-            additional_dets = torch.Tensor([1892.4128,  547.1268, 1919.0000,  629.0942]).to(device).unsqueeze(0)
-
-        for i in range(additional_dets.size(0)):
-            negative_example = clip_boxes(additional_dets[i].view(1, -1), self.im_info)
-            negative_example_and_label = torch.cat((negative_example, torch.zeros([1, 1]).to(device)), dim=1)
-            boxes = torch.cat((boxes, negative_example_and_label)).to(device)
-
-        # if shuffle:
-        #     boxes = boxes[torch.randperm(boxes.size(0))]
-        boxes_resized = resize_boxes(boxes[:, 0:4], self.im_info, self.transformed_image_size[0])
-        proposals = [boxes_resized]
-        with torch.no_grad():
-            start_time = time.time()
-            roi_pool_feat = self.box_roi_pool(fpn_features, proposals, self.im_info).to(device)
-            #print("\n--- %s seconds --- for roi pooling" % (time.time() - start_time))
-        return {'features': roi_pool_feat, 'boxes': boxes[:, 0:4], 'scores': boxes[:, 4]}
-
-    def update_training_set_classification(self, batch_size, additional_dets, fpn_features, data_augmentation,
-                                           max_displacement, include_previous_frames=False, shuffle=False):
-        training_set_dict = self.generate_training_set_classification(batch_size, additional_dets, fpn_features,
-                                                                      data_augmentation, max_displacement, shuffle=shuffle)
-
-        if not include_previous_frames:
-            self.training_set = IndividualDataset(self.id, batch_size)
+    def update_training_set_classification(self, features, pos):
+        training_set_dict = {'features': features, 'boxes': pos}
         self.training_set.append_samples(training_set_dict)
 
     def add_classifier(self, box_head_classification, box_predictor_classification):
