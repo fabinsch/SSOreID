@@ -41,7 +41,7 @@ class IndividualDataset(torch.utils.data.Dataset):
     def remove_samples(self):
         #self.boxes = self.boxes[1:, :]
         self.scores = self.scores[1:]
-        self.features = self.features[1:, :, :, :]
+        self.features = self.features[1+self.data_augmentation:, :, :, :]
 
     # add frame number tensor for each data point
     # WEGLASSEN ? ist es notwendig samples per frame zu haben ?
