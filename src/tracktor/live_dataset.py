@@ -169,14 +169,14 @@ class IndividualDataset(torch.utils.data.Dataset):
 
 
 class InactiveDataset(torch.utils.data.Dataset):
-    def __init__(self, batch_size, killed_this_step=[], data_augmentation=0):
+    def __init__(self, batch_size, data_augmentation=0):
         self.batch_size = batch_size
         #self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
         self.features = torch.tensor([]).to(device)
         self.max_occ = 0
         self.min_occ = 0
-        self.killed_this_step = killed_this_step
+        #self.killed_this_step = killed_this_step
         self.data_augmentation = data_augmentation
 
     def __len__(self):
@@ -275,10 +275,30 @@ class InactiveDataset(torch.utils.data.Dataset):
     def get_val_idx(self, occ, inactive_tracks, tracks, split, val_set_random):
         """generates indices for validation set und removes them from training set"""
         val_idx = []
-        self.min_occ = min(occ) if len(occ) > 0 else 0
-        for t in inactive_tracks:
+        exclude_for_val = []
+        just_one_sample_for_val = []
+        while True:
+            min_occ = min(occ) if len(occ) > 0 else 0
+            if min_occ >= 5 or min_occ == 0:
+                self.min_occ = min_occ
+                break
+            else:
+                # this would results in not creating a validation set
+                idx_min = occ.index(min_occ)
+                occ[idx_min] = 1000  # high number to keep index right
+                if min_occ == 1:
+                    print("\no validation sample for {}".format(idx_min))
+                    exclude_for_val.append(idx_min)
+                else:
+                    just_one_sample_for_val.append(idx_min)
+
+        for i, t in enumerate(inactive_tracks):
             idx = []
             num_val = int(self.min_occ * split)
+            if i in exclude_for_val:
+                num_val = 0
+            if i in just_one_sample_for_val:
+                num_val = 1
             #num_val = 1 if (num_val==0 and self.min_occ>1) else num_val
             for i in range(num_val):
                 if val_set_random:
@@ -292,13 +312,14 @@ class InactiveDataset(torch.utils.data.Dataset):
                     idx.append(pos_ind.pop(idx_val))
             val_idx.append(idx)
 
+        num_val = int(self.min_occ * split)
         others_idx, others_dataset, pp = self.get_others(num_val, tracks, split=split, val=True)
         #if len(val_others_this_step) < num_val:
          #   val_others_this_step = self.generate_ind(val_others_this_step, num_val)
-        return val_idx, others_idx, others_dataset, pp
+        return val_idx, num_val, others_idx, others_dataset, pp
 
     def get_val_set(self, val_idx, val_others_idx, inactive_tracks, other_dataset):
-        val_set = InactiveDataset(batch_size=64, killed_this_step=self.killed_this_step)
+        val_set = InactiveDataset(batch_size=64)
 
         if len(val_others_idx) > 0:
             val_set.scores = torch.zeros(len(val_others_idx)*(self.data_augmentation+1)).to(device)
@@ -325,16 +346,17 @@ class InactiveDataset(torch.utils.data.Dataset):
 
     def get_training_set(self, inactive_tracks, tracks, val, split, val_set_random, keep_frames):
         val_idx = [[]]
-        if len(self.killed_this_step) == 0:
-            self.killed_this_step.append(inactive_tracks[-1].id)  # if no track was killed, take others from newest inactive
+        # if len(self.killed_this_step) == 0:
+        #     self.killed_this_step.append(inactive_tracks[-1].id)  # if no track was killed, take others from newest inactive
         #occ = [t.training_set.num_frames for t in inactive_tracks]
+        #occ = [t.training_set.num_frames_keep if t.training_set.num_frames_keep>1 else -1 for t in inactive_tracks]
         occ = [t.training_set.num_frames_keep for t in inactive_tracks]
         self.max_occ = max(occ) if len(occ) > 0 else 0
 
+        # get idx of validation samples
         if val:
-            #val_idx, val_others, t_val = self.get_val_idx(occ, inactive_tracks, split, newest_inactive, val_set_random)
-            val_idx, val_others_idx, others_dataset, pp = self.get_val_idx(occ, inactive_tracks, tracks, split, val_set_random)
-            self.max_occ -= len(val_idx[0])
+            val_idx, num_val, val_others_idx, others_dataset, pp = self.get_val_idx(occ, inactive_tracks, tracks, split, val_set_random)
+            self.max_occ -= num_val
 
         # get a random dataset with label 0 if just one inactive track
         train_others_idx, others_dataset, _ = self.get_others(self.max_occ, tracks, concat_dataset=others_dataset, possible_persons=pp)
@@ -350,7 +372,7 @@ class InactiveDataset(torch.utils.data.Dataset):
 
         for i, t in enumerate(inactive_tracks):
             # balance dataset, same number of examples for each class
-            # if t.training_set.num_frames < self.max_occ:
+            # if len(t.training_set.pos_unique_indices) < self.max_occ:
             #     pos_unique_indices = list(range(t.training_set.num_frames)) if t.training_set.num_frames < keep_frames else list(range(keep_frames))
             #     pos_unique_indices = self.generate_ind(pos_unique_indices, self.max_occ)
             # else:

@@ -818,7 +818,6 @@ class Tracker:
         #print("\n--- %s seconds --- for post process" % (time.time() - start_time))
 
         self.training_set = InactiveDataset(batch_size=finetuning_config['batch_size'],
-                                            killed_this_step=killed_this_step,
                                             data_augmentation=self.finetuning_config['data_augmentation'])
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
@@ -854,7 +853,7 @@ class Tracker:
         dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=training_set.batch_size)
 
         if self.finetuning_config['early_stopping_classifier']:
-            early_stopping = EarlyStopping(patience=self.finetuning_config['early_stopping_patience'], verbose=False, delta=1e-4, checkpoints=self.checkpoints)
+            early_stopping = EarlyStopping(patience=self.finetuning_config['early_stopping_patience'], verbose=False, delta=1e-3, checkpoints=self.checkpoints)
 
         if self.finetuning_config["plot_training_curves"]:
             plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks],
