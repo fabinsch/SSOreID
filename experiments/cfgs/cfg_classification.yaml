@@ -1,5 +1,5 @@
 tracktor:
-  'dataset': mot17_09_FRCNN17
+  'dataset': mot17_13_FRCNN17
   'write_images': False
   'tracker':
     motion_model:
@@ -26,5 +26,5 @@ tracktor:
       'reid_score_threshold': 0.75
       'train_iou_threshold': 2.5
       'max_displacement': 0.1
-      'data_augmentation': 5
+      'data_augmentation': 10
   'output_subdir': '2'

@@ -24,7 +24,8 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.num_frames_keep = 0
         self.num_frames = 0
         self.pos_unique_indices = None
-        self.data_augmentation = data_augmentation if data_augmentation > 0 else 1
+        #self.data_augmentation = data_augmentation if data_augmentation > 0 else 1
+        self.data_augmentation = data_augmentation
 
     def append_samples(self, training_set_dict):
         self.num_frames += 1
@@ -160,14 +161,14 @@ class IndividualDataset(torch.utils.data.Dataset):
         return
 
     def __len__(self):
-        return self.features.size()[0]
+        return self.scores.size()[0]
 
     def __getitem__(self, idx):
-        return {'features': self.features[idx, :, :, :], 'boxes': self.boxes[idx, :], 'scores': self.scores[idx]}
+        return {'features': self.features[idx:(idx+self.data_augmentation+1), :, :, :], 'boxes': self.boxes[idx, :], 'scores': self.scores[idx]*torch.ones(self.data_augmentation+1)}
 
 
 class InactiveDataset(torch.utils.data.Dataset):
-    def __init__(self, batch_size, killed_this_step=[]):
+    def __init__(self, batch_size, killed_this_step=[], data_augmentation=0):
         self.batch_size = batch_size
         self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
@@ -175,12 +176,14 @@ class InactiveDataset(torch.utils.data.Dataset):
         self.max_occ = 0
         self.min_occ = 0
         self.killed_this_step = killed_this_step
+        self.data_augmentation = data_augmentation
 
     def __len__(self):
-        return self.features.size()[0]
+        return self.scores.size()[0]
 
     def __getitem__(self, idx):
-        return {'features': self.features[idx, :, :, :], 'boxes': self.boxes[idx, :], 'scores': self.scores[idx]}
+        #return {'features': self.features[idx, :, :, :], 'boxes': self.boxes[idx, :], 'scores': self.scores[idx]}
+        return {'features': self.features[idx, :, :, :], 'scores': self.scores[idx]}
 
     def generate_ind(self, indices, occ):
         if len(indices) > 0:
@@ -212,10 +215,10 @@ class InactiveDataset(torch.utils.data.Dataset):
                 random.shuffle(possible_persons)
                 idx = possible_persons[:num]
 
-            return torch.tensor(idx), concat_dataset, possible_persons
+            return idx, concat_dataset, possible_persons
 
         else:
-            return torch.tensor([]), concat_dataset, possible_persons
+            return [], concat_dataset, possible_persons
 
 
     def get_current_idx(self, num, inactive_tracks, newest_inactive, split=0, val=False):
@@ -300,18 +303,26 @@ class InactiveDataset(torch.utils.data.Dataset):
         val_set = InactiveDataset(batch_size=64, killed_this_step=self.killed_this_step)
 
         if len(val_others_idx) > 0:
-            val_set.scores = torch.zeros(len(val_others_idx)).to(device)
+            val_set.scores = torch.zeros(len(val_others_idx)*(self.data_augmentation+1)).to(device)
             for i in val_others_idx:
-                val_set.boxes = torch.cat((val_set.boxes, other_dataset[i.long()]['boxes'].unsqueeze(0)))
-                val_set.features = torch.cat((val_set.features, other_dataset[i.long()]['features'].unsqueeze(0)))
+                val_set.boxes = torch.cat((val_set.boxes, other_dataset[i]['boxes'].unsqueeze(0)))
+                val_set.features = torch.cat((val_set.features, other_dataset[i]['features']))
 
         for i, idxs in enumerate(val_idx):
+            idx_features = self.expand_indices_augmentation(idxs)
             t = inactive_tracks[i]
-            val_set.scores = torch.cat((val_set.scores, torch.ones(len(idxs)).to(device) * (i+1)))
+            val_set.scores = torch.cat((val_set.scores, torch.ones(len(idx_features)).to(device) * (i+1)))
             val_set.boxes = torch.cat((val_set.boxes, t.training_set.boxes[idxs]))
-            val_set.features = torch.cat((val_set.features, t.training_set.features[idxs]))
+            val_set.features = torch.cat((val_set.features, t.training_set.features[idx_features]))
 
         return val_set
+
+    def expand_indices_augmentation(self, indices):
+        idx = []
+        inv = self.data_augmentation+1
+        for i in indices:
+            idx.extend(list(range(i*inv,i*inv+inv)))
+        return idx
 
 
     def get_training_set(self, inactive_tracks, tracks, val, split, val_set_random, keep_frames):
@@ -319,7 +330,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         if len(self.killed_this_step) == 0:
             self.killed_this_step.append(inactive_tracks[-1].id)  # if no track was killed, take others from newest inactive
         #occ = [t.training_set.num_frames for t in inactive_tracks]
-        occ = [t.training_set.num_frames if t.training_set.num_frames < keep_frames else keep_frames for t in inactive_tracks]
+        occ = [t.training_set.num_frames_keep for t in inactive_tracks]
         self.max_occ = max(occ) if len(occ) > 0 else 0
 
         # check when last time a track was added before this newest killed one
@@ -338,22 +349,24 @@ class InactiveDataset(torch.utils.data.Dataset):
             if len(train_others_idx) == 0:
                 print('\nkeine other tracks , nicht zu augmenten')
             print('\naugment')
-        self.scores = torch.zeros(len(train_others_idx)).to(device)
+        self.scores = torch.zeros(len(train_others_idx)*(self.data_augmentation+1)).to(device)
         # self.boxes = t_train.training_set.boxes[train_others]
         # self.features = t_train.training_set.features[train_others]
         for i in train_others_idx:
-            self.boxes = torch.cat((self.boxes, others_dataset[i.long()]['boxes'].unsqueeze(0)))
-            self.features = torch.cat((self.features, others_dataset[i.long()]['features'].unsqueeze(0)))
+            self.boxes = torch.cat((self.boxes, others_dataset[i]['boxes'].unsqueeze(0)))
+            self.features = torch.cat((self.features, others_dataset[i]['features']))
 
         for i, t in enumerate(inactive_tracks):
             # balance dataset, same number of examples for each class
-            if t.training_set.num_frames < self.max_occ:
-                pos_unique_indices = list(range(t.training_set.num_frames)) if t.training_set.num_frames < keep_frames else list(range(keep_frames))
-                pos_unique_indices = self.generate_ind(pos_unique_indices, self.max_occ)
-            else:
-                pos_unique_indices = list(range(t.training_set.num_frames)) if t.training_set.num_frames < keep_frames else list(range(keep_frames))
+            # if t.training_set.num_frames < self.max_occ:
+            #     pos_unique_indices = list(range(t.training_set.num_frames)) if t.training_set.num_frames < keep_frames else list(range(keep_frames))
+            #     pos_unique_indices = self.generate_ind(pos_unique_indices, self.max_occ)
+            # else:
+            #     pos_unique_indices = list(range(t.training_set.num_frames)) if t.training_set.num_frames < keep_frames else list(range(keep_frames))
+            pos_unique_indices = self.expand_indices_augmentation(t.training_set.pos_unique_indices)
+            pos_unique_indices_boxes = t.training_set.pos_unique_indices
             self.scores = torch.cat((self.scores, torch.ones(len(pos_unique_indices)).to(device) * (i+1)))
-            self.boxes = torch.cat((self.boxes, t.training_set.boxes[pos_unique_indices]))
+            self.boxes = torch.cat((self.boxes, t.training_set.boxes[pos_unique_indices_boxes]))
             self.features = torch.cat((self.features, t.training_set.features[pos_unique_indices]))
 
         if val:

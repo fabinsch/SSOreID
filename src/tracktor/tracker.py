@@ -9,6 +9,7 @@ from tracktor.track import Track
 from tracktor.visualization import plot_compare_bounding_boxes, VisdomLinePlotter, plot_bounding_boxes
 from tracktor.utils import bbox_overlaps, warp_pos, get_center, get_height, get_width, make_pos, EarlyStopping, clip_boxes
 from tracktor.live_dataset import InactiveDataset, IndividualDataset
+from tracktor.training_set_generation import replicate_and_randomize_boxes
 
 from torchvision.ops.boxes import clip_boxes_to_image, nms
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHead
@@ -112,13 +113,26 @@ class Tracker:
         box_roi_pool = self.obj_detect.roi_heads.box_roi_pool
         iou = bbox_overlaps(torch.cat((new_det_pos, old_tracks)), torch.cat((new_det_pos, old_tracks)))
 
+        # do augmentation in current frame
+        if self.finetuning_config['data_augmentation'] > 0:
+            boxes = torch.tensor([]).to(device)
+            for i, track in enumerate(new_det_pos):
+                box = track
+                augmented_boxes = replicate_and_randomize_boxes(box.unsqueeze(0),
+                                                                self.finetuning_config['data_augmentation'],
+                                                                self.finetuning_config['max_displacement'])
+                augmented_boxes = clip_boxes(augmented_boxes, image.size()[1:3])
+                boxes = torch.cat((boxes, torch.cat((box.unsqueeze(0), augmented_boxes))))
+        else:
+            boxes = clip_boxes(new_det_pos, image.size()[1:3])
+
         # do batched roi pooling
-        boxes = clip_boxes(new_det_pos, image.size()[1:3])
         boxes_resized = resize_boxes(boxes, image.size()[1:3], self.obj_detect.image_size[0])
         proposals = [boxes_resized]
         with torch.no_grad():
             roi_pool_feat = box_roi_pool(self.obj_detect.fpn_features, proposals, image.size()[1:3]).to(device)
 
+        roi_pool_per_track = roi_pool_feat.split(self.finetuning_config['data_augmentation'] + 1)
         for i in range(num_new):
             track = Track(new_det_pos[i].view(1, -1), new_det_scores[i], self.track_num + i,
                           new_det_features[i].view(1, -1) if new_det_features else None, self.inactive_patience, self.max_features_num,
@@ -133,7 +147,7 @@ class Tracker:
                 self.c_skipped_for_train_iou += 1
                 track.skipped_for_train += 1
                 continue
-            track.update_training_set_classification(features=roi_pool_feat[i].unsqueeze(0), pos=boxes[i].unsqueeze(0))
+            track.update_training_set_classification(features=roi_pool_per_track[i], pos=boxes[i].unsqueeze(0))
 
             # track.update_training_set_classification(self.finetuning_config['batch_size'],
             #                                      self.obj_detect.fpn_features,
@@ -397,15 +411,28 @@ class Tracker:
                     pos = remove_inactive[0].pos
                 else:
                     pos = torch.cat([t.pos for t in remove_inactive], 0)
-                boxes = clip_boxes(pos, image.size()[1:3])
+
+                # do augmentation in current frame
+                if self.finetuning_config['data_augmentation'] > 0:
+                    boxes = torch.tensor([]).to(device)
+                    for i, track in enumerate(pos):
+                        box = track
+                        augmented_boxes = replicate_and_randomize_boxes(box.unsqueeze(0), self.finetuning_config['data_augmentation'],
+                                                                        self.finetuning_config['max_displacement'])
+                        augmented_boxes = clip_boxes(augmented_boxes, image.shape[-2:])
+                        boxes = torch.cat((boxes, torch.cat((box.unsqueeze(0), augmented_boxes))))
+                else:
+                    boxes = clip_boxes(pos, image.size()[1:3])
+
                 boxes_resized = resize_boxes(boxes, image.size()[1:3], self.obj_detect.image_size[0])
                 proposals = [boxes_resized]
                 with torch.no_grad():
                     roi_pool_feat = box_roi_pool(self.obj_detect.fpn_features, proposals, image.size()[1:3]).to(device)
+                roi_pool_per_track = roi_pool_feat.split(self.finetuning_config['data_augmentation']+1)
 
             for i, inactive_track in enumerate(remove_inactive):
                 self.inactive_tracks.remove(inactive_track)
-                inactive_track.update_training_set_classification(features=roi_pool_feat[i].unsqueeze(0),
+                inactive_track.update_training_set_classification(features=roi_pool_per_track[i],
                                                                   pos=boxes[i].unsqueeze(0))
 
             keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
@@ -628,14 +655,26 @@ class Tracker:
                 active_pos = self.get_pos()
                 iou = bbox_overlaps(active_pos, active_pos)
 
+                # do augmentation in current frame
+                if self.finetuning_config['data_augmentation'] > 0:
+                    boxes = torch.tensor([]).to(device)
+                    for i, track in enumerate(self.tracks):
+                        box = active_pos[i]
+                        augmented_boxes = replicate_and_randomize_boxes(box.unsqueeze(0), self.finetuning_config['data_augmentation'],
+                                                                        self.finetuning_config['max_displacement'])
+                        augmented_boxes = clip_boxes(augmented_boxes, blob['img'].shape[-2:])
+                        boxes = torch.cat((boxes, torch.cat((box.unsqueeze(0), augmented_boxes))))
+                else:
+                    boxes = clip_boxes(active_pos, blob['img'][0].size()[1:3])
+
                 # do batched roi pooling
                 box_roi_pool = self.obj_detect.roi_heads.box_roi_pool
-                boxes = clip_boxes(active_pos, blob['img'][0].size()[1:3])
                 boxes_resized = resize_boxes(boxes, blob['img'][0].size()[1:3], self.obj_detect.image_size[0])
                 proposals = [boxes_resized]
                 with torch.no_grad():
                     roi_pool_feat = box_roi_pool(self.obj_detect.fpn_features, proposals, blob['img'][0].size()[1:3]).to(device)
 
+                roi_pool_per_track = roi_pool_feat.split(self.finetuning_config['data_augmentation']+1)
                 for i, track in enumerate(self.tracks):
                     track.frames_since_active += 1
 
@@ -649,7 +688,8 @@ class Tracker:
                         boxes_debug, scores_debug = self.obj_detect.predict_boxes(track.pos, track.box_predictor_classification_debug,track.box_head_classification_debug, pred_multiclass=True)
                         print('\n scores {}'.format(scores_debug))
 
-                    track.update_training_set_classification(features=roi_pool_feat[i].unsqueeze(0),
+                    #track.update_training_set_classification(features=roi_pool_feat[i].unsqueeze(0),
+                    track.update_training_set_classification(features=roi_pool_per_track[i],
                                                              pos=boxes[i].unsqueeze(0))
 
         # train REID model new if change in active tracks happened
@@ -777,7 +817,9 @@ class Tracker:
                t.training_set.post_process()
         #print("\n--- %s seconds --- for post process" % (time.time() - start_time))
 
-        self.training_set = InactiveDataset(batch_size=finetuning_config['batch_size'], killed_this_step=killed_this_step)
+        self.training_set = InactiveDataset(batch_size=finetuning_config['batch_size'],
+                                            killed_this_step=killed_this_step,
+                                            data_augmentation=self.finetuning_config['data_augmentation'])
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
 
@@ -817,8 +859,10 @@ class Tracker:
         if self.finetuning_config["plot_training_curves"]:
             plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks],
                                         env=self.run_name,
-                                        n_samples_train=training_set.max_occ,
-                                        n_samples_val=training_set.min_occ,
+                                        n_samples_train=len(dataloader_train.dataset),
+                                        #n_samples_train=training_set.max_occ,
+                                        n_samples_val=len(dataloader_val.dataset),
+                                        #n_samples_val=training_set.min_occ,
                                         im=self.im_index)
 
         # if no val set available, not early stopping possible - make sure to optimize at least 10 epochs
