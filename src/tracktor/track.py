@@ -21,7 +21,7 @@ class Track(object):
         self.id = track_id
         self.pos = pos
         self.score = score
-        self.features = deque([features])
+        #self.features = deque([features])
         self.ims = deque([])
         self.count_inactive = 0
         self.inactive_patience = inactive_patience

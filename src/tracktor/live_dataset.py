@@ -196,8 +196,8 @@ class InactiveDataset(torch.utils.data.Dataset):
             return []
 
     def get_others(self, num, tracks, concat_dataset=None, possible_persons=[], split=0, val=False, ):
-        if len(tracks) > 0:
-            idx = []
+        num_tracks = len(tracks)
+        if num_tracks > 0:
             if concat_dataset == None:
                 tracks_dataset = [t.training_set for t in tracks]
                 concat_dataset = ConcatDataset(tracks_dataset)
@@ -277,10 +277,14 @@ class InactiveDataset(torch.utils.data.Dataset):
         val_idx = []
         exclude_for_val = []
         just_one_sample_for_val = []
+        org_min_occ = min(occ) if len(occ) > 0 else 0
         while True:
             min_occ = min(occ) if len(occ) > 0 else 0
             if min_occ >= 5 or min_occ == 0:
-                self.min_occ = min_occ
+                if min_occ == 1000:
+                    self.min_occ = org_min_occ
+                else:
+                    self.min_occ = min_occ
                 break
             else:
                 # this would results in not creating a validation set
@@ -361,7 +365,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         # get a random dataset with label 0 if just one inactive track
         train_others_idx, others_dataset, _ = self.get_others(self.max_occ, tracks, concat_dataset=others_dataset, possible_persons=pp)
         if len(train_others_idx) < self.max_occ:
-            #train_others = self.generate_ind(train_others_idx, self.max_occ)
+            train_others = self.generate_ind(train_others_idx, self.max_occ)
             if len(train_others_idx) == 0:
                 print('\nkeine other tracks , nicht zu augmenten')
             print('\naugment')
@@ -372,13 +376,10 @@ class InactiveDataset(torch.utils.data.Dataset):
 
         for i, t in enumerate(inactive_tracks):
             # balance dataset, same number of examples for each class
-            # if len(t.training_set.pos_unique_indices) < self.max_occ:
-            #     pos_unique_indices = list(range(t.training_set.num_frames)) if t.training_set.num_frames < keep_frames else list(range(keep_frames))
-            #     pos_unique_indices = self.generate_ind(pos_unique_indices, self.max_occ)
-            # else:
-            #     pos_unique_indices = list(range(t.training_set.num_frames)) if t.training_set.num_frames < keep_frames else list(range(keep_frames))
+            if len(t.training_set.pos_unique_indices) < self.max_occ:
+                t.training_set.pos_unique_indices = self.generate_ind(t.training_set.pos_unique_indices, self.max_occ)
             pos_unique_indices = self.expand_indices_augmentation(t.training_set.pos_unique_indices)
-            pos_unique_indices_boxes = t.training_set.pos_unique_indices
+            #pos_unique_indices_boxes = t.training_set.pos_unique_indices
             self.scores = torch.cat((self.scores, torch.ones(len(pos_unique_indices)).to(device) * (i+1)))
             #self.boxes = torch.cat((self.boxes, t.training_set.boxes[pos_unique_indices_boxes]))
             self.features = torch.cat((self.features, t.training_set.features[pos_unique_indices]))
