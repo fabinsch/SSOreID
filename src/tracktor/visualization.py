@@ -68,7 +68,7 @@ class VisdomLinePlotter(object):
         if split_name=='train':
             name = split_name+' #{}'.format(self.n_samples_train)
         elif split_name =='val':
-            name = split_name+' #{}'.format(int(self.n_samples_val*0.2))
+            name = split_name+' #{}'.format(self.n_samples_val)
         else:
             print('error, splitname incorrect')
 

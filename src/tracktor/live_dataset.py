@@ -165,7 +165,8 @@ class IndividualDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         #return {'features': self.features[idx:(idx+self.data_augmentation+1), :, :, :], 'boxes': self.boxes[idx, :], 'scores': self.scores[idx]*torch.ones(self.data_augmentation+1)}
-        return {'features': self.features[idx:(idx+self.data_augmentation+1), :, :, :], 'scores': self.scores[idx]*torch.ones(self.data_augmentation+1)}
+        intervall = self.data_augmentation + 1  # has to be jumped to get corresponding features
+        return {'features': self.features[idx*intervall:(idx*intervall+intervall), :, :, :], 'scores': self.scores[idx]*torch.ones(self.data_augmentation+1)}
 
 
 class InactiveDataset(torch.utils.data.Dataset):

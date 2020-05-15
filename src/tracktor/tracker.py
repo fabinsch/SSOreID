@@ -850,7 +850,9 @@ class Tracker:
 
         assert training_set.scores[-1] == len(self.inactive_tracks)
         dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=training_set.batch_size, shuffle=True)
-        dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=training_set.batch_size)
+        if len(val_set) > 0:
+            #dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=training_set.batch_size, shuffle=True)
+            dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=training_set.batch_size)
 
         if self.finetuning_config['early_stopping_classifier']:
             early_stopping = EarlyStopping(patience=self.finetuning_config['early_stopping_patience'], verbose=False, delta=1e-4, checkpoints=self.checkpoints)
@@ -860,7 +862,7 @@ class Tracker:
                                         env=self.run_name,
                                         n_samples_train=len(dataloader_train.dataset),
                                         #n_samples_train=training_set.max_occ,
-                                        n_samples_val=len(dataloader_val.dataset),
+                                        n_samples_val=len(val_set),
                                         #n_samples_val=training_set.min_occ,
                                         im=self.im_index)
 
@@ -899,7 +901,7 @@ class Tracker:
             #     break
 
 
-            if self.finetuning_config["validate"]:
+            if self.finetuning_config["validate"] and len(val_set) > 0:
                 run_loss_val = 0.0
                 run_acc_val = 0.0
                 with torch.no_grad():
