@@ -196,31 +196,60 @@ class InactiveDataset(torch.utils.data.Dataset):
         else:
             return []
 
-    def get_others(self, num, tracks, concat_dataset=None, possible_persons=[], split=0, val=False, ):
+    def get_others(self, num, tracks, concat_dataset=None, c_tracks=0, split=0, val=False):
         num_tracks = len(tracks)
         if num_tracks > 0:
-            if concat_dataset == None:
-                tracks_dataset = [t.training_set for t in tracks]
-                concat_dataset = ConcatDataset(tracks_dataset)
-                num_possible_persons = len(concat_dataset)
-                possible_persons = list(range(num_possible_persons))
-            else:
-                num_possible_persons = len(possible_persons)
+
+            num_frames = [t.frames_since_active for t in tracks]
+            num_frames_total = sum(num_frames)  # here in training eig noch number der validation other abziehen
 
             if val:
-                num = num if num < int(num_possible_persons * split) else int(num_possible_persons * split)
-                random.shuffle(possible_persons)
-                idx = possible_persons[:num]
-                possible_persons = possible_persons[num+1:]
-            else:
-                num = num if num < num_possible_persons else num_possible_persons
-                random.shuffle(possible_persons)
-                idx = possible_persons[:num]
+                s = 0
+                current_num = 0
+                c_tracks = 0
+                num = num if num < int(num_frames_total * split) else int(num_frames_total * split)
+                for n in num_frames[::-1]:
+                    current_num += n
+                    c_tracks += 1
+                    if current_num >= num:
+                        e = c_tracks
+                        break
 
-            return idx, concat_dataset, possible_persons
+            else:
+                num = num if num < num_frames_total else num_frames_total
+                s = c_tracks
+                e = -1
+
+            tracks_dataset = [t.training_set for t in tracks][::-1]
+            concat_dataset = ConcatDataset(tracks_dataset[s:e])
+
+            return list(range(num)), concat_dataset, c_tracks
 
         else:
-            return [], concat_dataset, possible_persons
+            return [], concat_dataset, c_tracks
+
+        #     if concat_dataset == None:
+        #         tracks_dataset = [t.training_set for t in tracks]
+        #         concat_dataset = ConcatDataset(tracks_dataset)
+        #         num_possible_persons = len(concat_dataset)
+        #         possible_persons = list(range(num_possible_persons))
+        #     else:
+        #         num_possible_persons = len(possible_persons)
+        #
+        #     if val:
+        #         num = num if num < int(num_possible_persons * split) else int(num_possible_persons * split)
+        #         random.shuffle(possible_persons)
+        #         idx = possible_persons[:num]
+        #         possible_persons = possible_persons[num+1:]
+        #     else:
+        #         num = num if num < num_possible_persons else num_possible_persons
+        #         random.shuffle(possible_persons)
+        #         idx = possible_persons[:num]
+        #
+        #     return idx, concat_dataset, possible_persons
+        #
+        # else:
+        #     return [], concat_dataset, possible_persons
 
 
     def get_current_idx(self, num, inactive_tracks, newest_inactive, split=0, val=False):
@@ -318,10 +347,10 @@ class InactiveDataset(torch.utils.data.Dataset):
             val_idx.append(idx)
 
         num_val = int(self.min_occ * split)
-        others_idx, others_dataset, pp = self.get_others(num_val, tracks, split=split, val=True)
+        others_idx, others_dataset, c_tracks = self.get_others(num_val, tracks, split=split, val=True)
         #if len(val_others_this_step) < num_val:
          #   val_others_this_step = self.generate_ind(val_others_this_step, num_val)
-        return val_idx, num_val, others_idx, others_dataset, pp
+        return val_idx, num_val, others_idx, others_dataset, c_tracks
 
     def get_val_set(self, val_idx, val_others_idx, inactive_tracks, other_dataset):
         val_set = InactiveDataset(batch_size=64)
@@ -360,11 +389,11 @@ class InactiveDataset(torch.utils.data.Dataset):
 
         # get idx of validation samples
         if val:
-            val_idx, num_val, val_others_idx, others_dataset, pp = self.get_val_idx(occ, inactive_tracks, tracks, split, val_set_random)
+            val_idx, num_val, val_others_idx, others_dataset, c_tracks = self.get_val_idx(occ, inactive_tracks, tracks, split, val_set_random)
             self.max_occ -= num_val
 
         # get a random dataset with label 0 if just one inactive track
-        train_others_idx, others_dataset, _ = self.get_others(self.max_occ, tracks, concat_dataset=others_dataset, possible_persons=pp)
+        train_others_idx, others_dataset, _ = self.get_others(self.max_occ, tracks, concat_dataset=others_dataset, c_tracks=c_tracks)
         if len(train_others_idx) < self.max_occ:
             train_others = self.generate_ind(train_others_idx, self.max_occ)
             if len(train_others_idx) == 0:

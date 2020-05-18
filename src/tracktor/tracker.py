@@ -311,6 +311,7 @@ class Tracker:
     def reid_by_finetuned_model_(self, new_det_pos, new_det_scores, frame, image):
         """Do reid with one model predicting the score for each inactive track"""
         current_inactive_tracks_id = [t.id for t in self.inactive_tracks]
+        samples_per_track = [t.training_set.num_frames_keep for t in self.inactive_tracks]
         assert current_inactive_tracks_id == self.inactive_tracks_id
         active_tracks = self.get_pos()
         if len(new_det_pos.size()) > 1 and len(self.inactive_tracks) > 0:
@@ -325,8 +326,10 @@ class Tracker:
                                                           box_head_classification=self.box_head_classification,
                                                           pred_multiclass=True)
 
-            if frame==420:
-                print('\n scores for REID: {}'.format(scores))
+            #if frame==420:
+            if frame>=0:
+                print('\n scores reID: {}'.format(scores))
+                print('\n IDs: {} with respectively {} samples'.format(current_inactive_tracks_id, samples_per_track))
 
             # calculate IoU distances
             iou = bbox_overlaps(new_det_pos, inactive_tracks)
@@ -849,7 +852,7 @@ class Tracker:
         #print("\n--- %s seconds --- for getting datasets" % (time.time() - start_time))
 
         assert training_set.scores[-1] == len(self.inactive_tracks)
-        dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=training_set.batch_size, shuffle=True)
+        dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=training_set.batch_size, shuffle=True, drop_last=True)
         if len(val_set) > 0:
             #dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=training_set.batch_size, shuffle=True)
             dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=training_set.batch_size)
@@ -860,7 +863,7 @@ class Tracker:
         if self.finetuning_config["plot_training_curves"]:
             plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks],
                                         env=self.run_name,
-                                        n_samples_train=len(dataloader_train.dataset),
+                                        n_samples_train=len(training_set),
                                         #n_samples_train=training_set.max_occ,
                                         n_samples_val=len(val_set),
                                         #n_samples_val=training_set.min_occ,
@@ -878,6 +881,8 @@ class Tracker:
             start_time = time.time()
             run_loss = 0.0
             run_acc = 0.0
+            total = 0
+            correct = 0
             for i_sample, sample_batch in enumerate(dataloader_train):
                 optimizer.zero_grad()
                 loss = self.forward_pass_for_classifier_training(sample_batch['features'],
@@ -887,15 +892,15 @@ class Tracker:
                     pred_scores = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                           sample_batch['scores'], eval=True, return_scores=True)
                     mask = torch.argmax(pred_scores, dim=1, keepdim=True).squeeze()
-                    corr = torch.sum(mask == sample_batch['scores'])
-                    run_acc += 100 * corr.item()
+                    correct += torch.sum(mask == sample_batch['scores']).item()
                 loss.backward()
                 optimizer.step()
                 run_loss += loss.detach().item() / len(sample_batch['scores'])
+                total += len(sample_batch['scores'])
 
             scheduler.step()
-            if finetuning_config["plot_training_curves"]:
-                plotter.plot_(epoch=i, loss=run_loss, acc=run_acc / len(dataloader_train.dataset), split_name='train')
+            if finetuning_config["plot_training_curves"] and total > 0:
+                plotter.plot_(epoch=i, loss=run_loss, acc=100 * correct / total, split_name='train')
 
             # if train_acc_criterion and (run_acc / len(dataloader_train.dataset)) == 100:
             #     break
@@ -904,6 +909,8 @@ class Tracker:
             if self.finetuning_config["validate"] and len(val_set) > 0:
                 run_loss_val = 0.0
                 run_acc_val = 0.0
+                total = 0
+                correct = 0
                 with torch.no_grad():
                     for i_sample, sample_batch in enumerate(dataloader_val):
                         loss_val = self.forward_pass_for_classifier_training(sample_batch['features'],
@@ -912,11 +919,11 @@ class Tracker:
                         pred_scores_val = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                               sample_batch['scores'], eval=True, return_scores=True)
                         mask = torch.argmax(pred_scores_val, dim=1, keepdim=True).squeeze()
-                        corr = torch.sum(mask == sample_batch['scores'])
-                        run_acc_val += 100 * corr.item()
+                        correct += torch.sum(mask == sample_batch['scores']).item()
+                        total += len(sample_batch['scores'])
 
                 if finetuning_config["plot_training_curves"] and len(val_set) > 0:
-                    plotter.plot_(epoch=i+1, loss=run_loss_val, acc=run_acc_val/len(dataloader_val.dataset), split_name='val')
+                    plotter.plot_(epoch=i+1, loss=run_loss_val, acc=100 * correct / total, split_name='val')
 
             if self.finetuning_config['early_stopping_classifier'] and len(val_set) > 0:
                 models = [self.box_predictor_classification, self.box_head_classification]
