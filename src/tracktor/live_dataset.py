@@ -380,6 +380,8 @@ class InactiveDataset(torch.utils.data.Dataset):
 
     def get_training_set(self, inactive_tracks, tracks, val, split, val_set_random, keep_frames):
         val_idx = [[]]
+        others_dataset = None
+        c_tracks = 0
         # if len(self.killed_this_step) == 0:
         #     self.killed_this_step.append(inactive_tracks[-1].id)  # if no track was killed, take others from newest inactive
         #occ = [t.training_set.num_frames for t in inactive_tracks]
@@ -418,5 +420,5 @@ class InactiveDataset(torch.utils.data.Dataset):
             val_set = self.get_val_set(val_idx, val_others_idx, inactive_tracks, others_dataset)
             return self, val_set
 
-        return self, self
+        return self, []
 
