@@ -1,5 +1,5 @@
 tracktor:
-  'dataset': mot17_09_FRCNN17
+  'dataset': mot17_02_FRCNN17
   'write_images': True
   'tracker':
     motion_model:
@@ -15,7 +15,7 @@ tracktor:
       'epochs':  100
       'learning_rate': 1e-4
       'batch_size': 0
-      'validate': False
+      'validate': True
       # how many samples per person should be included in val set [in %]
       'val_split': 0.2
       'val_set_random': False
@@ -26,5 +26,5 @@ tracktor:
       'reid_score_threshold': 0.75
       'train_iou_threshold': 2.5
       'max_displacement': 0.01
-      'data_augmentation': 50
+      'data_augmentation': 49
   'output_subdir': '13'

@@ -436,7 +436,7 @@ class Tracker:
             for i, inactive_track in enumerate(remove_inactive):
                 self.inactive_tracks.remove(inactive_track)
                 inactive_track.update_training_set_classification(features=roi_pool_per_track[i],
-                                                                  pos=boxes[i].unsqueeze(0))
+                                                                  pos=boxes[i+self.finetuning_config['data_augmentation']].unsqueeze(0))
 
             keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
             if keep.nelement() > 0:
@@ -693,7 +693,7 @@ class Tracker:
 
                     #track.update_training_set_classification(features=roi_pool_feat[i].unsqueeze(0),
                     track.update_training_set_classification(features=roi_pool_per_track[i],
-                                                             pos=boxes[i].unsqueeze(0))
+                                                             pos=boxes[i+self.finetuning_config['data_augmentation']].unsqueeze(0))
 
         # train REID model new if change in active tracks happened
         current_inactive_tracks_id = [t.id for t in self.inactive_tracks]

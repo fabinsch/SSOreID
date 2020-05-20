@@ -196,37 +196,41 @@ class InactiveDataset(torch.utils.data.Dataset):
         else:
             return []
 
-    def get_others(self, num, tracks, concat_dataset=None, c_tracks=0, split=0, val=False):
+    def get_others(self, num, tracks, concat_dataset=None, c_tracks=0, split=0, val=False, num_val=0):
+        current_num = 0
         num_tracks = len(tracks)
         if num_tracks > 0:
 
             num_frames = [t.frames_since_active for t in tracks]
-            num_frames_total = sum(num_frames)  # here in training eig noch number der validation other abziehen
+            num_frames_total = sum(num_frames) - num_val
 
             if val:
-                s = 0
-                current_num = 0
-                c_tracks = 0
-                num = num if num < int(num_frames_total * split) else int(num_frames_total * split)
-                for n in num_frames[::-1]:
-                    current_num += n
-                    c_tracks += 1
-                    if current_num >= num:
-                        e = c_tracks
-                        break
+                if num_tracks > 1:
+                    s = 0
+                    c_tracks = 0
+                    num = num if num < int(num_frames_total * split) else int(num_frames_total * split)
+                    for n in num_frames[::-1]:
+                        current_num += n
+                        c_tracks += 1
+                        if current_num >= num:
+                            e = c_tracks
+                            break
+                else:
+                    return [], concat_dataset, c_tracks, current_num
+
 
             else:
                 num = num if num < num_frames_total else num_frames_total
                 s = c_tracks
-                e = -1
+                e = None
 
             tracks_dataset = [t.training_set for t in tracks][::-1]
             concat_dataset = ConcatDataset(tracks_dataset[s:e])
 
-            return list(range(num)), concat_dataset, c_tracks
+            return list(range(num)), concat_dataset, c_tracks, current_num
 
         else:
-            return [], concat_dataset, c_tracks
+            return [], concat_dataset, c_tracks, current_num
 
         #     if concat_dataset == None:
         #         tracks_dataset = [t.training_set for t in tracks]
@@ -347,10 +351,10 @@ class InactiveDataset(torch.utils.data.Dataset):
             val_idx.append(idx)
 
         num_val = int(self.min_occ * split)
-        others_idx, others_dataset, c_tracks = self.get_others(num_val, tracks, split=split, val=True)
+        others_idx, others_dataset, c_tracks, num_exclude = self.get_others(num_val, tracks, split=split, val=True)
         #if len(val_others_this_step) < num_val:
          #   val_others_this_step = self.generate_ind(val_others_this_step, num_val)
-        return val_idx, num_val, others_idx, others_dataset, c_tracks
+        return val_idx, num_val, others_idx, others_dataset, c_tracks, num_exclude
 
     def get_val_set(self, val_idx, val_others_idx, inactive_tracks, other_dataset):
         val_set = InactiveDataset(batch_size=64)
@@ -391,11 +395,11 @@ class InactiveDataset(torch.utils.data.Dataset):
 
         # get idx of validation samples
         if val:
-            val_idx, num_val, val_others_idx, others_dataset, c_tracks = self.get_val_idx(occ, inactive_tracks, tracks, split, val_set_random)
+            val_idx, num_val, val_others_idx, others_dataset, c_tracks, num_exclude = self.get_val_idx(occ, inactive_tracks, tracks, split, val_set_random)
             self.max_occ -= num_val
 
         # get a random dataset with label 0 if just one inactive track
-        train_others_idx, others_dataset, _ = self.get_others(self.max_occ, tracks, concat_dataset=others_dataset, c_tracks=c_tracks)
+        train_others_idx, others_dataset, _, _ = self.get_others(self.max_occ, tracks, concat_dataset=others_dataset, c_tracks=c_tracks, num_val=num_exclude)
         if len(train_others_idx) < self.max_occ:
             train_others = self.generate_ind(train_others_idx, self.max_occ)
             if len(train_others_idx) == 0:
