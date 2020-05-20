@@ -218,7 +218,7 @@ class InactiveDataset(torch.utils.data.Dataset):
             else:
                 num = num if num < num_frames_total else num_frames_total
                 s = c_tracks
-                e = -1
+                e = None
 
             tracks_dataset = [t.training_set for t in tracks][::-1]
             concat_dataset = ConcatDataset(tracks_dataset[s:e])
