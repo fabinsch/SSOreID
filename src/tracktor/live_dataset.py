@@ -386,6 +386,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         val_idx = [[]]
         others_dataset = None
         c_tracks = 0
+        num_exclude = 0
         # if len(self.killed_this_step) == 0:
         #     self.killed_this_step.append(inactive_tracks[-1].id)  # if no track was killed, take others from newest inactive
         #occ = [t.training_set.num_frames for t in inactive_tracks]

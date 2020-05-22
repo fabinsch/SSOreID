@@ -1,6 +1,6 @@
 tracktor:
-  'dataset': mot17_02_FRCNN17
-  'write_images': True
+  'dataset': mot17_train_FRCNN17
+  'write_images': False
   'tracker':
     motion_model:
       enabled: True
@@ -19,12 +19,12 @@ tracktor:
       # how many samples per person should be included in val set [in %]
       'val_split': 0.2
       'val_set_random': False
-      'plot_training_curves': True
+      'plot_training_curves': False
       'early_stopping_classifier': True
       'early_stopping_patience': 7
       'reset_dataset': True
-      'reid_score_threshold': 0.75
+      'reid_score_threshold': 0.95
       'train_iou_threshold': 2.5
       'max_displacement': 0.01
-      'data_augmentation': 10
+      'data_augmentation': 0
   'output_subdir': '13'

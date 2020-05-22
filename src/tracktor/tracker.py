@@ -799,7 +799,7 @@ class Tracker:
                 self.box_head_classification.train()
             return pred_scores.detach()
             #return pred_scores[:, 1:].squeeze(dim=1).detach()
-        loss = F.cross_entropy(class_logits, scores.long())
+        loss = F.cross_entropy(class_logits, scores.long(), reduction='sum')
         if eval:
             self.box_predictor_classification.train()
             self.box_head_classification.train()
