@@ -400,7 +400,7 @@ class InactiveDataset(torch.utils.data.Dataset):
             self.max_occ -= num_val
 
         # get a random dataset with label 0 if just one inactive track
-        train_others_idx, others_dataset, _, _ = self.get_others(self.max_occ, tracks, concat_dataset=others_dataset, c_tracks=c_tracks, num_val=num_exclude)
+        train_others_idx, train_others_dataset, _, _ = self.get_others(self.max_occ, tracks, concat_dataset=others_dataset, c_tracks=c_tracks, num_val=num_exclude)
         if len(train_others_idx) < self.max_occ:
             train_others = self.generate_ind(train_others_idx, self.max_occ)
             if len(train_others_idx) == 0:
@@ -409,7 +409,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         self.scores = torch.zeros(len(train_others_idx)*(self.data_augmentation+1)).to(device)
         for i in train_others_idx:
             #self.boxes = torch.cat((self.boxes, others_dataset[i]['boxes'].unsqueeze(0)))
-            self.features = torch.cat((self.features, others_dataset[i]['features']))
+            self.features = torch.cat((self.features, train_others_dataset[i]['features']))
 
         for i, t in enumerate(inactive_tracks):
             # balance dataset, same number of examples for each class
