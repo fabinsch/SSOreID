@@ -74,6 +74,7 @@ tracktor:
       feature_collection_interval: 1
       # Number of epochs model is tuned
       epochs: 100
+      epochs_wo_val: 100
       # Learning rate for the finetuning
       learning_rate: 5e-4
       # number of rois generated per batch for training

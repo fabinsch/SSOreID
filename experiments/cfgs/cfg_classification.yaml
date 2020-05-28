@@ -1,9 +1,9 @@
 tracktor:
-  'dataset': mot17_13_FRCNN17
+  'dataset': mot17_09_FRCNN17
   'write_images': False
   'tracker':
     motion_model:
-      enabled: True
+      enabled: False
       # average velocity over last n_steps steps
       n_steps: 5
       # if true, only model the movement of the bounding box center. If false, width and height are also modeled.
@@ -12,19 +12,20 @@ tracktor:
     'reid_iou_threshold': 0.2
     'finetuning':
       'keep_frames': 40
-      'epochs':  150
-      'learning_rate': 1e-5
-      'batch_size': 64
-      'validate': True
+      'epochs':  100
+      'epochs_wo_val': 150
+      'learning_rate': 2e-4
+      'batch_size': 0
+      'validate': False
       # how many samples per person should be included in val set [in %]
       'val_split': 0.2
       'val_set_random': False
       'plot_training_curves': True
       'early_stopping_classifier': True
-      'early_stopping_patience': 100
+      'early_stopping_patience': 7
       'reset_dataset': True
       'reid_score_threshold': 0.75
       'train_iou_threshold': 2.5
       'max_displacement': 0.01
       'data_augmentation': 0
-  'output_subdir': '13'
+  'output_subdir': '18'

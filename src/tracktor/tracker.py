@@ -56,6 +56,7 @@ class Tracker:
         self.track_num = 0
         self.im_index = 0
         self.results = {}
+        self.others_db = {}
 
         self.inactive_tracks_id = []
         self.inactive_number_changes = 0
@@ -396,7 +397,6 @@ class Tracker:
                     if self.finetuning_config['reset_dataset']:
                         inactive_track.frames_since_active = 1
                         inactive_track.training_set = IndividualDataset(inactive_track.id,
-                                                                        self.finetuning_config['batch_size'],
                                                                         self.finetuning_config['keep_frames'],
                                                                         self.finetuning_config['data_augmentation']
                                                                         )
@@ -757,7 +757,9 @@ class Tracker:
         for t in self.tracks:
             if t.id not in self.results.keys():
                 self.results[t.id] = {}
+                self.others_db[t.id] = torch.tensor([]).to(device)
             self.results[t.id][self.im_index] = np.concatenate([t.pos[0].cpu().numpy(), np.array([t.score.cpu()])])
+            self.others_db[t.id] = t.training_set.features
 
         for t in self.inactive_tracks:
             t.count_inactive += 1
@@ -819,14 +821,18 @@ class Tracker:
                t.training_set.post_process()
         #print("\n--- %s seconds --- for post process" % (time.time() - start_time))
 
-        self.training_set = InactiveDataset(batch_size=finetuning_config['batch_size'],
-                                            data_augmentation=self.finetuning_config['data_augmentation'])
+        self.training_set = InactiveDataset(data_augmentation=self.finetuning_config['data_augmentation'],
+                                            others_db=self.others_db)
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
 
         self.box_predictor_classification.train()
         self.box_head_classification.train()
-        optimizer = torch.optim.Adam(
+        # optimizer = torch.optim.Adam(
+        #     list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()),
+        #     lr=float(finetuning_config["learning_rate"]))
+
+        optimizer = torch.optim.SGD(
             list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()),
             lr=float(finetuning_config["learning_rate"]))
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 2, gamma=finetuning_config['gamma'])
@@ -851,7 +857,7 @@ class Tracker:
         #print("\n--- %s seconds --- for getting datasets" % (time.time() - start_time))
 
         assert training_set.scores[-1] == len(self.inactive_tracks)
-        batch_size = training_set.batch_size if training_set.batch_size > 0 else len(training_set)
+        batch_size = self.finetuning_config['batch_size'] if self.finetuning_config['batch_size'] > 0 else len(training_set)
         #dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=training_set.batch_size, shuffle=True, drop_last=True)
         dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=batch_size, shuffle=True)
         dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=batch_size) if len(val_set) > 0 else 0
@@ -872,7 +878,7 @@ class Tracker:
         if len(val_set) > 0:
             ep = int(finetuning_config["epochs"])
         else:
-            ep = 20
+            ep = int(finetuning_config["epochs_wo_val"])
 
         for i in range(ep):
             if self.finetuning_config["validate"] and len(val_set) > 0:
