@@ -7,7 +7,7 @@ import datetime
 
 from tracktor.track import Track
 from tracktor.visualization import plot_compare_bounding_boxes, VisdomLinePlotter, plot_bounding_boxes
-from tracktor.utils import bbox_overlaps, warp_pos, get_center, get_height, get_width, make_pos, EarlyStopping, clip_boxes
+from tracktor.utils import bbox_overlaps, warp_pos, get_center, get_height, get_width, make_pos, EarlyStopping, clip_boxes, EarlyStopping2
 from tracktor.live_dataset import InactiveDataset, IndividualDataset
 from tracktor.training_set_generation import replicate_and_randomize_boxes
 
@@ -74,6 +74,7 @@ class Tracker:
         self.c_just_one_frame_active = 0
         self.c_skipped_for_train_iou = 0
         self.c_skipped_and_just_and_frame_active = 0
+        self.trained_epochs = []
 
     def reset(self, hard=True):
         self.tracks = []
@@ -125,7 +126,8 @@ class Tracker:
                 augmented_boxes = clip_boxes(augmented_boxes, image.size()[1:3])
                 boxes = torch.cat((boxes, torch.cat((box.unsqueeze(0), augmented_boxes))))
         else:
-            boxes = clip_boxes(new_det_pos, image.size()[1:3])
+            #boxes = clip_boxes(new_det_pos, image.size()[1:3])
+            boxes = new_det_pos
 
         # do batched roi pooling
         boxes_resized = resize_boxes(boxes, image.size()[1:3], self.obj_detect.image_size[0])
@@ -148,13 +150,8 @@ class Tracker:
                 self.c_skipped_for_train_iou += 1
                 track.skipped_for_train += 1
                 continue
-            track.update_training_set_classification(features=roi_pool_per_track[i], pos=boxes[i].unsqueeze(0))
-
-            # track.update_training_set_classification(self.finetuning_config['batch_size'],
-            #                                      self.obj_detect.fpn_features,
-            #                                      include_previous_frames=True)
-
-
+            track.update_training_set_classification(features=roi_pool_per_track[i],
+                                                     pos=boxes[i+self.finetuning_config['data_augmentation']].unsqueeze(0))
 
         self.track_num += num_new
 
@@ -314,7 +311,7 @@ class Tracker:
         current_inactive_tracks_id = [t.id for t in self.inactive_tracks]
         samples_per_track = [t.training_set.num_frames_keep for t in self.inactive_tracks]
         assert current_inactive_tracks_id == self.inactive_tracks_id
-        active_tracks = self.get_pos()
+        #active_tracks = self.get_pos()
         if len(new_det_pos.size()) > 1 and len(self.inactive_tracks) > 0:
             remove_inactive = []
             det_index_to_candidate = defaultdict(list)
@@ -389,7 +386,7 @@ class Tracker:
                         inactive_track.add_classifier(self.box_predictor_classification, self.box_head_classification)
 
                     # reset inactive track
-                    inactive_track.count_inactive = 1
+                    inactive_track.count_inactive = 0
                     inactive_track.pos = new_det_pos[det_index].view(1, -1)
                     inactive_track.reset_last_pos()
                     inactive_track.skipped_for_train = 0
@@ -425,7 +422,8 @@ class Tracker:
                         augmented_boxes = clip_boxes(augmented_boxes, image.shape[-2:])
                         boxes = torch.cat((boxes, torch.cat((box.unsqueeze(0), augmented_boxes))))
                 else:
-                    boxes = clip_boxes(pos, image.size()[1:3])
+                    #boxes = clip_boxes(pos, image.size()[1:3])
+                    boxes = pos
 
                 boxes_resized = resize_boxes(boxes, image.size()[1:3], self.obj_detect.image_size[0])
                 proposals = [boxes_resized]
@@ -662,13 +660,15 @@ class Tracker:
                 if self.finetuning_config['data_augmentation'] > 0:
                     boxes = torch.tensor([]).to(device)
                     for i, track in enumerate(self.tracks):
-                        box = active_pos[i]
-                        augmented_boxes = replicate_and_randomize_boxes(box.unsqueeze(0), self.finetuning_config['data_augmentation'],
+                        box = track.pos # shape (1,4)
+                        augmented_boxes = replicate_and_randomize_boxes(box, self.finetuning_config['data_augmentation'],
                                                                         self.finetuning_config['max_displacement'])
                         augmented_boxes = clip_boxes(augmented_boxes, blob['img'].shape[-2:])
-                        boxes = torch.cat((boxes, torch.cat((box.unsqueeze(0), augmented_boxes))))
+                        boxes = torch.cat((boxes, torch.cat((box, augmented_boxes))))
                 else:
-                    boxes = clip_boxes(active_pos, blob['img'][0].size()[1:3])
+                    #boxes = clip_boxes(active_pos, blob['img'][0].size()[1:3])
+                    # no more clipping needed, as pos in tracks is clipped
+                    boxes = active_pos
 
                 # do batched roi pooling
                 box_roi_pool = self.obj_detect.roi_heads.box_roi_pool
@@ -697,7 +697,7 @@ class Tracker:
 
         # train REID model new if change in active tracks happened
         current_inactive_tracks_id = [t.id for t in self.inactive_tracks]
-        if (current_inactive_tracks_id != self.inactive_tracks_id):
+        if (current_inactive_tracks_id != self.inactive_tracks_id) or self.killed_this_step:
             if self.finetuning_config["for_reid"]:
                 box_head_copy_for_classifier = self.get_box_head(reset=True)  # get head and load weights
                 box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.inactive_tracks))  # get predictor with corrsponding output number
@@ -783,7 +783,6 @@ class Tracker:
         self.last_image = blob['img'][0]
 
 
-
     def get_results(self):
         return self.results
 
@@ -801,7 +800,7 @@ class Tracker:
                 self.box_head_classification.train()
             return pred_scores.detach()
             #return pred_scores[:, 1:].squeeze(dim=1).detach()
-        loss = F.cross_entropy(class_logits, scores.long(), reduction='sum')
+        loss = F.cross_entropy(class_logits, scores.long())
         if eval:
             self.box_predictor_classification.train()
             self.box_head_classification.train()
@@ -828,13 +827,17 @@ class Tracker:
 
         self.box_predictor_classification.train()
         self.box_head_classification.train()
-        # optimizer = torch.optim.Adam(
-        #     list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()),
-        #     lr=float(finetuning_config["learning_rate"]))
+        if self.finetuning_config['optimizer']=='adam':
+            optimizer = torch.optim.Adam(
+                list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()),
+                lr=float(finetuning_config["learning_rate"]))
+        elif self.finetuning_config['optimizer']=='sgd':
+            optimizer = torch.optim.SGD(
+                list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()),
+                lr=float(finetuning_config["learning_rate"]))
+        else:
+            print('\ninvalid optimizer')
 
-        optimizer = torch.optim.SGD(
-            list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()),
-            lr=float(finetuning_config["learning_rate"]))
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 2, gamma=finetuning_config['gamma'])
 
         # debug reduce dataset for ID 22 where occluded
@@ -863,7 +866,8 @@ class Tracker:
         dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=batch_size) if len(val_set) > 0 else 0
 
         if self.finetuning_config['early_stopping_classifier']:
-            early_stopping = EarlyStopping(patience=self.finetuning_config['early_stopping_patience'], verbose=False, delta=1e-4, checkpoints=self.checkpoints)
+            early_stopping = EarlyStopping(patience=self.finetuning_config['early_stopping_patience'], verbose=False, delta=1e-3, checkpoints=self.checkpoints)
+            early_stopping2 = EarlyStopping2(verbose=False, checkpoints=self.checkpoints)
 
         if self.finetuning_config["plot_training_curves"]:
             plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks],
@@ -897,7 +901,7 @@ class Tracker:
                         correct += torch.sum(mask == sample_batch['scores']).item()
                         total += len(sample_batch['scores'])
 
-                loss_val = run_loss_val / total
+                loss_val = run_loss_val / len(dataloader_val)
                 if finetuning_config["plot_training_curves"] and len(val_set) > 0:
                     plotter.plot_(epoch=i, loss=loss_val, acc=100 * correct / total, split_name='val')
 
@@ -923,20 +927,22 @@ class Tracker:
 
             scheduler.step()
             if finetuning_config["plot_training_curves"] and total > 0:
-                plotter.plot_(epoch=i, loss=run_loss / total, acc=100 * correct / total, split_name='train')
+                plotter.plot_(epoch=i, loss=run_loss / len(dataloader_train), acc=100 * correct / total, split_name='train')
 
             if self.finetuning_config['early_stopping_classifier'] and len(val_set) > 0:
                 models = [self.box_predictor_classification, self.box_head_classification]
-                early_stopping(val_loss=loss_val, model=models)
-                if early_stopping.early_stop:
+                #early_stopping(val_loss=loss_val, model=models)
+                early_stopping2(val_loss=loss_val, model=models, epoch=i)
+                #if early_stopping.early_stop:
                     #print("Early stopping")
-                    break
+                    #break
 
             #print("\n--- %s seconds --- for 1 epoch" % (time.time() - start_time))
 
 
         if self.finetuning_config['early_stopping_classifier'] and self.finetuning_config["validate"] and len(val_set) > 0:
             # load the last checkpoint with the best model
+            self.trained_epochs.append(early_stopping2.epoch)
             for i, m in enumerate(models):
                 m.load_state_dict(self.checkpoints[i])
 
