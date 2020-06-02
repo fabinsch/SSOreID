@@ -68,6 +68,8 @@ tracktor:
     reid_iou_threshold: 0.2
     # Train finetuned bounding box predictor for each track
     finetuning:
+      # either adam or sgd
+      optimizer: adam
       keep_frames: 40
       for_tracking: False
       for_reid: True
