@@ -441,3 +441,41 @@ class EarlyStopping:
         for i, m in enumerate(model):
             self.checkpoints[i] = m.state_dict()
         self.val_loss_min = val_loss
+
+
+class EarlyStopping2:
+    def __init__(self, verbose=False, checkpoints={}):
+        """
+        Args:
+            verbose (bool): If True, prints a message for each validation loss improvement.
+                            Default: False
+        """
+        self.verbose = verbose
+        self.best_score = None
+        self.early_stop = False
+        self.val_loss_min = np.Inf
+        self.checkpoints = checkpoints
+        self.epoch = 0
+
+    def __call__(self, val_loss, model, epoch):
+
+        score = val_loss
+
+        if self.best_score is None:
+            self.best_score = score
+            self.epoch = epoch
+            self.save_checkpoint(val_loss, model)
+
+
+        elif score < self.best_score:
+            self.best_score = score
+            self.epoch = epoch
+            self.save_checkpoint(val_loss, model)
+
+    def save_checkpoint(self, val_loss, model):
+        '''Saves model when validation loss decrease.'''
+        if self.verbose:
+            print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
+        for i, m in enumerate(model):
+            self.checkpoints[i] = m.state_dict()
+        self.val_loss_min = val_loss
