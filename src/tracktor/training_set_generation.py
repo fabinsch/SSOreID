@@ -13,6 +13,15 @@ def get_random_scaling_displacement(batch_size, max_shift):
 
     return (x1_displacement, y1_displacement, x2_displacement, y2_displacement)
 
+def get_random_scaling_displacement_inwards(batch_size, max_shift):
+    max_shift_x, max_shift_y = max_shift
+    x1_displacement = torch.empty(size=(batch_size, 1)).uniform_(0, max_shift_x).to(device)
+    y1_displacement = torch.empty(size=(batch_size, 1)).uniform_(0, max_shift_y).to(device)
+    x2_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift_x, 0).to(device)
+    y2_displacement = torch.empty(size=(batch_size, 1)).uniform_(-max_shift_y, 0).to(device)
+
+    return (x1_displacement, y1_displacement, x2_displacement, y2_displacement)
+
 def apply_random_factors(gt_pos, random_factors):
     batch_size = random_factors[0].size()[0]
     training_boxes_xywh = gt_pos.repeat(batch_size, 1)
@@ -29,5 +38,6 @@ def replicate_and_randomize_boxes(gt_pos, batch_size, max_displacement=0.2, seed
     height = abs(gt_pos[0,1]-gt_pos[0,3])
     #smallest_edge = min(abs(gt_pos[0,0]-gt_pos[0,2]), abs(gt_pos[0,1]-gt_pos[0,3]))
     factors = get_random_scaling_displacement(batch_size, max_shift=(torch.stack((width, height)) * max_displacement))
+    #factors_inner = get_random_scaling_displacement_inwards(batch_size, max_shift=(torch.stack((width, height)) * max_displacement))
     training_boxes = apply_random_factors(gt_pos, factors)
     return training_boxes.to(device)
