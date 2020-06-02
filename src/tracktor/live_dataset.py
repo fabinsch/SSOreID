@@ -125,7 +125,7 @@ class InactiveDataset(torch.utils.data.Dataset):
                         if val_num_others[i]>0:
                             val_others_features = torch.cat((val_others_features, self.others_db[idx][val_num_others[i]-1,:,:,:].unsqueeze(0)))
                             val_num_others[i] -= 1
-                        if val_others_features.shape[0]>7 or sum(val_num_others)==0:
+                        if val_others_features.shape[0]>=(8*(self.data_augmentation+1)) or sum(val_num_others)==0:
                             break
 
                     c = 0
@@ -137,7 +137,7 @@ class InactiveDataset(torch.utils.data.Dataset):
                         if train_num_others[i] > 0:
                             train_others_features = torch.cat((train_others_features, self.others_db[idx][train_num_others[i]-1,:,:,:].unsqueeze(0)))
                             train_num_others[i] -= 1
-                        if train_others_features.shape[0]>39 or sum(train_num_others)==0:
+                        if train_others_features.shape[0]>=(40*(self.data_augmentation+1)) or sum(train_num_others)==0:
                             break
 
                     return train_others_features, val_others_features
@@ -157,7 +157,7 @@ class InactiveDataset(torch.utils.data.Dataset):
                             train_others_features = torch.cat(
                                 (train_others_features, self.others_db[idx][train_num_others[i] - 1, :, :, :].unsqueeze(0)))
                             train_num_others[i] -= 1
-                        if train_others_features.shape[0] > 39 or sum(train_num_others) == 0:
+                        if train_others_features.shape[0] >= (40*(self.data_augmentation+1)) or sum(train_num_others) == 0:
                             break
                     return train_others_features, val_others_features
 
@@ -179,7 +179,7 @@ class InactiveDataset(torch.utils.data.Dataset):
                         train_others_features = torch.cat(
                             (train_others_features, self.others_db[idx][train_num_others[i] - 1, :, :, :].unsqueeze(0)))
                         train_num_others[i] -= 1
-                    if train_others_features.shape[0] > 39 or sum(train_num_others) == 0:
+                    if train_others_features.shape[0] >= (40*(self.data_augmentation+1)) or sum(train_num_others) == 0:
                         break
                 return train_others_features, val_others_features
 
@@ -237,15 +237,15 @@ class InactiveDataset(torch.utils.data.Dataset):
         val_set = InactiveDataset()
 
         if val_others_features.shape[0] > 0:
-            val_set.scores = torch.zeros(val_others_features.shape[0]*(self.data_augmentation+1)).to(device)
+            val_set.scores = torch.zeros(val_others_features.shape[0]).to(device)
             val_set.features = torch.cat((val_set.features, val_others_features))
         else:
             print('\n no validation set for others class')
 
         for i, idxs in enumerate(val_idx):
+            if len(idxs) < int(val_others_features.shape[0]/(self.data_augmentation+1)) and len(idxs) > 0:
+                idxs = self.balance(idxs, int(val_others_features.shape[0]/(self.data_augmentation+1)))
             idx_features = self.expand_indices_augmentation(idxs)
-            if len(idx_features) < val_others_features.shape[0] and len(idx_features) > 0:
-                idx_features = self.balance(idx_features, val_others_features.shape[0])
             t = inactive_tracks[i]
             val_set.scores = torch.cat((val_set.scores, torch.ones(len(idx_features)).to(device) * (i+1)))
             #val_set.boxes = torch.cat((val_set.boxes, t.training_set.boxes[idxs]))
@@ -274,17 +274,17 @@ class InactiveDataset(torch.utils.data.Dataset):
 
         # get others dataset with label 0
         train_others_features, val_others_features = self.get_others(inactive_tracks, val)
-        if train_others_features.shape[0] < self.max_occ and train_others_features.shape[0] > 0:
-            train_others_features = self.balance(train_others_features, self.max_occ)
+        if train_others_features.shape[0] < (self.max_occ+(self.data_augmentation+1)) and train_others_features.shape[0] > 0:
+            train_others_features = self.balance(train_others_features, self.max_occ+(self.data_augmentation+1))
             if train_others_features.shape[0] == 0:
                 print('\nkeine other tracks , nicht zu augmenten')
             print('\naugment')
-        self.scores = torch.zeros(train_others_features.shape[0]*(self.data_augmentation+1)).to(device)
+        self.scores = torch.zeros(train_others_features.shape[0]).to(device)
         self.features = torch.cat((self.features, train_others_features))
 
         for i, t in enumerate(inactive_tracks):
             # balance dataset, same number of examples for each class
-            max_occ = max(self.max_occ, train_others_features.shape[0])
+            max_occ = max(self.max_occ, int(train_others_features.shape[0]/(self.data_augmentation+1)))
             if len(t.training_set.pos_unique_indices) < max_occ:
                 t.training_set.pos_unique_indices = self.balance(t.training_set.pos_unique_indices, max_occ)
             pos_unique_indices = self.expand_indices_augmentation(t.training_set.pos_unique_indices)
