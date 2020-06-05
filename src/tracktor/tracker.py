@@ -123,7 +123,7 @@ class Tracker:
                 augmented_boxes = replicate_and_randomize_boxes(box.unsqueeze(0),
                                                                 self.finetuning_config['data_augmentation'],
                                                                 self.finetuning_config['max_displacement'])
-                augmented_boxes = clip_boxes(augmented_boxes, image.size()[1:3])
+                augmented_boxes = clip_boxes_to_image(augmented_boxes, image.size()[1:3])
                 boxes = torch.cat((boxes, torch.cat((box.unsqueeze(0), augmented_boxes))))
         else:
             #boxes = clip_boxes(new_det_pos, image.size()[1:3])
@@ -176,6 +176,13 @@ class Tracker:
             # print(sum(p.numel() for p in box_head.parameters() if p.requires_grad))
         else:
             box_head = self.box_head_classification  # do not start again with pretrained weights
+
+        # for the first time
+        if box_head == None:
+            box_head =  TwoMLPHead(self.obj_detect.backbone.out_channels *
+                                       self.obj_detect.roi_heads.box_roi_pool.output_size[0] ** 2,
+                                       representation_size=1024).to(device)
+            box_head.load_state_dict(self.bbox_head_weights)
         return box_head
 
     def regress_tracks(self, blob, plot_compare=False, frame=None):
@@ -194,7 +201,7 @@ class Tracker:
                 self.tracks_to_inactive([t])
             else:
                 s.append(scores[i])
-                t.pos = pos[i].view(1, -1)  # here in original implementation
+                #t.pos = pos[i].view(1, -1)  # here in original implementation
             # t.prev_pos = t.pos
             t.pos = pos[i].view(1, -1)  # here adrian and caro
 
@@ -419,7 +426,7 @@ class Tracker:
                         box = track
                         augmented_boxes = replicate_and_randomize_boxes(box.unsqueeze(0), self.finetuning_config['data_augmentation'],
                                                                         self.finetuning_config['max_displacement'])
-                        augmented_boxes = clip_boxes(augmented_boxes, image.shape[-2:])
+                        augmented_boxes = clip_boxes_to_image(augmented_boxes, image.shape[-2:])
                         boxes = torch.cat((boxes, torch.cat((box.unsqueeze(0), augmented_boxes))))
                 else:
                     #boxes = clip_boxes(pos, image.size()[1:3])
@@ -663,7 +670,7 @@ class Tracker:
                         box = track.pos # shape (1,4)
                         augmented_boxes = replicate_and_randomize_boxes(box, self.finetuning_config['data_augmentation'],
                                                                         self.finetuning_config['max_displacement'])
-                        augmented_boxes = clip_boxes(augmented_boxes, blob['img'].shape[-2:])
+                        augmented_boxes = clip_boxes_to_image(augmented_boxes, blob['img'].shape[-2:])
                         boxes = torch.cat((boxes, torch.cat((box, augmented_boxes))))
                 else:
                     #boxes = clip_boxes(active_pos, blob['img'][0].size()[1:3])
@@ -699,7 +706,7 @@ class Tracker:
         current_inactive_tracks_id = [t.id for t in self.inactive_tracks]
         if (current_inactive_tracks_id != self.inactive_tracks_id) or self.killed_this_step:
             if self.finetuning_config["for_reid"]:
-                box_head_copy_for_classifier = self.get_box_head(reset=True)  # get head and load weights
+                box_head_copy_for_classifier = self.get_box_head(reset=self.finetuning_config['reset_head'])  # get head and load weights
                 box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.inactive_tracks))  # get predictor with corrsponding output number
                 self.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
                                              box_predictor_copy_for_classifier,
@@ -821,7 +828,8 @@ class Tracker:
         #print("\n--- %s seconds --- for post process" % (time.time() - start_time))
 
         self.training_set = InactiveDataset(data_augmentation=self.finetuning_config['data_augmentation'],
-                                            others_db=self.others_db)
+                                            others_db=self.others_db,
+                                            val_wo_others=self.finetuning_config['val_wo_others'])
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
 
@@ -931,18 +939,18 @@ class Tracker:
 
             if self.finetuning_config['early_stopping_classifier'] and len(val_set) > 0:
                 models = [self.box_predictor_classification, self.box_head_classification]
-                #early_stopping(val_loss=loss_val, model=models)
-                early_stopping2(val_loss=loss_val, model=models, epoch=i)
-                #if early_stopping.early_stop:
-                    #print("Early stopping")
-                    #break
+                early_stopping(val_loss=loss_val, model=models, epoch=i)
+                #early_stopping2(val_loss=loss_val, model=models, epoch=i)
+                if early_stopping.early_stop:
+                    print("Early stopping")
+                    break
 
             #print("\n--- %s seconds --- for 1 epoch" % (time.time() - start_time))
 
 
         if self.finetuning_config['early_stopping_classifier'] and self.finetuning_config["validate"] and len(val_set) > 0:
             # load the last checkpoint with the best model
-            self.trained_epochs.append(early_stopping2.epoch)
+            self.trained_epochs.append(early_stopping.epoch)
             for i, m in enumerate(models):
                 m.load_state_dict(self.checkpoints[i])
 

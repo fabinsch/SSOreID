@@ -415,8 +415,9 @@ class EarlyStopping:
         self.val_loss_min = np.Inf
         self.delta = delta
         self.checkpoints = checkpoints
+        self.epoch = 0
 
-    def __call__(self, val_loss, model):
+    def __call__(self, val_loss, model, epoch):
 
         score = -val_loss
 
@@ -433,6 +434,7 @@ class EarlyStopping:
             self.best_score = score
             self.save_checkpoint(val_loss, model)
             self.counter = 0
+            self.epoch = epoch
 
     def save_checkpoint(self, val_loss, model):
         '''Saves model when validation loss decrease.'''
