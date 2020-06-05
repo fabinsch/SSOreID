@@ -1,6 +1,6 @@
 tracktor:
   'dataset': mot17_09_FRCNN17
-  'write_images': True
+  'write_images': False
   'tracker':
     motion_model:
       enabled: True
@@ -13,11 +13,12 @@ tracktor:
     'finetuning':
       'optimizer': sgd
       'keep_frames': 40
-      'epochs': 250
-      'epochs_wo_val': 150
-      'learning_rate': 1e-2
+      'epochs': 50
+      'epochs_wo_val': 50
+      'learning_rate': 1e-1
       'batch_size': 0
-      'validate': True
+      'validate': False
+      'val_wo_others': False
       # how many samples per person should be included in val set [in %]
       'val_split': 0.2
       'val_set_random': False
@@ -25,8 +26,9 @@ tracktor:
       'early_stopping_classifier': True
       'early_stopping_patience': 30
       'reset_dataset': True
+      'reset_head': True
       'reid_score_threshold': 0.75
       'train_iou_threshold': 2.5
       'max_displacement': 0.01
-      'data_augmentation': 9bdd9
-  'output_subdir': '18'
+      'data_augmentation': 10
+  'output_subdir': '88'

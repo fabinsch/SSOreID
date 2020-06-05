@@ -93,6 +93,7 @@ tracktor:
       #decay_every: 4
       # Have a validation set randomly generated
       validate: True
+      val_wo_others: False
       # how many samples per person should be included in val set [in %]
       val_split: 0.2
       # Evaluate validation set every ith iteration
@@ -108,6 +109,7 @@ tracktor:
       early_stopping_patience: 30
       plot_training_curves: False
       reset_dataset: True
+      reset_head: True
       reid_score_threshold: 0.90
       train_iou_threshold: 0.5
       val_set_random: False

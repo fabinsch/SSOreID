@@ -51,7 +51,7 @@ class IndividualDataset(torch.utils.data.Dataset):
 
 
 class InactiveDataset(torch.utils.data.Dataset):
-    def __init__(self, data_augmentation=0, others_db=None):
+    def __init__(self, data_augmentation=0, others_db=None, val_wo_others=False):
         #self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
         self.features = torch.tensor([]).to(device)
@@ -60,6 +60,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         #self.killed_this_step = killed_this_step
         self.data_augmentation = data_augmentation
         self.others_db = others_db
+        self.val_wo_others = val_wo_others
 
     def __len__(self):
         return self.scores.size()[0]
@@ -85,6 +86,7 @@ class InactiveDataset(torch.utils.data.Dataset):
             return i
 
     def get_others(self, inactive_tracks, val=False):
+        wo_val_others = self.val_wo_others
         val_others_features = torch.tensor([]).to(device)
         train_others_features = torch.tensor([]).to(device)
 
@@ -140,12 +142,16 @@ class InactiveDataset(torch.utils.data.Dataset):
                         if train_others_features.shape[0]>=(40*(self.data_augmentation+1)) or sum(train_num_others)==0:
                             break
 
-                    return train_others_features, val_others_features
+                    if not wo_val_others:
+                        return train_others_features, val_others_features
+                    else:
+                        return train_others_features, train_others_features[0:(8*(self.data_augmentation+1)),:,:,:]
 
                 else:  # just build train others because val others not divers
                     train_others = num_frames_pp
                     train_others = sorted(train_others, key=itemgetter(0), reverse=True)
                     train_idx_others, train_num_others = zip(*train_others)
+                    print('\n IDs for train set others: {}'.format(train_idx_others))
                     train_num_others = list(train_num_others)
                     c = 0
                     for i, idx in enumerate(itertools.cycle(train_idx_others)):
@@ -274,11 +280,11 @@ class InactiveDataset(torch.utils.data.Dataset):
 
         # get others dataset with label 0
         train_others_features, val_others_features = self.get_others(inactive_tracks, val)
-        if train_others_features.shape[0] < (self.max_occ+(self.data_augmentation+1)) and train_others_features.shape[0] > 0:
-            train_others_features = self.balance(train_others_features, self.max_occ+(self.data_augmentation+1))
+        if train_others_features.shape[0] < (self.max_occ*(self.data_augmentation+1)) and train_others_features.shape[0] > 0:
+            train_others_features = self.balance(train_others_features, self.max_occ*(self.data_augmentation+1))
             if train_others_features.shape[0] == 0:
                 print('\nkeine other tracks , nicht zu augmenten')
-            print('\naugment')
+            #print('\nbalance because others is too less')
         self.scores = torch.zeros(train_others_features.shape[0]).to(device)
         self.features = torch.cat((self.features, train_others_features))
 
