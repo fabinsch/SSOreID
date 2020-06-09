@@ -108,6 +108,14 @@ class InactiveDataset(torch.utils.data.Dataset):
                     # sort by descreasing track ID to get the newest first
                     val_others = sorted(val_others, key=itemgetter(0), reverse=True)
                     train_others = sorted(train_others, key=itemgetter(0), reverse=True)
+
+                    # if len(val_others) > 4:
+                    #     print("\n take just 4 instead of {} different IDs".format(len(val_others)))
+                    #     val_others = val_others[:4]
+                    # if len(train_others) > 4:
+                    #     print("\n take just 4 instead of {} different IDs".format(len(train_others)))
+                    #     train_others = train_others[:4]
+
                     val_idx_others, val_num_others = zip(*val_others)
                     val_num_others = list(val_num_others)
                     train_idx_others, train_num_others = zip(*train_others)
@@ -166,8 +174,6 @@ class InactiveDataset(torch.utils.data.Dataset):
                         if train_others_features.shape[0] >= (40*(self.data_augmentation+1)) or sum(train_num_others) == 0:
                             break
                     return train_others_features, val_others_features
-
-
 
             #### no validation set
             else:
