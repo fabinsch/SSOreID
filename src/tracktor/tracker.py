@@ -75,6 +75,7 @@ class Tracker:
         self.c_skipped_for_train_iou = 0
         self.c_skipped_and_just_and_frame_active = 0
         self.trained_epochs = []
+        self.score_others = []
 
     def reset(self, hard=True):
         self.tracks = []
@@ -331,16 +332,23 @@ class Tracker:
                                                           box_head_classification=self.box_head_classification,
                                                           pred_multiclass=True)
 
+            zero_scores = [s.item() for s in scores[:,0]]
+            for zero_score in zero_scores:
+                self.score_others.append(zero_score)
+
             #if frame==420:
             if frame>=0:
                 print('\n scores reID: {}'.format(scores))
                 print('\n IDs: {} with respectively {} samples'.format(current_inactive_tracks_id, samples_per_track))
 
+            # check if scores has very high value, don't use IoU restriction in that case
+            #no_mask = torch.ge(scores, 0.95)
             # calculate IoU distances
             iou = bbox_overlaps(new_det_pos, inactive_tracks)
             # iou has just values for the inactive tracks -> extend for others class
             iou = torch.cat((torch.ones(iou.shape[0],1).to(device), iou), dim=1)
             iou_mask = torch.ge(iou, self.reid_iou_threshold)
+            #scores = scores * iou_mask + scores * no_mask
             scores = scores * iou_mask
             scores = scores.cpu().numpy()
             max = scores.max(axis=1)
@@ -350,10 +358,17 @@ class Tracker:
             #max_idx2 = scores.argmax(axis=1)
             dist = max - max2
 
-            if frame==4200:
+            if frame==13800:
                 # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
-                self.inactive_tracks[max_idx[0]].add_classifier(self.box_predictor_classification, self.box_head_classification)
-                #print('d')
+                # debugging frcnn-09 frame 138 problem person wird fälschlicherweise als ID4
+                self.inactive_tracks[max_idx[0]-1].add_classifier(self.box_predictor_classification, self.box_head_classification)
+                print('\n attached classifier')
+
+            if frame==15500:
+                # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
+                # debugging frcnn-09 frame 138 problem person wird fälschlicherweise als ID4
+                self.inactive_tracks[max_idx[0]-1].add_classifier(self.box_predictor_classification, self.box_head_classification)
+                print('\n attached classifier')
 
             for i, d in enumerate(dist):
                 if max[i] > self.finetuning_config['reid_score_threshold']:
@@ -595,6 +610,15 @@ class Tracker:
                     self.motion_step(t)
 
     def step(self, blob, frame=1):
+        # if self.im_index >= 138:
+        #     for track in self.inactive_tracks:
+        #         if hasattr(track, 'box_predictor_classification_debug'):
+        #             boxes_debug, scores_debug = self.obj_detect.predict_boxes(track.pos,
+        #                                                                       track.box_predictor_classification_debug,
+        #                                                                       track.box_head_classification_debug,
+        #                                                                       pred_multiclass=True)
+        #             print('\n DEBUG scores {}'.format(scores_debug))
+
         """This function should be called every timestep to perform tracking with a blob
         containing the image information.
         """
@@ -696,7 +720,7 @@ class Tracker:
                     # debug
                     if hasattr(track, 'box_predictor_classification_debug'):
                         boxes_debug, scores_debug = self.obj_detect.predict_boxes(track.pos, track.box_predictor_classification_debug,track.box_head_classification_debug, pred_multiclass=True)
-                        print('\n scores {}'.format(scores_debug))
+                        print('\n DEBUG scores track {}: {}'.format(track.id, scores_debug))
 
                     #track.update_training_set_classification(features=roi_pool_feat[i].unsqueeze(0),
                     track.update_training_set_classification(features=roi_pool_per_track[i],
@@ -874,7 +898,7 @@ class Tracker:
         dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=batch_size) if len(val_set) > 0 else 0
 
         if self.finetuning_config['early_stopping_classifier']:
-            early_stopping = EarlyStopping(patience=self.finetuning_config['early_stopping_patience'], verbose=False, delta=1e-3, checkpoints=self.checkpoints)
+            early_stopping = EarlyStopping(patience=self.finetuning_config['early_stopping_patience'], verbose=False, delta=1e-4, checkpoints=self.checkpoints)
             early_stopping2 = EarlyStopping2(verbose=False, checkpoints=self.checkpoints)
 
         if self.finetuning_config["plot_training_curves"]:
@@ -939,8 +963,8 @@ class Tracker:
 
             if self.finetuning_config['early_stopping_classifier'] and len(val_set) > 0:
                 models = [self.box_predictor_classification, self.box_head_classification]
-                early_stopping(val_loss=loss_val, model=models, epoch=i)
-                #early_stopping2(val_loss=loss_val, model=models, epoch=i)
+                early_stopping(val_loss=loss_val, model=models, epoch=i+1)
+                #early_stopping2(val_loss=loss_val, model=models, epoch=i+1)
                 if early_stopping.early_stop:
                     print("Early stopping")
                     break
