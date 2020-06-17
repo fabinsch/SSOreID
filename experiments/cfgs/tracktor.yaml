@@ -113,4 +113,7 @@ tracktor:
       reid_score_threshold: 0.90
       train_iou_threshold: 0.5
       val_set_random: False
+      val_set_random_from_middle: False
       data_augmentation: 5
+      # how many different IDs should be considered for others class (0 = all possible)
+      ids_in_others: 4

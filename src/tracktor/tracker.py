@@ -227,93 +227,6 @@ class Tracker:
         return pos
 
 
-    def get_features(self):
-        """Get the features of all active tracks."""
-        if len(self.tracks) == 1:
-            features = self.tracks[0].features
-        elif len(self.tracks) > 1:
-            features = torch.cat([t.features for t in self.tracks], 0)
-        else:
-            features = torch.zeros(0).to(device)
-        return features
-
-
-    def get_inactive_features(self):
-        """Get the features of all inactive tracks."""
-        if len(self.inactive_tracks) == 1:
-            features = self.inactive_tracks[0].features
-        elif len(self.inactive_tracks) > 1:
-            features = torch.cat([t.features for t in self.inactive_tracks], 0)
-        else:
-            features = torch.zeros(0).cuda()
-        return features
-
-    def reid_by_finetuned_model(self, new_det_pos, new_det_scores, frame):
-        # IDEA: evaluate all inactive track models on the new detections
-        # reidentify a track, when the model has a significantly higher score on this new detection than on other detections
-        active_tracks = self.get_pos()
-        if len(new_det_pos.size()) > 1 and len(self.inactive_tracks) > 0:
-            remove_inactive = []
-            det_index_to_candidate = defaultdict(list)
-            assigned = []
-            score_matrix = torch.tensor([]).to(device) # 1 row: scores for a new detection by the current inactive tracks
-            #idea: go over the detections, check the scores of the classifiers wheter one is significantly higher
-            for inactive_track in self.inactive_tracks:
-                boxes, scores = self.obj_detect.predict_boxes(new_det_pos,
-                                                             box_predictor_classification=inactive_track.box_predictor_classification,
-                                                             box_head_classification=inactive_track.box_head_classification)
-
-                if score_matrix.size()[0] == 0:
-                    score_matrix = scores.unsqueeze(1)
-                else:
-                    if len(scores.size()) == 1:
-                        scores = scores.unsqueeze(1)
-                    score_matrix = torch.cat([score_matrix, scores], dim=1)
-            print(f'Score matrix: {score_matrix.data.cpu().numpy()}')
-
-            for track_index in range(len(self.inactive_tracks)):
-
-                track_scores = score_matrix[:, track_index]
-                highest_score_index = torch.argmax(track_scores)
-                highest_score = torch.max(track_scores)
-                track_scores[highest_score_index] = 0
-                second_highest_score = torch.max(track_scores)
-                distance_to_second_highest_score = highest_score - second_highest_score
-                if distance_to_second_highest_score > 0.2 and highest_score > 0.95:
-                    inactive_track = self.inactive_tracks[track_index]
-                    det_index_to_candidate[int(highest_score_index.cpu().numpy())].append((inactive_track, highest_score))
-
-            for det_index, candidates in det_index_to_candidate.items():
-                if len(candidates) == 1:
-                    candidate = candidates[0]
-                    inactive_track = candidate[0]
-                    self.tracks.append(inactive_track)
-                    print(f"Reidying track {inactive_track.id} in frame {frame} with score {candidate[1]}")
-                    inactive_track.count_inactive = 0
-                    inactive_track.pos = new_det_pos[det_index].view(1, -1)
-                    inactive_track.reset_last_pos()
-                    assigned.append(det_index)
-                    remove_inactive.append(inactive_track)
-
-            for inactive_track in remove_inactive:
-                self.inactive_number_changes += 1
-                self.inactive_tracks.remove(inactive_track)
-                inactive_track.update_training_set_classification(self.finetuning_config['batch_size'],
-                                                                  active_tracks,
-                                                                  self.obj_detect.fpn_features,
-                                                                  include_previous_frames=True)
-
-            keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
-            if keep.nelement() > 0:
-                new_det_pos = new_det_pos[keep]
-                new_det_scores = new_det_scores[keep]
-            else:
-                new_det_pos = torch.zeros(0).to(device)
-                new_det_scores = torch.zeros(0).to(device)
-
-        return new_det_pos, new_det_scores
-
-
     def reid_by_finetuned_model_(self, new_det_pos, new_det_scores, frame, image):
         """Do reid with one model predicting the score for each inactive track"""
         current_inactive_tracks_id = [t.id for t in self.inactive_tracks]
@@ -338,8 +251,8 @@ class Tracker:
 
             #if frame==420:
             if frame>=0:
-                print('\n scores reID: {}'.format(scores))
-                print('\n IDs: {} with respectively {} samples'.format(current_inactive_tracks_id, samples_per_track))
+                print('\n{}: scores reID: {}'.format(self.im_index, scores))
+                print('IDs: {} with respectively {} samples'.format(current_inactive_tracks_id, samples_per_track))
 
             # check if scores has very high value, don't use IoU restriction in that case
             #no_mask = torch.ge(scores, 0.95)
@@ -374,7 +287,7 @@ class Tracker:
                 if max[i] > self.finetuning_config['reid_score_threshold']:
                     # idx = 0 means unknown background people, idx=1,2,.. is inactive
                     if max_idx[i] == 0:
-                        print('\n no reid because class 0 has score {}'.format(max[i]))
+                        print('no reid because class 0 has score {}'.format(max[i]))
 
                     else:
                         inactive_track = self.inactive_tracks[max_idx[i]-1]
@@ -382,7 +295,7 @@ class Tracker:
                         inactive_to_det[max_idx[i]-1].append(i)
 
                 elif max[i] > 0.0 :
-                    print('\n no reid with score {}'.format(max[i]))
+                    print('no reid with score {}'.format(max[i]))
 
             for det_index, candidates in det_index_to_candidate.items():
                 candidate = candidates[0]
@@ -467,82 +380,6 @@ class Tracker:
                 new_det_scores = torch.zeros(0).to(device)
 
         return new_det_pos, new_det_scores
-
-
-    def reid(self, blob, new_det_pos, new_det_features, new_det_scores):
-        """Tries to ReID inactive tracks with provided detections."""
-        zeros = torch.zeros(0).to(device)
-
-        new_det_features = [zeros for _ in range(len(new_det_pos))]
-
-        if self.reid_siamese:
-            new_det_features = self.reid_network.test_rois(
-                blob['img'], new_det_pos).data
-
-            if len(self.inactive_tracks) >= 1:
-                # calculate appearance distances
-                dist_mat, pos = [], []
-                for t in self.inactive_tracks:
-                    dist_mat.append(torch.cat([t.test_features(feat.view(1, -1)) for feat in new_det_features], dim=1))
-                    pos.append(t.pos)
-                if len(dist_mat) > 1:
-                    dist_mat = torch.cat(dist_mat, 0)
-                    pos = torch.cat(pos, 0)
-                else:
-                    dist_mat = dist_mat[0]
-                    pos = pos[0]
-
-                # calculate IoU distances
-                iou = bbox_overlaps(pos, new_det_pos)
-                iou_mask = torch.ge(iou, self.reid_iou_threshold)   # wird nicht reided wenn iou größer als der iou threshold ist "To minimize the risk of false reIDs, weonly consider pairs of deactivated and new bounding boxeswith a sufficiently large IoU
-                iou_neg_mask = ~iou_mask
-                # make all impossible assignments to the same add big value
-                dist_mat = dist_mat * iou_mask.float() + iou_neg_mask.float() * 1000
-                dist_mat = dist_mat.cpu().numpy()
-
-                row_ind, col_ind = linear_sum_assignment(dist_mat)
-
-                assigned = []
-                remove_inactive = []
-                for r, c in zip(row_ind, col_ind):
-                    if dist_mat[r, c] <= self.reid_sim_threshold:
-                        t = self.inactive_tracks[r]
-                        self.tracks.append(t)
-                        print(f"Reidying track {t.id}")
-                        t.count_inactive = 0
-                        t.pos = new_det_pos[c].view(1, -1)
-                        t.reset_last_pos()
-                        t.add_features(new_det_features[c].view(1, -1))
-                        assigned.append(c)
-                        remove_inactive.append(t)
-
-                for t in remove_inactive:
-                    self.inactive_tracks.remove(t)
-                    self.inactive_number_changes += 1
-
-                keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
-                if keep.nelement() > 0:
-                    new_det_pos = new_det_pos[keep]
-                    new_det_scores = new_det_scores[keep]
-                    new_det_features = new_det_features[keep]
-                else:
-                    new_det_pos = torch.zeros(0).to(device)
-                    new_det_scores = torch.zeros(0).to(device)
-                    new_det_features = torch.zeros(0).to(device)
-
-        return new_det_pos, new_det_scores
-
-
-    def get_appearances(self, blob):
-        """Uses the siamese CNN to get the features for all active tracks."""
-        new_features = self.reid_network.test_rois(blob['img'], self.get_pos()).data
-        return new_features
-
-
-    def add_features(self, new_features):
-        """Adds new appearance features to active tracks."""
-        for t, f in zip(self.tracks, new_features):
-            t.add_features(f.view(1, -1))
 
 
     def align(self, blob):
@@ -853,7 +690,10 @@ class Tracker:
 
         self.training_set = InactiveDataset(data_augmentation=self.finetuning_config['data_augmentation'],
                                             others_db=self.others_db,
-                                            val_wo_others=self.finetuning_config['val_wo_others'])
+                                            val_wo_others=self.finetuning_config['val_wo_others'],
+                                            im_index=self.im_index,
+                                            ids_in_others=self.finetuning_config['ids_in_others'],
+                                            val_set_random_from_middle=self.finetuning_config['val_set_random_from_middle'])
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
 
@@ -898,7 +738,7 @@ class Tracker:
         dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=batch_size) if len(val_set) > 0 else 0
 
         if self.finetuning_config['early_stopping_classifier']:
-            early_stopping = EarlyStopping(patience=self.finetuning_config['early_stopping_patience'], verbose=False, delta=1e-4, checkpoints=self.checkpoints)
+            #early_stopping = EarlyStopping(patience=self.finetuning_config['early_stopping_patience'], verbose=False, delta=1e-4, checkpoints=self.checkpoints)
             early_stopping2 = EarlyStopping2(verbose=False, checkpoints=self.checkpoints)
 
         if self.finetuning_config["plot_training_curves"]:
@@ -963,18 +803,18 @@ class Tracker:
 
             if self.finetuning_config['early_stopping_classifier'] and len(val_set) > 0:
                 models = [self.box_predictor_classification, self.box_head_classification]
-                early_stopping(val_loss=loss_val, model=models, epoch=i+1)
-                #early_stopping2(val_loss=loss_val, model=models, epoch=i+1)
-                if early_stopping.early_stop:
-                    print("Early stopping")
-                    break
+                #early_stopping(val_loss=loss_val, model=models, epoch=i+1)
+                early_stopping2(val_loss=loss_val, model=models, epoch=i+1)
+                # if early_stopping.early_stop:
+                #     print("Early stopping after {} epochs".format(early_stopping.epoch))
+                #     break
 
             #print("\n--- %s seconds --- for 1 epoch" % (time.time() - start_time))
 
 
         if self.finetuning_config['early_stopping_classifier'] and self.finetuning_config["validate"] and len(val_set) > 0:
             # load the last checkpoint with the best model
-            self.trained_epochs.append(early_stopping.epoch)
+            self.trained_epochs.append(early_stopping2.epoch)
             for i, m in enumerate(models):
                 m.load_state_dict(self.checkpoints[i])
 

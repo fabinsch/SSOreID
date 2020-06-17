@@ -51,7 +51,7 @@ class IndividualDataset(torch.utils.data.Dataset):
 
 
 class InactiveDataset(torch.utils.data.Dataset):
-    def __init__(self, data_augmentation=0, others_db=None, val_wo_others=False):
+    def __init__(self, data_augmentation=0, others_db=None, val_wo_others=False, im_index=0, ids_in_others=0, val_set_random_from_middle=False):
         #self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
         self.features = torch.tensor([]).to(device)
@@ -61,6 +61,9 @@ class InactiveDataset(torch.utils.data.Dataset):
         self.data_augmentation = data_augmentation
         self.others_db = others_db
         self.val_wo_others = val_wo_others
+        self.im_index = im_index
+        self.ids_in_others = ids_in_others
+        self.val_set_random_from_middle = val_set_random_from_middle
 
     def __len__(self):
         return self.scores.size()[0]
@@ -75,6 +78,8 @@ class InactiveDataset(torch.utils.data.Dataset):
                 diff = occ - len(i)
                 for j in range(diff):
                     i.append(random.choice(i))
+                if self.im_index==207:
+                    print("DEBUG balanced: {}".format(i))
                 return i
             else:
                 return []
@@ -86,6 +91,9 @@ class InactiveDataset(torch.utils.data.Dataset):
             return i
 
     def get_others(self, inactive_tracks, val=False):
+
+
+
         wo_val_others = self.val_wo_others
         val_others_features = torch.tensor([]).to(device)
         train_others_features = torch.tensor([]).to(device)
@@ -94,6 +102,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         others_db_k = list(self.others_db.keys())
         others_db_k = [k for k in others_db_k if k not in inactive_ids]
         num_tracks = len(others_db_k)
+        ids = self.ids_in_others
         if num_tracks >= 2:
 
             num_frames = [t.shape[0] for t in list(self.others_db.values())]
@@ -109,21 +118,22 @@ class InactiveDataset(torch.utils.data.Dataset):
                     val_others = sorted(val_others, key=itemgetter(0), reverse=True)
                     train_others = sorted(train_others, key=itemgetter(0), reverse=True)
 
-                    # if len(val_others) > 4:
-                    #     print("\n take just 4 instead of {} different IDs".format(len(val_others)))
-                    #     val_others = val_others[:4]
-                    # if len(train_others) > 4:
-                    #     print("\n take just 4 instead of {} different IDs".format(len(train_others)))
-                    #     train_others = train_others[:4]
+                    if ids > 0:
+                        if len(val_others) > ids:
+                            print("\n take just {} instead of {} different IDs".format(ids, len(val_others)))
+                            val_others = val_others[:ids]
+                        if len(train_others) > ids:
+                            print("\n take just {} instead of {} different IDs".format(ids, len(train_others)))
+                            train_others = train_others[:ids]
 
                     val_idx_others, val_num_others = zip(*val_others)
                     val_num_others = list(val_num_others)
                     train_idx_others, train_num_others = zip(*train_others)
                     train_num_others = list(train_num_others)
 
-                    print('\n IDs for val set others: {}'.format(val_idx_others))
-                    print('\n IDs for train set others: {}'.format(train_idx_others))
-                    print('\n IDs of inactive tracks: {}'.format(inactive_ids))
+                    print('\nIDs for val set others: {}'.format(val_idx_others))
+                    print('IDs for train set others: {}'.format(train_idx_others))
+                    print('IDs of inactive tracks: {}'.format(inactive_ids))
 
                     c = 0
                     for i, idx in enumerate(itertools.cycle(val_idx_others)):
@@ -135,7 +145,7 @@ class InactiveDataset(torch.utils.data.Dataset):
                         if val_num_others[i]>0:
                             val_others_features = torch.cat((val_others_features, self.others_db[idx][val_num_others[i]-1,:,:,:].unsqueeze(0)))
                             val_num_others[i] -= 1
-                        if val_others_features.shape[0]>=(8*(self.data_augmentation+1)) or sum(val_num_others)==0:
+                        if val_others_features.shape[0]>=(int(self.min_occ*0.2)*(self.data_augmentation+1)) or sum(val_num_others)==0:
                             break
 
                     c = 0
@@ -147,19 +157,25 @@ class InactiveDataset(torch.utils.data.Dataset):
                         if train_num_others[i] > 0:
                             train_others_features = torch.cat((train_others_features, self.others_db[idx][train_num_others[i]-1,:,:,:].unsqueeze(0)))
                             train_num_others[i] -= 1
-                        if train_others_features.shape[0]>=(40*(self.data_augmentation+1)) or sum(train_num_others)==0:
+                        if train_others_features.shape[0]>=(self.max_occ*(self.data_augmentation+1)) or sum(train_num_others)==0:
                             break
 
-                    if not wo_val_others:
-                        return train_others_features, val_others_features
-                    else:
-                        return train_others_features, train_others_features[0:(8*(self.data_augmentation+1)),:,:,:]
+                    #if not wo_val_others:
+                    return train_others_features, val_others_features
+                    # else:
+                    #     return train_others_features, train_others_features[0:(int(self.min_occ*0.2))*(self.data_augmentation+1)),:,:,:]
 
                 else:  # just build train others because val others not divers
                     train_others = num_frames_pp
                     train_others = sorted(train_others, key=itemgetter(0), reverse=True)
+
+                    if ids > 0:
+                        if len(train_others) > ids:
+                            print("take just {} instead of {} different IDs".format(ids, len(train_others)))
+                            train_others = train_others[:ids]
+
                     train_idx_others, train_num_others = zip(*train_others)
-                    print('\n IDs for train set others: {}'.format(train_idx_others))
+                    print('IDs for train set others: {}'.format(train_idx_others))
                     train_num_others = list(train_num_others)
                     c = 0
                     for i, idx in enumerate(itertools.cycle(train_idx_others)):
@@ -171,7 +187,7 @@ class InactiveDataset(torch.utils.data.Dataset):
                             train_others_features = torch.cat(
                                 (train_others_features, self.others_db[idx][train_num_others[i] - 1, :, :, :].unsqueeze(0)))
                             train_num_others[i] -= 1
-                        if train_others_features.shape[0] >= (40*(self.data_augmentation+1)) or sum(train_num_others) == 0:
+                        if train_others_features.shape[0] >= (self.max_occ*(self.data_augmentation+1)) or sum(train_num_others) == 0:
                             break
                     return train_others_features, val_others_features
 
@@ -179,6 +195,10 @@ class InactiveDataset(torch.utils.data.Dataset):
             else:
                 train_others = num_frames_pp
                 train_others = sorted(train_others, key=itemgetter(0), reverse=True)
+                if ids > 0:
+                    if len(train_others) > ids:
+                        print("take just {} instead of {} different IDs".format(ids, len(train_others)))
+                        train_others = train_others[:ids]
                 train_idx_others, train_num_others = zip(*train_others)
                 train_num_others = list(train_num_others)
                 c = 0
@@ -191,7 +211,7 @@ class InactiveDataset(torch.utils.data.Dataset):
                         train_others_features = torch.cat(
                             (train_others_features, self.others_db[idx][train_num_others[i] - 1, :, :, :].unsqueeze(0)))
                         train_num_others[i] -= 1
-                    if train_others_features.shape[0] >= (40*(self.data_augmentation+1)) or sum(train_num_others) == 0:
+                    if train_others_features.shape[0] >= (self.max_occ*(self.data_augmentation+1)) or sum(train_num_others) == 0:
                         break
                 return train_others_features, val_others_features
 
@@ -218,7 +238,7 @@ class InactiveDataset(torch.utils.data.Dataset):
                 idx_min = occ.index(min_occ)
                 occ[idx_min] = 1000  # high number to keep index right
                 if min_occ == 1:
-                    print("\no validation sample for {}".format(idx_min))
+                    print("0 validation sample for {}".format(idx_min))
                     exclude_for_val.append(idx_min)
                 else:
                     just_one_sample_for_val.append(idx_min)
@@ -240,6 +260,19 @@ class InactiveDataset(torch.utils.data.Dataset):
                     pos_ind = t.training_set.pos_unique_indices
                     idx_val = (int(len(pos_ind) / 2) + int(num_val * 0.5))
                     idx.append(pos_ind.pop(idx_val))
+                # else:
+                #     if num_val > 1 and self.val_set_random_from_middle:
+                #         # avoid that samples are taken from borders , but take random from middle
+                #         pos_ind = t.training_set.pos_unique_indices[num_val:len(t.training_set.pos_unique_indices)-num_val]
+                #         ri = random.choice(pos_ind)
+                #         idx.append(ri)
+                #         t.training_set.pos_unique_indices.remove(ri)
+                #     else:
+                #         # take samples from middle of scene to avoid taking the last occluded ones
+                #         pos_ind = t.training_set.pos_unique_indices
+                #         idx_val = (int(len(pos_ind) / 2) + int(num_val * 0.5))
+                #         idx.append(pos_ind.pop(idx_val))
+
             val_idx.append(idx)
 
         num_val = int(self.min_occ * split)
@@ -252,11 +285,11 @@ class InactiveDataset(torch.utils.data.Dataset):
             val_set.scores = torch.zeros(val_others_features.shape[0]).to(device)
             val_set.features = torch.cat((val_set.features, val_others_features))
         else:
-            print('\n no validation set for others class')
+            print('no validation set for others class')
 
         for i, idxs in enumerate(val_idx):
-            if len(idxs) < int(val_others_features.shape[0]/(self.data_augmentation+1)) and len(idxs) > 0:
-                idxs = self.balance(idxs, int(val_others_features.shape[0]/(self.data_augmentation+1)))
+            # if len(idxs) < int(val_others_features.shape[0]/(self.data_augmentation+1)) and len(idxs) > 0:
+            #     idxs = self.balance(idxs, int(val_others_features.shape[0]/(self.data_augmentation+1)))
             idx_features = self.expand_indices_augmentation(idxs)
             t = inactive_tracks[i]
             val_set.scores = torch.cat((val_set.scores, torch.ones(len(idx_features)).to(device) * (i+1)))
@@ -289,16 +322,16 @@ class InactiveDataset(torch.utils.data.Dataset):
         if train_others_features.shape[0] < (self.max_occ*(self.data_augmentation+1)) and train_others_features.shape[0] > 0:
             train_others_features = self.balance(train_others_features, self.max_occ*(self.data_augmentation+1))
             if train_others_features.shape[0] == 0:
-                print('\nkeine other tracks , nicht zu augmenten')
+                print('keine other tracks , nicht zu augmenten')
             #print('\nbalance because others is too less')
         self.scores = torch.zeros(train_others_features.shape[0]).to(device)
         self.features = torch.cat((self.features, train_others_features))
 
         for i, t in enumerate(inactive_tracks):
             # balance dataset, same number of examples for each class
-            max_occ = max(self.max_occ, int(train_others_features.shape[0]/(self.data_augmentation+1)))
-            if len(t.training_set.pos_unique_indices) < max_occ:
-                t.training_set.pos_unique_indices = self.balance(t.training_set.pos_unique_indices, max_occ)
+            #max_occ = max(self.max_occ, int(train_others_features.shape[0]/(self.data_augmentation+1)))
+            if len(t.training_set.pos_unique_indices) < self.max_occ:
+                t.training_set.pos_unique_indices = self.balance(t.training_set.pos_unique_indices, self.max_occ)
             pos_unique_indices = self.expand_indices_augmentation(t.training_set.pos_unique_indices)
             self.scores = torch.cat((self.scores, torch.ones(len(pos_unique_indices)).to(device) * (i+1)))
             #self.boxes = torch.cat((self.boxes, t.training_set.boxes[pos_unique_indices_boxes]))
