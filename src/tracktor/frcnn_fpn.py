@@ -55,7 +55,10 @@ class FRCNN_FPN(FasterRCNN):
             box_features_regression)
 
         pred_boxes = self.roi_heads.box_coder.decode(box_regression, proposals)
-        pred_scores = F.softmax(class_logits, -1)
+        if box_predictor_classification.cls_score.out_features==1:
+            pred_scores = torch.sigmoid(class_logits)
+        else:
+            pred_scores = F.softmax(class_logits, -1)
         pred_boxes = pred_boxes[:, 1:].squeeze(dim=1).detach()
         pred_boxes = resize_boxes(
             pred_boxes, self.image_size[0], self.original_image_size[0])

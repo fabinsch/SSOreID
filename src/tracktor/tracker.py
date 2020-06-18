@@ -157,8 +157,11 @@ class Tracker:
         self.track_num += num_new
 
     def get_box_predictor_(self, n=2):
-        """Get a box predictor with number of output neurons corresponding to number of inactive tracks + 1 for others"""
-        box_predictor = FastRCNNPredictor(1024, n+1).to(device)
+        if self.finetuning_config['others_class']:
+            # Get a box predictor with number of output neurons corresponding to number of inactive tracks + 1 for others
+            box_predictor = FastRCNNPredictor(1024, n + 1).to(device)
+        else:
+            box_predictor = FastRCNNPredictor(1024, n).to(device)
         #box_predictor.load_state_dict(self.bbox_predictor_weights)
         return box_predictor
 
@@ -245,7 +248,7 @@ class Tracker:
                                                           box_head_classification=self.box_head_classification,
                                                           pred_multiclass=True)
 
-            zero_scores = [s.item() for s in scores[:,0]]
+            zero_scores = [s.item() for s in scores[:,0]] if self.finetuning_config['others_class'] else []
             for zero_score in zero_scores:
                 self.score_others.append(zero_score)
 
@@ -258,44 +261,65 @@ class Tracker:
             #no_mask = torch.ge(scores, 0.95)
             # calculate IoU distances
             iou = bbox_overlaps(new_det_pos, inactive_tracks)
-            # iou has just values for the inactive tracks -> extend for others class
-            iou = torch.cat((torch.ones(iou.shape[0],1).to(device), iou), dim=1)
+            if self.finetuning_config['others_class']:
+                # iou has just values for the inactive tracks -> extend for others class
+                iou = torch.cat((torch.ones(iou.shape[0],1).to(device), iou), dim=1)
             iou_mask = torch.ge(iou, self.reid_iou_threshold)
             #scores = scores * iou_mask + scores * no_mask
-            scores = scores * iou_mask
-            scores = scores.cpu().numpy()
-            max = scores.max(axis=1)
-            max_idx = scores.argmax(axis=1)
-            scores[:, max_idx] = 0
-            max2 = scores.max(axis=1)
-            #max_idx2 = scores.argmax(axis=1)
-            dist = max - max2
 
-            if frame==13800:
-                # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
-                # debugging frcnn-09 frame 138 problem person wird fälschlicherweise als ID4
-                self.inactive_tracks[max_idx[0]-1].add_classifier(self.box_predictor_classification, self.box_head_classification)
-                print('\n attached classifier')
 
-            if frame==15500:
-                # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
-                # debugging frcnn-09 frame 138 problem person wird fälschlicherweise als ID4
-                self.inactive_tracks[max_idx[0]-1].add_classifier(self.box_predictor_classification, self.box_head_classification)
-                print('\n attached classifier')
 
-            for i, d in enumerate(dist):
-                if max[i] > self.finetuning_config['reid_score_threshold']:
-                    # idx = 0 means unknown background people, idx=1,2,.. is inactive
-                    if max_idx[i] == 0:
-                        print('no reid because class 0 has score {}'.format(max[i]))
+            if self.box_predictor_classification.cls_score.out_features==1:
+                scores = scores * iou_mask.squeeze()
+                for i, s in enumerate(scores.cpu().numpy()):
+                    if s < 0.5:
+                        inactive_track = self.inactive_tracks[0]
+                        det_index_to_candidate[i].append((inactive_track, s))
+                        inactive_to_det[0].append(i)
 
-                    else:
-                        inactive_track = self.inactive_tracks[max_idx[i]-1]
-                        det_index_to_candidate[i].append((inactive_track, max[i]))
-                        inactive_to_det[max_idx[i]-1].append(i)
 
-                elif max[i] > 0.0 :
-                    print('no reid with score {}'.format(max[i]))
+            else:
+                scores = scores * iou_mask
+                scores = scores.cpu().numpy()
+                max = scores.max(axis=1)
+                max_idx = scores.argmax(axis=1)
+                scores[:, max_idx] = 0
+                max2 = scores.max(axis=1)
+                #max_idx2 = scores.argmax(axis=1)
+                dist = max - max2
+
+                for i, d in enumerate(dist):
+                    if (max[i] > self.finetuning_config['reid_score_threshold']):
+                        if self.finetuning_config['others_class']:
+                            # idx = 0 means unknown background people, idx=1,2,.. is inactive
+                            if max_idx[i] == 0:
+                                print('no reid because class 0 has score {}'.format(max[i]))
+
+                            else:
+                                inactive_track = self.inactive_tracks[max_idx[i] - 1]
+                                det_index_to_candidate[i].append((inactive_track, max[i]))
+                                inactive_to_det[max_idx[i] - 1].append(i)
+                        else:
+                            inactive_track = self.inactive_tracks[max_idx[i]]
+                            det_index_to_candidate[i].append((inactive_track, max[i]))
+                            inactive_to_det[max_idx[i]].append(i)
+
+                    elif max[i] > 0.0:
+                        print('no reid with score {}'.format(max[i]))
+
+            # if frame==13800:
+            #     # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
+            #     # debugging frcnn-09 frame 138 problem person wird fälschlicherweise als ID4
+            #     self.inactive_tracks[max_idx[0]-1].add_classifier(self.box_predictor_classification, self.box_head_classification)
+            #     print('\n attached classifier')
+            #
+            # if frame==15500:
+            #     # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
+            #     # debugging frcnn-09 frame 138 problem person wird fälschlicherweise als ID4
+            #     self.inactive_tracks[max_idx[0]-1].add_classifier(self.box_predictor_classification, self.box_head_classification)
+            #     print('\n attached classifier')
+
+
 
             for det_index, candidates in det_index_to_candidate.items():
                 candidate = candidates[0]
@@ -627,7 +651,9 @@ class Tracker:
                 self.results[t.id] = {}
                 self.others_db[t.id] = torch.tensor([]).to(device)
             self.results[t.id][self.im_index] = np.concatenate([t.pos[0].cpu().numpy(), np.array([t.score.cpu()])])
-            self.others_db[t.id] = t.training_set.features
+
+            if self.finetuning_config['others_class']:
+                self.others_db[t.id] = t.training_set.features
 
         for t in self.inactive_tracks:
             t.count_inactive += 1
@@ -662,13 +688,20 @@ class Tracker:
         feat = self.box_head_classification(features)
         class_logits, _ = self.box_predictor_classification(feat)
         if return_scores:
-            pred_scores = F.softmax(class_logits, -1)
+            if self.box_predictor_classification.cls_score.out_features == 1:
+                pred_scores = torch.sigmoid(class_logits)
+            else:
+                pred_scores = F.softmax(class_logits, -1)
             if eval:
                 self.box_predictor_classification.train()
                 self.box_head_classification.train()
             return pred_scores.detach()
             #return pred_scores[:, 1:].squeeze(dim=1).detach()
-        loss = F.cross_entropy(class_logits, scores.long())
+        if self.box_predictor_classification.cls_score.out_features==1:
+            criterion = torch.nn.BCEWithLogitsLoss()
+            loss = criterion(class_logits.squeeze(1), scores)
+        else:
+            loss = F.cross_entropy(class_logits, scores.long())
         if eval:
             self.box_predictor_classification.train()
             self.box_head_classification.train()
@@ -690,7 +723,7 @@ class Tracker:
 
         self.training_set = InactiveDataset(data_augmentation=self.finetuning_config['data_augmentation'],
                                             others_db=self.others_db,
-                                            val_wo_others=self.finetuning_config['val_wo_others'],
+                                            others_class=self.finetuning_config['others_class'],
                                             im_index=self.im_index,
                                             ids_in_others=self.finetuning_config['ids_in_others'],
                                             val_set_random_from_middle=self.finetuning_config['val_set_random_from_middle'])
@@ -731,15 +764,18 @@ class Tracker:
                                                                    finetuning_config['keep_frames'])
         #print("\n--- %s seconds --- for getting datasets" % (time.time() - start_time))
 
-        assert training_set.scores[-1] == len(self.inactive_tracks)
+        #assert training_set.scores[-1] == len(self.inactive_tracks)
         batch_size = self.finetuning_config['batch_size'] if self.finetuning_config['batch_size'] > 0 else len(training_set)
         #dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=training_set.batch_size, shuffle=True, drop_last=True)
         dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=batch_size, shuffle=True)
         dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=batch_size) if len(val_set) > 0 else 0
 
         if self.finetuning_config['early_stopping_classifier']:
+            if self.finetuning_config['early_stopping_method'] == 1:
             #early_stopping = EarlyStopping(patience=self.finetuning_config['early_stopping_patience'], verbose=False, delta=1e-4, checkpoints=self.checkpoints)
-            early_stopping2 = EarlyStopping2(verbose=False, checkpoints=self.checkpoints)
+                early_stopping = EarlyStopping(patience=self.finetuning_config['early_stopping_patience'], verbose=False, delta=1e-3, checkpoints=self.checkpoints)
+            else:
+                early_stopping = EarlyStopping2(verbose=False, checkpoints=self.checkpoints)
 
         if self.finetuning_config["plot_training_curves"]:
             plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks],
@@ -769,7 +805,13 @@ class Tracker:
                         run_loss_val += loss_val.detach().item()
                         pred_scores_val = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                               sample_batch['scores'], eval=True, return_scores=True)
-                        mask = torch.argmax(pred_scores_val, dim=1, keepdim=True).squeeze()
+
+                        if self.box_predictor_classification.cls_score.out_features == 1:
+                            mask = torch.ge(pred_scores_val, 0.5)
+                            mask = (torch.zeros(pred_scores_val.shape).to(device) + torch.ones(pred_scores_val.shape).to(device) * mask).squeeze(1)
+                        else:
+                            mask = torch.argmax(pred_scores_val, dim=1, keepdim=True).squeeze()
+
                         correct += torch.sum(mask == sample_batch['scores']).item()
                         total += len(sample_batch['scores'])
 
@@ -789,7 +831,13 @@ class Tracker:
                 if self.finetuning_config["plot_training_curves"]:
                     pred_scores = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                           sample_batch['scores'], eval=True, return_scores=True)
-                    mask = torch.argmax(pred_scores, dim=1, keepdim=True).squeeze()
+
+                    if self.box_predictor_classification.cls_score.out_features==1:
+                        mask = torch.ge(pred_scores, 0.5)
+                        mask = (torch.zeros(pred_scores.shape).to(device) + torch.ones(pred_scores.shape).to(device)*mask).squeeze()
+                    else:
+                        mask = torch.argmax(pred_scores, dim=1, keepdim=True).squeeze()
+
                     correct += torch.sum(mask == sample_batch['scores']).item()
                 loss.backward()
                 optimizer.step()
@@ -803,18 +851,19 @@ class Tracker:
 
             if self.finetuning_config['early_stopping_classifier'] and len(val_set) > 0:
                 models = [self.box_predictor_classification, self.box_head_classification]
-                #early_stopping(val_loss=loss_val, model=models, epoch=i+1)
-                early_stopping2(val_loss=loss_val, model=models, epoch=i+1)
-                # if early_stopping.early_stop:
-                #     print("Early stopping after {} epochs".format(early_stopping.epoch))
-                #     break
+                early_stopping(val_loss=loss_val, model=models, epoch=i+1)
+
+                if self.finetuning_config['early_stopping_method'] == 1:
+                    if early_stopping.early_stop:
+                        print("Early stopping after {} epochs".format(early_stopping.epoch))
+                        break
 
             #print("\n--- %s seconds --- for 1 epoch" % (time.time() - start_time))
 
 
         if self.finetuning_config['early_stopping_classifier'] and self.finetuning_config["validate"] and len(val_set) > 0:
             # load the last checkpoint with the best model
-            self.trained_epochs.append(early_stopping2.epoch)
+            self.trained_epochs.append(early_stopping.epoch)
             for i, m in enumerate(models):
                 m.load_state_dict(self.checkpoints[i])
 
