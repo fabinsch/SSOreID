@@ -77,6 +77,14 @@ class Tracker:
         self.trained_epochs = []
         self.score_others = []
 
+        self.exclude_from_others = []
+        self.gt = None
+        self.missed_reID = 0
+        self.wrong_reID = 0
+        self.inactive_tracks_gt_id = []
+        self.det_new_track_exclude = []
+        self.db_gt_inactive = {}
+
     def reset(self, hard=True):
         self.tracks = []
         self.inactive_tracks = []
@@ -91,6 +99,22 @@ class Tracker:
     def tracks_to_inactive(self, tracks):
         self.tracks = [t for t in self.tracks if t not in tracks]
         for t in tracks:
+            gt_boxes = torch.cat(list(self.gt.values()), 0).cuda()
+            inactivetrack_iou_GT = bbox_overlaps(t.pos, gt_boxes).cpu().numpy()
+            ind = np.where(inactivetrack_iou_GT == np.max(inactivetrack_iou_GT))[1]
+            if len(ind) > 0:
+                ind = ind[0]
+                overlap = inactivetrack_iou_GT[0, ind]
+                if overlap >= 0.5:
+                    gt_id = list(self.gt.keys())[ind]
+                    t.gt_id = gt_id
+                    self.inactive_tracks_gt_id.append(gt_id)
+
+                    if gt_id not in self.db_gt_inactive.keys():
+                        self.db_gt_inactive[gt_id] = [t.id]
+                    else:
+                        self.db_gt_inactive[gt_id].append(t.id)
+
             if t.frames_since_active > 1:
                 t.pos = t.last_pos[-1]
                 self.inactive_number_changes += 1
@@ -145,6 +169,9 @@ class Tracker:
                           box_roi_pool=box_roi_pool, keep_frames=self.finetuning_config['keep_frames'],
                           data_augmentation = self.finetuning_config['data_augmentation'])
             self.tracks.append(track)
+            if i in self.det_new_track_exclude:
+                self.exclude_from_others.append(track.id)
+                print("exclude newly init track {} from others".format(track.id))
             #other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i + 1:], old_tracks))
             if torch.sum(iou[i] > self.finetuning_config['train_iou_threshold']) > 1:
                 print('\nSKIP SKIP SKIP beim Adden')
@@ -230,11 +257,17 @@ class Tracker:
         return pos
 
 
-    def reid_by_finetuned_model_(self, new_det_pos, new_det_scores, frame, image):
+    def reid_by_finetuned_model_(self, new_det_pos, new_det_scores, frame, blob):
         """Do reid with one model predicting the score for each inactive track"""
+        image = blob['img'][0]
+        gt = blob['gt']
+        det_gt_id = [] # list which detections corresponds to which gt id
+        inactive_tracks_gt_id = []
         current_inactive_tracks_id = [t.id for t in self.inactive_tracks]
+        inactive_tracks_gt_id = self.inactive_tracks_gt_id
         samples_per_track = [t.training_set.num_frames_keep for t in self.inactive_tracks]
         assert current_inactive_tracks_id == self.inactive_tracks_id
+
         #active_tracks = self.get_pos()
         if len(new_det_pos.size()) > 1 and len(self.inactive_tracks) > 0:
             remove_inactive = []
@@ -242,6 +275,31 @@ class Tracker:
             inactive_to_det = defaultdict(list)
             assigned = []
             inactive_tracks = self.get_pos(active=False)
+
+            # for t in self.inactive_tracks:
+            #     gt_boxes = torch.cat(list(gt.values()), 0).cuda()
+            #     inactivetrack_iou_GT = bbox_overlaps(t.pos, gt_boxes).cpu().numpy()
+            #     ind = np.where(inactivetrack_iou_GT == np.max(inactivetrack_iou_GT))[1]
+            #     if len(ind) > 0:
+            #         ind = ind[0]
+            #         overlap = inactivetrack_iou_GT[0, ind]
+            #         if overlap >= 0.2:
+            #             gt_id = list(gt.keys())[ind]
+            #             t.gt_id = gt_id
+            #             inactive_tracks_gt_id.append(gt_id)
+
+            for det in new_det_pos:
+                gt_boxes = torch.cat(list(gt.values()), 0).cuda()
+                det_iou_GT = bbox_overlaps(det.unsqueeze(0), gt_boxes).cpu().numpy()
+                ind = np.where(det_iou_GT == np.max(det_iou_GT))[1]
+                if len(ind) > 0:
+                    ind = ind[0]
+                    overlap = det_iou_GT[0, ind]
+                    if overlap >= 0.5:
+                        det_gt_id.append(list(gt.keys())[ind])
+                    else:
+                        det_gt_id.append(-1)
+
 
             boxes, scores = self.obj_detect.predict_boxes(new_det_pos,
                                                           box_predictor_classification=self.box_predictor_classification,
@@ -277,7 +335,6 @@ class Tracker:
                         det_index_to_candidate[i].append((inactive_track, s))
                         inactive_to_det[0].append(i)
 
-
             else:
                 scores = scores * iou_mask
                 scores = scores.cpu().numpy()
@@ -294,6 +351,19 @@ class Tracker:
                             # idx = 0 means unknown background people, idx=1,2,.. is inactive
                             if max_idx[i] == 0:
                                 print('no reid because class 0 has score {}'.format(max[i]))
+                                if det_gt_id[i] in inactive_tracks_gt_id:  # check if the gt id has ever been seen before
+                                    f = 0
+                                    for t in self.inactive_tracks:  # if it's still in the inactive tracks
+                                        if t.gt_id == det_gt_id[i]:
+                                            #self.exclude_from_others.append(t.id)
+                                            print('!!!!! missed reID of person {}, detection {}'.format(t.id, i))
+                                            self.missed_reID += 1
+                                            self.det_new_track_exclude.append(i)
+                                            f += 1
+                                    if f==0:  # means this track is not in inactive anymore but was before
+                                        for id in self.db_gt_inactive[det_gt_id[i]]:
+                                            self.exclude_from_others.append(id)
+                                            print("exlude {}".format(id))
 
                             else:
                                 inactive_track = self.inactive_tracks[max_idx[i] - 1]
@@ -304,8 +374,22 @@ class Tracker:
                             det_index_to_candidate[i].append((inactive_track, max[i]))
                             inactive_to_det[max_idx[i]].append(i)
 
-                    elif max[i] > 0.0:
+                    #elif max[i] > 0.0:
+                    else:
                         print('no reid with score {}'.format(max[i]))
+                        if det_gt_id[i] in inactive_tracks_gt_id:
+                            f = 0
+                            for t in self.inactive_tracks:
+                                if t.gt_id == det_gt_id[i]:
+                                    #self.exclude_from_others.append(t.id)
+                                    print('!!!!! missed reID of person {}'.format(t.id))
+                                    self.missed_reID += 1
+                                    self.det_new_track_exclude.append(i)
+                                    f += 1
+                            if f == 0:
+                                for id in self.db_gt_inactive[det_gt_id[i]]:
+                                    self.exclude_from_others.append(id)
+                                    print("exlude {}".format(id))
 
             # if frame==13800:
             #     # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
@@ -330,6 +414,12 @@ class Tracker:
                 inactive_id_in_list = self.inactive_tracks.index(inactive_track)
 
                 if len(inactive_to_det[inactive_id_in_list]) == 1:
+                    # check if GT id fits
+                    if inactive_track.gt_id != det_gt_id[det_index]:
+                        self.exclude_from_others.append(inactive_track.id)
+                        print('!!!!! wrong reID of person {}'.format(inactive_track.id))
+                        self.wrong_reID += 1
+                        print("exclude reID track {} from others".format(inactive_track.id))
                     # make sure just 1 new detection per inactive track
                     self.tracks.append(inactive_track)
                     print(f"\n**************   Reidying track {inactive_track.id} in frame {frame} with score {candidate[1]}")
@@ -493,6 +583,8 @@ class Tracker:
         ###########################
 
         self.obj_detect.load_image(blob['img'])
+        self.gt = blob['gt']
+        self.det_new_track_exclude = []
 
         if self.public_detections:
             dets = blob['dets'].squeeze(dim=0)
@@ -637,7 +729,7 @@ class Tracker:
                 new_det_features = self.reid_network.test_rois(blob['img'], new_det_pos).data
                 new_det_pos, new_det_scores = self.reid(blob, new_det_pos, new_det_features, new_det_scores)
             elif self.finetuning_config["for_reid"]:
-                new_det_pos, new_det_scores = self.reid_by_finetuned_model_(new_det_pos, new_det_scores, frame, blob['img'][0])
+                new_det_pos, new_det_scores = self.reid_by_finetuned_model_(new_det_pos, new_det_scores, frame, blob)
             # add new
             if new_det_pos.nelement() > 0:
                 self.add(new_det_pos, new_det_scores, blob['img'][0], frame, new_det_features)
@@ -726,7 +818,8 @@ class Tracker:
                                             others_class=self.finetuning_config['others_class'],
                                             im_index=self.im_index,
                                             ids_in_others=self.finetuning_config['ids_in_others'],
-                                            val_set_random_from_middle=self.finetuning_config['val_set_random_from_middle'])
+                                            val_set_random_from_middle=self.finetuning_config['val_set_random_from_middle'],
+                                            exclude_from_others=self.exclude_from_others)
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
 

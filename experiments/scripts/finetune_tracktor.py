@@ -118,6 +118,7 @@ def main(tracktor, reid, _config, _log, _run):
         #_log.info(f"It was trained on: {tracker.train_on}")
         _log.info(f"It happen x times that it was killed and reid in same step: {tracker.count_killed_this_step_reid}")
         _log.info(f"Number of tracks which are just active 1 frame: {tracker.c_just_one_frame_active}")
+        _log.info(f"In total {tracker.missed_reID} missed and {tracker.wrong_reID} wrong reIDs")
 
         if len(tracker.score_others)>0:
             _log.info(f"Average score for others class: {sum(tracker.score_others) / len(tracker.score_others)}")

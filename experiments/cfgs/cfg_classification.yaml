@@ -13,17 +13,17 @@ tracktor:
     'finetuning':
       'optimizer': sgd
       'keep_frames': 40
-      'epochs': 500
+      'epochs': 100
       'epochs_wo_val': 20
       'learning_rate': 1e-1
       'batch_size': 0
       'validate': True
-      'others_class': False
+      'others_class': True
       # how many samples per person should be included in val set [in %]
       'val_split': 0.2
       'val_set_random': False
       'val_set_random_from_middle': False
-      'plot_training_curves': True
+      'plot_training_curves': False
       'early_stopping_classifier': True
       # method 1 means early stopping with patience and delta, 2 is pick best according to val loss
       'early_stopping_method': 1
@@ -36,4 +36,4 @@ tracktor:
       'data_augmentation': 0
       # how many different IDs should be considered for others class (0 = all possible)
       'ids_in_others': 0
-  'output_subdir': '30'
+  'output_subdir': '31'

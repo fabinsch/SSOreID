@@ -51,7 +51,7 @@ class IndividualDataset(torch.utils.data.Dataset):
 
 
 class InactiveDataset(torch.utils.data.Dataset):
-    def __init__(self, data_augmentation=0, others_db=None, others_class=False, im_index=0, ids_in_others=0, val_set_random_from_middle=False):
+    def __init__(self, data_augmentation=0, others_db=None, others_class=False, im_index=0, ids_in_others=0, val_set_random_from_middle=False, exclude_from_others=[]):
         #self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
         self.features = torch.tensor([]).to(device)
@@ -64,6 +64,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         self.im_index = im_index
         self.ids_in_others = ids_in_others
         self.val_set_random_from_middle = val_set_random_from_middle
+        self.exclude_from_others = exclude_from_others
 
     def __len__(self):
         return self.scores.size()[0]
@@ -97,6 +98,8 @@ class InactiveDataset(torch.utils.data.Dataset):
         inactive_ids = [t.id for t in inactive_tracks]
         others_db_k = list(self.others_db.keys())
         others_db_k = [k for k in others_db_k if k not in inactive_ids]
+        #others_db_k = [k for k in others_db_k if k not in self.exclude_from_others]
+        #print("excluding: {}".format(self.exclude_from_others))
         num_tracks = len(others_db_k)
         ids = self.ids_in_others
         if num_tracks >= 2:
