@@ -108,9 +108,9 @@ class Track(object):
     #         #print("\n--- %s seconds --- for roi pooling" % (time.time() - start_time))
     #     return {'features': roi_pool_feat, 'boxes': boxes[:, 0:4], 'scores': boxes[:, 4]}
 
-    def update_training_set_classification(self, features, pos):
+    def update_training_set_classification(self, features, pos, frame):
         training_set_dict = {'features': features, 'boxes': pos}
-        self.training_set.append_samples(training_set_dict)
+        self.training_set.append_samples(training_set_dict, frame)
 
     def add_classifier(self, box_head_classification, box_predictor_classification):
         self.box_head_classification_debug = box_head_classification

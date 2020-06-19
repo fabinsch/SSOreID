@@ -15,44 +15,48 @@ class IndividualDataset(torch.utils.data.Dataset):
     def __init__(self, id, keep_frames, data_augmentation):
         self.id = id
         self.features = torch.tensor([]).to(device)
-        #self.boxes = torch.tensor([]).to(device)
+        self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
         self.keep_frames = keep_frames
         self.num_frames_keep = 0
         self.num_frames = 0
         self.pos_unique_indices = None
         self.data_augmentation = data_augmentation
+        self.frame = torch.tensor([]).to(device)
 
-    def append_samples(self, training_set_dict):
+    def append_samples(self, training_set_dict, frame=0):
+        frame += 1 # because self.im_index is increased at the end of step
         self.num_frames += 1
         self.num_frames_keep += 1
         self.features = torch.cat((self.features, training_set_dict['features']))
-        #self.boxes = torch.cat((self.boxes, training_set_dict['boxes']))
+        self.boxes = torch.cat((self.boxes, training_set_dict['boxes']))
         self.scores = torch.cat((self.scores, torch.tensor([0]).float().to(device)))
+        self.frame = torch.cat((self.frame, (torch.ones(1)*frame).to(device)))
         if self.num_frames > self.keep_frames:
             self.remove_samples()
             self.num_frames_keep = self.keep_frames
 
     def remove_samples(self):
-        #self.boxes = self.boxes[1:, :]
+        self.boxes = self.boxes[1+self.data_augmentation:, :]
         self.scores = self.scores[1:]
         self.features = self.features[1+self.data_augmentation:, :, :, :]
-
+        self.frame = self.frame[1:]
 
     def post_process(self):
         self.pos_unique_indices = list(range(self.num_frames_keep))
+
 
     def __len__(self):
         return self.scores.size()[0]
 
     def __getitem__(self, idx):
         intervall = self.data_augmentation + 1  # has to be jumped to get corresponding features
-        return {'features': self.features[idx*intervall:(idx*intervall+intervall), :, :, :], 'scores': self.scores[idx]*torch.ones(self.data_augmentation+1)}
+        return {'features': self.features[idx*intervall:(idx*intervall+intervall), :, :, :], 'scores': self.scores[idx]*torch.ones(self.data_augmentation+1), 'frame': self.frame}
 
 
 class InactiveDataset(torch.utils.data.Dataset):
-    def __init__(self, data_augmentation=0, others_db=None, others_class=False, im_index=0, ids_in_others=0, val_set_random_from_middle=False, exclude_from_others=[]):
-        #self.boxes = torch.tensor([]).to(device)
+    def __init__(self, data_augmentation=0, others_db=None, others_class=False, im_index=0, ids_in_others=0, val_set_random_from_middle=False, exclude_from_others=[], results=None):
+        self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
         self.features = torch.tensor([]).to(device)
         self.max_occ = 0
@@ -65,13 +69,15 @@ class InactiveDataset(torch.utils.data.Dataset):
         self.ids_in_others = ids_in_others
         self.val_set_random_from_middle = val_set_random_from_middle
         self.exclude_from_others = exclude_from_others
+        #self.results = results
+        self.frame = torch.tensor([]).to(device)
 
     def __len__(self):
         return self.scores.size()[0]
 
     def __getitem__(self, idx):
         #return {'features': self.features[idx, :, :, :], 'boxes': self.boxes[idx, :], 'scores': self.scores[idx]}
-        return {'features': self.features[idx, :, :, :], 'scores': self.scores[idx]}
+        return {'features': self.features[idx, :, :, :], 'scores': self.scores[idx], 'frame_id': self.frame[idx]}
 
     def balance(self, i, occ):
         if type(i) is list:
@@ -93,7 +99,9 @@ class InactiveDataset(torch.utils.data.Dataset):
 
     def get_others(self, inactive_tracks, val=False):
         val_others_features = torch.tensor([]).to(device)
+        val_others_frames_id = torch.tensor([]).to(device)
         train_others_features = torch.tensor([]).to(device)
+        train_others_frames_id = torch.tensor([]).to(device)
 
         inactive_ids = [t.id for t in inactive_tracks]
         others_db_k = list(self.others_db.keys())
@@ -104,7 +112,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         ids = self.ids_in_others
         if num_tracks >= 2:
 
-            num_frames = [t.shape[0] for t in list(self.others_db.values())]
+            num_frames = [t[0].shape[0] for t in list(self.others_db.values())]
             num_frames_pp = [(t, num_frames[t]) for t in others_db_k]
 
             if val:
@@ -142,7 +150,9 @@ class InactiveDataset(torch.utils.data.Dataset):
                             i = 0
 
                         if val_num_others[i]>0:
-                            val_others_features = torch.cat((val_others_features, self.others_db[idx][val_num_others[i]-1,:,:,:].unsqueeze(0)))
+                            val_others_features = torch.cat((val_others_features, self.others_db[idx][0][val_num_others[i]-1,:,:,:].unsqueeze(0)))
+                            frames_id = torch.cat((self.others_db[idx][1][val_num_others[i]-1].unsqueeze(0), (torch.ones(1)*idx).to(device)))
+                            val_others_frames_id = torch.cat((val_others_frames_id, frames_id.unsqueeze(0)))
                             val_num_others[i] -= 1
                         if val_others_features.shape[0]>=(int(self.min_occ*0.2)*(self.data_augmentation+1)) or sum(val_num_others)==0:
                             break
@@ -154,12 +164,15 @@ class InactiveDataset(torch.utils.data.Dataset):
                             c += 1
                             i = 0
                         if train_num_others[i] > 0:
-                            train_others_features = torch.cat((train_others_features, self.others_db[idx][train_num_others[i]-1,:,:,:].unsqueeze(0)))
+                            train_others_features = torch.cat((train_others_features, self.others_db[idx][0][train_num_others[i]-1,:,:,:].unsqueeze(0)))
+                            frames_id = torch.cat((self.others_db[idx][1][train_num_others[i] - 1].unsqueeze(0),
+                                                   (torch.ones(1)*idx).to(device)))
+                            train_others_frames_id = torch.cat((train_others_frames_id, frames_id.unsqueeze(0)))
                             train_num_others[i] -= 1
                         if train_others_features.shape[0]>=(self.max_occ*(self.data_augmentation+1)) or sum(train_num_others)==0:
                             break
 
-                    return train_others_features, val_others_features
+                    return train_others_features, val_others_features, train_others_frames_id, val_others_frames_id
 
                 else:  # just build train others because val others not divers
                     train_others = num_frames_pp
@@ -181,11 +194,15 @@ class InactiveDataset(torch.utils.data.Dataset):
                             i = 0
                         if train_num_others[i] > 0:
                             train_others_features = torch.cat(
-                                (train_others_features, self.others_db[idx][train_num_others[i] - 1, :, :, :].unsqueeze(0)))
+                                (train_others_features, self.others_db[idx][0][train_num_others[i] - 1, :, :, :].unsqueeze(0)))
+                            frames_id = torch.cat((self.others_db[idx][1][train_num_others[i] - 1].unsqueeze(0),
+                                                   (torch.ones(1)*idx).to(device)))
+                            train_others_frames_id = torch.cat((train_others_frames_id, frames_id.unsqueeze(0)))
+
                             train_num_others[i] -= 1
                         if train_others_features.shape[0] >= (self.max_occ*(self.data_augmentation+1)) or sum(train_num_others) == 0:
                             break
-                    return train_others_features, val_others_features
+                    return train_others_features, val_others_features, train_others_frames_id, val_others_frames_id
 
             #### no validation set
             else:
@@ -274,12 +291,13 @@ class InactiveDataset(torch.utils.data.Dataset):
         num_val = int(self.min_occ * split)
         return val_idx, num_val
 
-    def get_val_set(self, val_idx, inactive_tracks, val_others_features):
+    def get_val_set(self, val_idx, inactive_tracks, val_others_features, val_others_fId):
         val_set = InactiveDataset()
 
         if val_others_features.shape[0] > 0:
             val_set.scores = torch.zeros(val_others_features.shape[0]).to(device)
             val_set.features = torch.cat((val_set.features, val_others_features))
+            val_set.frame = torch.cat((val_set.frame, val_others_fId))
         # else:
         #     print('no validation set for others class')
 
@@ -292,7 +310,8 @@ class InactiveDataset(torch.utils.data.Dataset):
             val_set.scores = torch.cat((val_set.scores, torch.ones(len(idx_features)).to(device) * (c)))
             #val_set.boxes = torch.cat((val_set.boxes, t.training_set.boxes[idxs]))
             val_set.features = torch.cat((val_set.features, t.training_set.features[idx_features]))
-
+            if len(idxs)>0:
+                val_set.frame = torch.cat((val_set.frame, torch.cat((t.training_set.frame[idxs].unsqueeze(1), torch.ones(len(idxs),1).to(device)*c), dim=1)))
         return val_set
 
     def expand_indices_augmentation(self, indices):
@@ -316,7 +335,7 @@ class InactiveDataset(torch.utils.data.Dataset):
 
         if self.others_class:
             # get others dataset with label 0
-            train_others_features, val_others_features = self.get_others(inactive_tracks, val)
+            train_others_features, val_others_features, train_other_fId, val_others_fId = self.get_others(inactive_tracks, val)
             if train_others_features.shape[0] < (self.max_occ*(self.data_augmentation+1)) and train_others_features.shape[0] > 0:
                 train_others_features = self.balance(train_others_features, self.max_occ*(self.data_augmentation+1))
                 if train_others_features.shape[0] == 0:
@@ -324,6 +343,7 @@ class InactiveDataset(torch.utils.data.Dataset):
                 #print('\nbalance because others is too less')
             self.scores = torch.zeros(train_others_features.shape[0]).to(device)
             self.features = torch.cat((self.features, train_others_features))
+            self.frame = torch.cat((self.frame, train_other_fId))
 
         else:
             train_others_features = torch.tensor([]).to(device)
@@ -339,9 +359,9 @@ class InactiveDataset(torch.utils.data.Dataset):
             self.scores = torch.cat((self.scores, torch.ones(len(pos_unique_indices)).to(device) * (c)))
             #self.boxes = torch.cat((self.boxes, t.training_set.boxes[pos_unique_indices_boxes]))
             self.features = torch.cat((self.features, t.training_set.features[pos_unique_indices]))
-
+            self.frame = torch.cat((self.frame, torch.cat((t.training_set.frame[pos_unique_indices].unsqueeze(1), torch.ones(len(pos_unique_indices),1).to(device)*c), dim=1)))
         if val:
-            val_set = self.get_val_set(val_idx, inactive_tracks, val_others_features)
+            val_set = self.get_val_set(val_idx, inactive_tracks, val_others_features, val_others_fId)
             return self, val_set
 
         return self, []

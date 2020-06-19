@@ -4,6 +4,7 @@ from scipy.optimize import linear_sum_assignment
 import cv2
 from collections import defaultdict
 import datetime
+import collections
 
 from tracktor.track import Track
 from tracktor.visualization import plot_compare_bounding_boxes, VisdomLinePlotter, plot_bounding_boxes
@@ -99,7 +100,8 @@ class Tracker:
     def tracks_to_inactive(self, tracks):
         self.tracks = [t for t in self.tracks if t not in tracks]
         for t in tracks:
-            gt_boxes = torch.cat(list(self.gt.values()), 0).cuda()
+            #t = torch.arange(self.im_index-(t.training_set.features.shape[0]))
+            gt_boxes = torch.cat(list(self.gt.values()), 0).to(device)
             inactivetrack_iou_GT = bbox_overlaps(t.pos, gt_boxes).cpu().numpy()
             ind = np.where(inactivetrack_iou_GT == np.max(inactivetrack_iou_GT))[1]
             if len(ind) > 0:
@@ -169,6 +171,11 @@ class Tracker:
                           box_roi_pool=box_roi_pool, keep_frames=self.finetuning_config['keep_frames'],
                           data_augmentation = self.finetuning_config['data_augmentation'])
             self.tracks.append(track)
+            if frame==138:
+                # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
+                # debugging frcnn-09 frame 138 problem person wird fälschlicherweise als ID4
+                track.add_classifier(self.box_predictor_classification, self.box_head_classification)
+                print('\n attached classifier')
             if i in self.det_new_track_exclude:
                 self.exclude_from_others.append(track.id)
                 print("exclude newly init track {} from others".format(track.id))
@@ -178,8 +185,10 @@ class Tracker:
                 self.c_skipped_for_train_iou += 1
                 track.skipped_for_train += 1
                 continue
+
             track.update_training_set_classification(features=roi_pool_per_track[i],
-                                                     pos=boxes[i+self.finetuning_config['data_augmentation']].unsqueeze(0))
+                                                     pos=boxes[i+self.finetuning_config['data_augmentation']].unsqueeze(0),
+                                                     frame=self.im_index)
 
         self.track_num += num_new
 
@@ -277,7 +286,7 @@ class Tracker:
             inactive_tracks = self.get_pos(active=False)
 
             # for t in self.inactive_tracks:
-            #     gt_boxes = torch.cat(list(gt.values()), 0).cuda()
+            #     gt_boxes = torch.cat(list(gt.values()), 0).to(device)
             #     inactivetrack_iou_GT = bbox_overlaps(t.pos, gt_boxes).cpu().numpy()
             #     ind = np.where(inactivetrack_iou_GT == np.max(inactivetrack_iou_GT))[1]
             #     if len(ind) > 0:
@@ -289,7 +298,7 @@ class Tracker:
             #             inactive_tracks_gt_id.append(gt_id)
 
             for det in new_det_pos:
-                gt_boxes = torch.cat(list(gt.values()), 0).cuda()
+                gt_boxes = torch.cat(list(gt.values()), 0).to(device)
                 det_iou_GT = bbox_overlaps(det.unsqueeze(0), gt_boxes).cpu().numpy()
                 ind = np.where(det_iou_GT == np.max(det_iou_GT))[1]
                 if len(ind) > 0:
@@ -391,6 +400,7 @@ class Tracker:
                                     self.exclude_from_others.append(id)
                                     print("exlude {}".format(id))
 
+
             # if frame==13800:
             #     # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
             #     # debugging frcnn-09 frame 138 problem person wird fälschlicherweise als ID4
@@ -483,7 +493,8 @@ class Tracker:
             for i, inactive_track in enumerate(remove_inactive):
                 self.inactive_tracks.remove(inactive_track)
                 inactive_track.update_training_set_classification(features=roi_pool_per_track[i],
-                                                                  pos=boxes[i+self.finetuning_config['data_augmentation']].unsqueeze(0))
+                                                                  pos=boxes[i+self.finetuning_config['data_augmentation']].unsqueeze(0),
+                                                                  frame=self.im_index)
 
             keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
             if keep.nelement() > 0:
@@ -561,14 +572,14 @@ class Tracker:
                     self.motion_step(t)
 
     def step(self, blob, frame=1):
-        # if self.im_index >= 138:
-        #     for track in self.inactive_tracks:
-        #         if hasattr(track, 'box_predictor_classification_debug'):
-        #             boxes_debug, scores_debug = self.obj_detect.predict_boxes(track.pos,
-        #                                                                       track.box_predictor_classification_debug,
-        #                                                                       track.box_head_classification_debug,
-        #                                                                       pred_multiclass=True)
-        #             print('\n DEBUG scores {}'.format(scores_debug))
+        if self.im_index >= 138:
+            for track in self.tracks:
+                if hasattr(track, 'box_predictor_classification_debug'):
+                    boxes_debug, scores_debug = self.obj_detect.predict_boxes(track.pos,
+                                                                              track.box_predictor_classification_debug,
+                                                                              track.box_head_classification_debug,
+                                                                              pred_multiclass=True)
+                    print('\n DEBUG scores {}'.format(scores_debug))
 
         """This function should be called every timestep to perform tracking with a blob
         containing the image information.
@@ -591,7 +602,7 @@ class Tracker:
             if dets.nelement() > 0:
                 boxes, scores = self.obj_detect.predict_boxes(dets)
             else:
-                boxes = scores = torch.zeros(0).cuda()
+                boxes = scores = torch.zeros(0).to(device)
         else:
             boxes, scores = self.obj_detect.detect(blob['img'])
 
@@ -601,7 +612,7 @@ class Tracker:
             # Filter out tracks that have too low person score
             inds = torch.gt(scores, self.detection_person_thresh).nonzero().view(-1)
         else:
-            inds = torch.zeros(0).cuda()
+            inds = torch.zeros(0).to(device)
 
         # Are there any bounding boxes that have a high enough person (class 1) classification score.
         if inds.nelement() > 0:
@@ -609,8 +620,8 @@ class Tracker:
 
             det_scores = scores[inds]
         else:
-            det_pos = torch.zeros(0).cuda()
-            det_scores = torch.zeros(0).cuda()
+            det_pos = torch.zeros(0).to(device)
+            det_scores = torch.zeros(0).to(device)
 
         ##################
         # Predict tracks #
@@ -677,7 +688,8 @@ class Tracker:
 
                     #track.update_training_set_classification(features=roi_pool_feat[i].unsqueeze(0),
                     track.update_training_set_classification(features=roi_pool_per_track[i],
-                                                             pos=boxes[i+self.finetuning_config['data_augmentation']].unsqueeze(0))
+                                                             pos=boxes[i+self.finetuning_config['data_augmentation']].unsqueeze(0),
+                                                             frame=self.im_index)
 
         # train REID model new if change in active tracks happened
         current_inactive_tracks_id = [t.id for t in self.inactive_tracks]
@@ -745,7 +757,7 @@ class Tracker:
             self.results[t.id][self.im_index] = np.concatenate([t.pos[0].cpu().numpy(), np.array([t.score.cpu()])])
 
             if self.finetuning_config['others_class']:
-                self.others_db[t.id] = t.training_set.features
+                self.others_db[t.id] = (t.training_set.features, t.training_set.frame)
 
         for t in self.inactive_tracks:
             t.count_inactive += 1
@@ -773,7 +785,7 @@ class Tracker:
         return self.results
 
 
-    def forward_pass_for_classifier_training(self, features, scores, eval=False, return_scores=False):
+    def forward_pass_for_classifier_training(self, features, scores, eval=False, return_scores=False, ep=-1, fId=None):
         if eval:
             self.box_predictor_classification.eval()
             self.box_head_classification.eval()
@@ -794,6 +806,31 @@ class Tracker:
             loss = criterion(class_logits.squeeze(1), scores)
         else:
             loss = F.cross_entropy(class_logits, scores.long())
+            if True and ep>=0:
+                m = torch.nn.LogSoftmax()
+                n = torch.nn.Softmax()
+                logscores_each = m(class_logits)
+                scores_each = n(class_logits)
+                l = torch.nn.NLLLoss(reduction='none')
+                loss_each = l(logscores_each, scores.long())
+                debug = torch.cat((scores.unsqueeze(1), scores_each), dim=1)
+                debug = torch.cat((debug, loss_each.unsqueeze(1)), dim=1)
+                debug = torch.cat((debug, fId), dim=1)
+                #print("\n class / scores / loss / frame / ID")
+                #print(debug.detach())
+                t, idx = np.unique(scores.numpy(), return_inverse=True)
+                #counter = collections.Counter(idx)
+                for c in t:
+                    p = torch.tensor(idx).to(device) == (torch.ones(scores.shape).to(device)*c)
+                    class_loss = torch.mean(p * loss_each)
+                    max, ind = torch.max(p * loss_each,dim=0, keepdim=False, out=None)
+                    if class_loss > 0.3:
+                        print(
+                            '({}) loss for class {:.0f} is {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
+                                ep, c, class_loss.detach(), max, fId[ind], scores_each[ind]))
+
+
+
         if eval:
             self.box_predictor_classification.train()
             self.box_head_classification.train()
@@ -819,7 +856,8 @@ class Tracker:
                                             im_index=self.im_index,
                                             ids_in_others=self.finetuning_config['ids_in_others'],
                                             val_set_random_from_middle=self.finetuning_config['val_set_random_from_middle'],
-                                            exclude_from_others=self.exclude_from_others)
+                                            exclude_from_others=self.exclude_from_others,
+                                            results=self.results)
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
 
@@ -887,13 +925,14 @@ class Tracker:
 
         for i in range(ep):
             if self.finetuning_config["validate"] and len(val_set) > 0:
+                #print('\n epoch {}'.format(i))
                 run_loss_val = 0.0
                 total = 0
                 correct = 0
                 with torch.no_grad():
                     for i_sample, sample_batch in enumerate(dataloader_val):
                         loss_val = self.forward_pass_for_classifier_training(sample_batch['features'],
-                                                                         sample_batch['scores'], eval=True)
+                                                                         sample_batch['scores'], eval=True, ep=i, fId=sample_batch['frame_id'])
                         #run_loss_val += loss_val.detach().item() / len(sample_batch['scores'])
                         run_loss_val += loss_val.detach().item()
                         pred_scores_val = self.forward_pass_for_classifier_training(sample_batch['features'],
