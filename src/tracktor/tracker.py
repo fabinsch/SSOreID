@@ -794,6 +794,23 @@ class Tracker:
             loss = criterion(class_logits.squeeze(1), scores)
         else:
             loss = F.cross_entropy(class_logits, scores.long())
+            if True:
+                m = torch.nn.LogSoftmax()
+                n = torch.nn.Softmax()
+                logscores_each = m(class_logits)
+                scores_each = n(class_logits)
+                l = torch.nn.NLLLoss(reduction='none')
+                loss_each = l(logscores_each, scores.long())
+                debug = torch.cat((scores.unsqueeze(1), scores_each), dim=1)
+                debug = torch.cat((debug, loss_each.unsqueeze(1)), dim=1)
+                #print("\n class / scores / loss")
+                #print(debug.detach())
+                t, idx = np.unique(scores.numpy(), return_inverse=True)
+                for c in t:
+                    p = torch.tensor(idx).to(device) == torch.ones(scores.shape).to(device)
+                    class_loss = torch.mean(p * loss_each)
+                    print('\loss for class {} is {}'.format(c, class_loss.detach()))
+
         if eval:
             self.box_predictor_classification.train()
             self.box_head_classification.train()
@@ -887,6 +904,7 @@ class Tracker:
 
         for i in range(ep):
             if self.finetuning_config["validate"] and len(val_set) > 0:
+                print('\n epoch {}'.format(i))
                 run_loss_val = 0.0
                 total = 0
                 correct = 0

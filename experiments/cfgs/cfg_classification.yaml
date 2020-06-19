@@ -23,7 +23,7 @@ tracktor:
       'val_split': 0.2
       'val_set_random': False
       'val_set_random_from_middle': False
-      'plot_training_curves': False
+      'plot_training_curves': True
       'early_stopping_classifier': True
       # method 1 means early stopping with patience and delta, 2 is pick best according to val loss
       'early_stopping_method': 1
