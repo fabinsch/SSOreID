@@ -106,8 +106,8 @@ class InactiveDataset(torch.utils.data.Dataset):
         inactive_ids = [t.id for t in inactive_tracks]
         others_db_k = list(self.others_db.keys())
         others_db_k = [k for k in others_db_k if k not in inactive_ids]
-        #others_db_k = [k for k in others_db_k if k not in self.exclude_from_others]
-        #print("excluding: {}".format(self.exclude_from_others))
+        others_db_k = [k for k in others_db_k if k not in self.exclude_from_others]
+        print("excluding: {}".format(self.exclude_from_others))
         num_tracks = len(others_db_k)
         ids = self.ids_in_others
         if num_tracks >= 2:
@@ -312,6 +312,14 @@ class InactiveDataset(torch.utils.data.Dataset):
             val_set.features = torch.cat((val_set.features, t.training_set.features[idx_features]))
             if len(idxs)>0:
                 val_set.frame = torch.cat((val_set.frame, torch.cat((t.training_set.frame[idxs].unsqueeze(1), torch.ones(len(idxs),1).to(device)*c), dim=1)))
+            if self.im_index == 117:
+                id29 = torch.load('id27.pt')
+                idx_29 = torch.arange(16,24).to(device)
+                self.scores = torch.cat((self.scores, torch.ones(idx_29.shape).to(device) * (4)))
+                self.features = torch.cat((self.features, id29[idx_29]))
+                fId29 = torch.cat((idx_29.unsqueeze(1), (torch.ones_like(idx_29).to(device) * 27).unsqueeze(1)), dim=1)
+                self.frame = torch.cat((self.frame, fId29.float()))
+
         return val_set
 
     def expand_indices_augmentation(self, indices):
@@ -323,6 +331,8 @@ class InactiveDataset(torch.utils.data.Dataset):
 
 
     def get_training_set(self, inactive_tracks, tracks, val, split, val_set_random, keep_frames):
+        #if self.im_index==117:
+         #   inactive_tracks = inactive_tracks[:-1]
         occ = [t.training_set.num_frames_keep for t in inactive_tracks]
         self.max_occ = max(occ) if len(occ) > 0 else 0
 
@@ -360,6 +370,15 @@ class InactiveDataset(torch.utils.data.Dataset):
             #self.boxes = torch.cat((self.boxes, t.training_set.boxes[pos_unique_indices_boxes]))
             self.features = torch.cat((self.features, t.training_set.features[pos_unique_indices]))
             self.frame = torch.cat((self.frame, torch.cat((t.training_set.frame[pos_unique_indices].unsqueeze(1), torch.ones(len(pos_unique_indices),1).to(device)*c), dim=1)))
+
+        if self.im_index == 117:
+            id29 = torch.load('id27.pt')
+            idx_29 = torch.cat((torch.arange(16), torch.arange(24, 40))).to(device)
+            self.scores = torch.cat((self.scores, torch.ones(idx_29.shape).to(device) * (4)))
+            self.features = torch.cat((self.features, id29[idx_29]))
+            fId29 = torch.cat((idx_29.unsqueeze(1), (torch.ones_like(idx_29).to(device)*27).unsqueeze(1)), dim=1)
+            self.frame = torch.cat((self.frame, fId29.float()))
+
         if val:
             val_set = self.get_val_set(val_idx, inactive_tracks, val_others_features, val_others_fId)
             return self, val_set

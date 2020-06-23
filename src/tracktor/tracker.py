@@ -257,6 +257,8 @@ class Tracker:
             tracks = self.tracks
         else:
             tracks = self.inactive_tracks
+            #if self.im_index==117:
+             #   tracks=tracks[:-1]
         if len(tracks) == 1:
             pos = tracks[0].pos
         elif len(tracks) > 1:
@@ -345,6 +347,8 @@ class Tracker:
                         inactive_to_det[0].append(i)
 
             else:
+                if self.im_index==138:
+                    iou_mask = torch.cat((iou_mask, torch.tensor([False]).unsqueeze(0).to(device)), dim=1)
                 scores = scores * iou_mask
                 scores = scores.cpu().numpy()
                 max = scores.max(axis=1)
@@ -572,14 +576,6 @@ class Tracker:
                     self.motion_step(t)
 
     def step(self, blob, frame=1):
-        if self.im_index >= 138:
-            for track in self.tracks:
-                if hasattr(track, 'box_predictor_classification_debug'):
-                    boxes_debug, scores_debug = self.obj_detect.predict_boxes(track.pos,
-                                                                              track.box_predictor_classification_debug,
-                                                                              track.box_head_classification_debug,
-                                                                              pred_multiclass=True)
-                    print('\n DEBUG scores {}'.format(scores_debug))
 
         """This function should be called every timestep to perform tracking with a blob
         containing the image information.
@@ -697,6 +693,10 @@ class Tracker:
             if self.finetuning_config["for_reid"]:
                 box_head_copy_for_classifier = self.get_box_head(reset=self.finetuning_config['reset_head'])  # get head and load weights
                 box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.inactive_tracks))  # get predictor with corrsponding output number
+                if self.im_index==117:
+                   box_predictor_copy_for_classifier = self.get_box_predictor_(
+                       n=len(self.inactive_tracks)+1)  # get predictor with corrsponding output number
+
                 self.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
                                              box_predictor_copy_for_classifier,
                                              early_stopping=self.finetuning_config[
@@ -777,6 +777,10 @@ class Tracker:
             t for t in self.inactive_tracks if t.has_positive_area() and t.count_inactive <= self.inactive_patience
         ]
 
+        if self.im_index==406:
+            for t in self.tracks:
+                if t.id==27:
+                    torch.save(t.training_set.features, 'id27.pt')
         self.im_index += 1
         self.last_image = blob['img'][0]
 
@@ -816,18 +820,19 @@ class Tracker:
                 debug = torch.cat((scores.unsqueeze(1), scores_each), dim=1)
                 debug = torch.cat((debug, loss_each.unsqueeze(1)), dim=1)
                 debug = torch.cat((debug, fId), dim=1)
-                #print("\n class / scores / loss / frame / ID")
-                #print(debug.detach())
-                t, idx = np.unique(scores.numpy(), return_inverse=True)
+                if self.im_index == 163 and (ep%50==0):
+                    print("({}) class / scores / loss / frame / ID".format(self.im_index))
+                    print(debug.data.cpu().numpy())
+                t, idx = np.unique(scores.cpu().numpy(), return_inverse=True)
                 #counter = collections.Counter(idx)
                 for c in t:
                     p = torch.tensor(idx).to(device) == (torch.ones(scores.shape).to(device)*c)
                     class_loss = torch.mean(p * loss_each)
                     max, ind = torch.max(p * loss_each,dim=0, keepdim=False, out=None)
-                    if class_loss > 0.3:
+                    if class_loss > 0.3 or (ep%50)==0:
                         print(
-                            '({}) loss for class {:.0f} is {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
-                                ep, c, class_loss.detach(), max, fId[ind], scores_each[ind]))
+                            '({}.{}) loss for class {:.0f} is {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
+                                self.im_index,ep, c, class_loss.detach(), max, fId[ind], scores_each[ind]))
 
 
 
@@ -957,8 +962,14 @@ class Tracker:
             correct = 0
             for i_sample, sample_batch in enumerate(dataloader_train):
                 optimizer.zero_grad()
-                loss = self.forward_pass_for_classifier_training(sample_batch['features'],
-                                                                 sample_batch['scores'], eval=False)
+                if self.im_index==163000:
+                    loss = self.forward_pass_for_classifier_training(sample_batch['features'],
+                                                                     sample_batch['scores'], eval=False,
+                                                                     ep=i, fId=sample_batch['frame_id'])
+                else:
+                    loss = self.forward_pass_for_classifier_training(sample_batch['features'],
+                                                                     sample_batch['scores'], eval=False,
+                                                                     )
                 #if self.finetuning_config["plot_training_curves"] or len(val_set) == 0:
                 if self.finetuning_config["plot_training_curves"]:
                     pred_scores = self.forward_pass_for_classifier_training(sample_batch['features'],
