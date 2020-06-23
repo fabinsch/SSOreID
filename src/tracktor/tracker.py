@@ -347,8 +347,10 @@ class Tracker:
                         inactive_to_det[0].append(i)
 
             else:
-                if self.im_index==138:
-                    iou_mask = torch.cat((iou_mask, torch.tensor([False]).unsqueeze(0).to(device)), dim=1)
+                # if self.im_index==138:
+                #     iou_mask = torch.cat((iou_mask, torch.tensor([False]).unsqueeze(0).to(device)), dim=1)
+                #     iou_mask = torch.cat((iou_mask, torch.tensor([False]).unsqueeze(0).to(device)), dim=1)
+                #     #iou_mask = iou_mask
                 scores = scores * iou_mask
                 scores = scores.cpu().numpy()
                 max = scores.max(axis=1)
@@ -693,9 +695,9 @@ class Tracker:
             if self.finetuning_config["for_reid"]:
                 box_head_copy_for_classifier = self.get_box_head(reset=self.finetuning_config['reset_head'])  # get head and load weights
                 box_predictor_copy_for_classifier = self.get_box_predictor_(n=len(self.inactive_tracks))  # get predictor with corrsponding output number
-                if self.im_index==117:
-                   box_predictor_copy_for_classifier = self.get_box_predictor_(
-                       n=len(self.inactive_tracks)+1)  # get predictor with corrsponding output number
+                # if self.im_index==117:
+                #    box_predictor_copy_for_classifier = self.get_box_predictor_(
+                #        n=len(self.inactive_tracks)+2)  # get predictor with corrsponding output number
 
                 self.finetune_classification(self.finetuning_config, box_head_copy_for_classifier,
                                              box_predictor_copy_for_classifier,
@@ -962,7 +964,7 @@ class Tracker:
             correct = 0
             for i_sample, sample_batch in enumerate(dataloader_train):
                 optimizer.zero_grad()
-                if self.im_index==163000:
+                if self.im_index>0:
                     loss = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                                      sample_batch['scores'], eval=False,
                                                                      ep=i, fId=sample_batch['frame_id'])
