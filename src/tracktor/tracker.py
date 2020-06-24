@@ -822,7 +822,10 @@ class Tracker:
                 debug = torch.cat((scores.unsqueeze(1), scores_each), dim=1)
                 debug = torch.cat((debug, loss_each.unsqueeze(1)), dim=1)
                 debug = torch.cat((debug, fId), dim=1)
-                if self.im_index == 163 and (ep%50==0):
+                # mask = torch.argmax(scores_each, dim=1, keepdim=True).squeeze()
+                # correct = torch.sum(mask == scores).item()
+                # total = len(scores)
+                if self.im_index == 36 and (ep%50==0):
                     print("({}) class / scores / loss / frame / ID".format(self.im_index))
                     print(debug.data.cpu().numpy())
                 t, idx = np.unique(scores.cpu().numpy(), return_inverse=True)
@@ -964,7 +967,7 @@ class Tracker:
             correct = 0
             for i_sample, sample_batch in enumerate(dataloader_train):
                 optimizer.zero_grad()
-                if self.im_index>0:
+                if self.im_index==36:
                     loss = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                                      sample_batch['scores'], eval=False,
                                                                      ep=i, fId=sample_batch['frame_id'])

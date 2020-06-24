@@ -1,5 +1,5 @@
 tracktor:
-  'dataset': mot17_09_FRCNN17
+  'dataset': mot17_02_FRCNN17
   'write_images': False
   'tracker':
     motion_model:
@@ -13,11 +13,11 @@ tracktor:
     'finetuning':
       'optimizer': sgd
       'keep_frames': 40
-      'epochs': 100
-      'epochs_wo_val': 50
-      'learning_rate': 1e-1
+      'epochs': 500
+      'epochs_wo_val': 250
+      'learning_rate': 1e-2
       'batch_size': 0
-      'validate': False
+      'validate': True
       'others_class': True
       # how many samples per person should be included in val set [in %]
       'val_split': 0.2
@@ -26,12 +26,12 @@ tracktor:
       'plot_training_curves': True
       'early_stopping_classifier': True
       # method 1 means early stopping with patience and delta, 2 is pick best according to val loss
-      'early_stopping_method': 1
+      'early_stopping_method': 2
       'early_stopping_patience': 30
       'reset_dataset': True
       'reset_head': True
       'reid_score_threshold': 0.75
-      'train_iou_threshold': 2.5
+      'train_iou_threshold': 0.5
       'max_displacement': 0.01
       'data_augmentation': 0
       # how many different IDs should be considered for others class (0 = all possible)
