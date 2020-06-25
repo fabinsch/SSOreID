@@ -822,22 +822,26 @@ class Tracker:
                 debug = torch.cat((scores.unsqueeze(1), scores_each), dim=1)
                 debug = torch.cat((debug, loss_each.unsqueeze(1)), dim=1)
                 debug = torch.cat((debug, fId), dim=1)
-                # mask = torch.argmax(scores_each, dim=1, keepdim=True).squeeze()
-                # correct = torch.sum(mask == scores).item()
+                mask = torch.argmax(scores_each, dim=1, keepdim=True).squeeze()
+                correct = torch.sum(mask == scores).item()
                 # total = len(scores)
                 if self.im_index == 36 and (ep%50==0):
                     print("({}) class / scores / loss / frame / ID".format(self.im_index))
                     print(debug.data.cpu().numpy())
                 t, idx = np.unique(scores.cpu().numpy(), return_inverse=True)
-                #counter = collections.Counter(idx)
+                counter = collections.Counter(idx)
                 for c in t:
                     p = torch.tensor(idx).to(device) == (torch.ones(scores.shape).to(device)*c)
                     class_loss = torch.mean(p * loss_each)
                     max, ind = torch.max(p * loss_each,dim=0, keepdim=False, out=None)
+
+                    scores_class = scores + ~p * torch.ones(scores.shape).to(device) * (-10000)
+                    correct_class = torch.sum(mask == scores_class).item()
+                    acc_class = correct_class / counter[c]
                     if class_loss > 0.3 or (ep%50)==0:
                         print(
-                            '({}.{}) loss for class {:.0f} is {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
-                                self.im_index,ep, c, class_loss.detach(), max, fId[ind], scores_each[ind]))
+                            '({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
+                                self.im_index,ep, c, class_loss.detach(), acc_class, max, fId[ind], scores_each[ind]))
 
 
 
