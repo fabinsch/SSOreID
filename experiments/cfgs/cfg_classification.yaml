@@ -13,7 +13,7 @@ tracktor:
     'finetuning':
       'optimizer': sgd
       'keep_frames': 40
-      'epochs': 200
+      'epochs': 500
       'epochs_wo_val': 250
       'learning_rate': 1e-2
       'batch_size': 0
@@ -25,8 +25,8 @@ tracktor:
       'val_set_random_from_middle': False
       'plot_training_curves': True
       'early_stopping_classifier': True
-      # method 1 means early stopping with patience and delta, 2 is pick best according to val loss
-      'early_stopping_method': 2
+      # method 1 means early stopping with patience and delta, 2 is pick best according to val loss, 3 acc to val accuracy, 4 just others val loss
+      'early_stopping_method': 4
       'early_stopping_patience': 30
       'reset_dataset': True
       'reset_head': True

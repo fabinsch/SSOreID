@@ -792,6 +792,9 @@ class Tracker:
 
 
     def forward_pass_for_classifier_training(self, features, scores, eval=False, return_scores=False, ep=-1, fId=None):
+        loss_others = 0
+        loss_inactives = 0
+        max_sample_loss_others = 0
         if eval:
             self.box_predictor_classification.eval()
             self.box_head_classification.eval()
@@ -823,35 +826,45 @@ class Tracker:
                 debug = torch.cat((debug, loss_each.unsqueeze(1)), dim=1)
                 debug = torch.cat((debug, fId), dim=1)
                 mask = torch.argmax(scores_each, dim=1, keepdim=True).squeeze()
-                correct = torch.sum(mask == scores).item()
+                #correct = torch.sum(mask == scores).item()
                 # total = len(scores)
-                if self.im_index == 36 and (1<=ep<=103):
-                    print("({}.{}) class / scores / loss / frame / ID".format(self.im_index, ep))
-                    print(debug.data.cpu().numpy())
+                # if self.im_index == 112 and (ep%50==0):
+                #     print("({}.{}) class / scores / loss / frame / ID".format(self.im_index, ep))
+                #     print(debug.data.cpu().numpy())
                 t, idx = np.unique(scores.cpu().numpy(), return_inverse=True)
                 counter = collections.Counter(idx)
                 for c in t:
                     p = torch.tensor(idx).to(device) == (torch.ones(scores.shape).to(device)*c)
-                    class_loss = torch.mean(p * loss_each)
+                    class_loss = torch.sum(p * loss_each)/counter[c]
+                    if c == 0:
+                        loss_others = class_loss.detach()
+                    else:
+                        loss_inactives += torch.sum(p * loss_each.detach())
                     max, ind = torch.max(p * loss_each,dim=0, keepdim=False, out=None)
+                    if c == 0:
+                        max_sample_loss_others = max.detach()
 
                     scores_class = scores + ~p * torch.ones(scores.shape).to(device) * (-10000)
                     correct_class = torch.sum(mask == scores_class).item()
                     acc_class = correct_class / counter[c]
-                    if class_loss > 100.3 or (ep%1)==0:
-                        print(
-                            '({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
-                                self.im_index,ep, c, class_loss.detach(), acc_class, max, fId[ind], scores_each[ind]))
+                    # if class_loss > 100.3 or (ep%50)==0:
+                    #     print(
+                    #         '({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
+                    #             self.im_index,ep, c, class_loss.detach(), acc_class, max, fId[ind], scores_each[ind]))
 
                     # if (31<=ep<=52) or (ep%50==0):
                     #     print('({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
                     #         self.im_index, ep, c, class_loss.detach(), acc_class, max, fId[ind], scores_each[ind]))
-
+                inactive_samples = len(scores) - counter[0]
+                loss_inactives /= inactive_samples
 
         if eval:
             self.box_predictor_classification.train()
             self.box_head_classification.train()
-        return loss
+        if ep>=0:
+            return loss, loss_others, loss_inactives, max_sample_loss_others
+        else:
+            return loss
 
 
     def finetune_classification(self, finetuning_config, box_head_classification,
@@ -948,7 +961,7 @@ class Tracker:
                 correct = 0
                 with torch.no_grad():
                     for i_sample, sample_batch in enumerate(dataloader_val):
-                        loss_val = self.forward_pass_for_classifier_training(sample_batch['features'],
+                        loss_val, loss_val_others, loss_val_inactive, max_sample_loss_others = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                                          sample_batch['scores'], eval=True, ep=i, fId=sample_batch['frame_id'])
                         #run_loss_val += loss_val.detach().item() / len(sample_batch['scores'])
                         run_loss_val += loss_val.detach().item()
@@ -967,7 +980,7 @@ class Tracker:
                 acc_val = 100 * correct / total
                 loss_val = run_loss_val / len(dataloader_val)
                 if finetuning_config["plot_training_curves"] and len(val_set) > 0:
-                    plotter.plot_(epoch=i, loss=loss_val, acc=acc_val, split_name='val')
+                    plotter.plot_(epoch=i, loss=(loss_val, loss_val_others, loss_val_inactive, max_sample_loss_others), acc=acc_val, split_name='val')
 
             start_time = time.time()
             run_loss = 0.0
@@ -1011,6 +1024,8 @@ class Tracker:
                     early_stopping(val_loss=loss_val, model=models, epoch=i+1)
                 elif self.finetuning_config['early_stopping_method']==3:
                     early_stopping(val_loss=-acc_val, model=models, epoch=i+1)
+                elif self.finetuning_config['early_stopping_method']==4:
+                    early_stopping(val_loss=loss_val_others, model=models, epoch=i+1)
 
                 if self.finetuning_config['early_stopping_method'] == 1:
                     if early_stopping.early_stop:

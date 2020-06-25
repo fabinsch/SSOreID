@@ -69,6 +69,7 @@ class VisdomLinePlotter(object):
             name = split_name+' #{}'.format(self.n_samples_train)
         elif split_name =='val':
             name = split_name+' #{}'.format(self.n_samples_val)
+            loss, loss_others, loss_inactive, max_sample_loss_others = loss
         else:
             print('error, splitname incorrect')
 
@@ -86,6 +87,33 @@ class VisdomLinePlotter(object):
             win=self.accuracy_window,
             name=name,
             update='append')
+
+        if split_name == 'val':
+            if loss_inactive > 0:
+                self.viz.line(
+                    X=torch.ones((1, 1)).cpu() * epoch,
+                    Y=torch.Tensor([loss_inactive]).unsqueeze(0).cpu(),
+                    env=self.env,
+                    win=self.loss_window,
+                    name='inactive',
+                    update='append')
+
+                self.viz.line(
+                    X=torch.ones((1, 1)).cpu() * epoch,
+                    Y=torch.Tensor([loss_others]).unsqueeze(0).cpu(),
+                    env=self.env,
+                    win=self.loss_window,
+                    name='others',
+                    update='append')
+
+                self.viz.line(
+                    X=torch.ones((1, 1)).cpu() * epoch,
+                    Y=torch.Tensor([max_sample_loss_others]).unsqueeze(0).cpu(),
+                    env=self.env,
+                    win=self.loss_window,
+                    name='max_sample',
+                    update='append')
+
 
 
 
