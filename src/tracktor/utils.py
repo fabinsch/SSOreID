@@ -15,6 +15,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 import motmetrics as mm
+import copy
 
 matplotlib.use('Agg')
 
@@ -441,7 +442,7 @@ class EarlyStopping:
         if self.verbose:
             print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
         for i, m in enumerate(model):
-            self.checkpoints[i] = m.state_dict()
+            self.checkpoints[i] = copy.deepcopy(m.state_dict())
         self.val_loss_min = val_loss
 
 
@@ -469,7 +470,7 @@ class EarlyStopping2:
             self.save_checkpoint(val_loss, model)
 
 
-        elif score < self.best_score:
+        elif score <= self.best_score:
             self.best_score = score
             self.epoch = epoch
             self.save_checkpoint(val_loss, model)
@@ -479,5 +480,5 @@ class EarlyStopping2:
         if self.verbose:
             print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
         for i, m in enumerate(model):
-            self.checkpoints[i] = m.state_dict()
+            self.checkpoints[i] = copy.deepcopy(m.state_dict())
         self.val_loss_min = val_loss

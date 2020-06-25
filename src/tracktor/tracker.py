@@ -825,8 +825,8 @@ class Tracker:
                 mask = torch.argmax(scores_each, dim=1, keepdim=True).squeeze()
                 correct = torch.sum(mask == scores).item()
                 # total = len(scores)
-                if self.im_index == 36 and (ep%50==0):
-                    print("({}) class / scores / loss / frame / ID".format(self.im_index))
+                if self.im_index == 36 and (1<=ep<=103):
+                    print("({}.{}) class / scores / loss / frame / ID".format(self.im_index, ep))
                     print(debug.data.cpu().numpy())
                 t, idx = np.unique(scores.cpu().numpy(), return_inverse=True)
                 counter = collections.Counter(idx)
@@ -838,11 +838,14 @@ class Tracker:
                     scores_class = scores + ~p * torch.ones(scores.shape).to(device) * (-10000)
                     correct_class = torch.sum(mask == scores_class).item()
                     acc_class = correct_class / counter[c]
-                    if class_loss > 0.3 or (ep%50)==0:
+                    if class_loss > 100.3 or (ep%1)==0:
                         print(
                             '({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
                                 self.im_index,ep, c, class_loss.detach(), acc_class, max, fId[ind], scores_each[ind]))
 
+                    # if (31<=ep<=52) or (ep%50==0):
+                    #     print('({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
+                    #         self.im_index, ep, c, class_loss.detach(), acc_class, max, fId[ind], scores_each[ind]))
 
 
         if eval:
@@ -961,9 +964,10 @@ class Tracker:
                         correct += torch.sum(mask == sample_batch['scores']).item()
                         total += len(sample_batch['scores'])
 
+                acc_val = 100 * correct / total
                 loss_val = run_loss_val / len(dataloader_val)
                 if finetuning_config["plot_training_curves"] and len(val_set) > 0:
-                    plotter.plot_(epoch=i, loss=loss_val, acc=100 * correct / total, split_name='val')
+                    plotter.plot_(epoch=i, loss=loss_val, acc=acc_val, split_name='val')
 
             start_time = time.time()
             run_loss = 0.0
@@ -971,7 +975,7 @@ class Tracker:
             correct = 0
             for i_sample, sample_batch in enumerate(dataloader_train):
                 optimizer.zero_grad()
-                if self.im_index==36:
+                if self.im_index==360000:
                     loss = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                                      sample_batch['scores'], eval=False,
                                                                      ep=i, fId=sample_batch['frame_id'])
@@ -1003,7 +1007,10 @@ class Tracker:
 
             if self.finetuning_config['early_stopping_classifier'] and len(val_set) > 0:
                 models = [self.box_predictor_classification, self.box_head_classification]
-                early_stopping(val_loss=loss_val, model=models, epoch=i+1)
+                if self.finetuning_config['early_stopping_method']==1 or self.finetuning_config['early_stopping_method']==2:
+                    early_stopping(val_loss=loss_val, model=models, epoch=i+1)
+                elif self.finetuning_config['early_stopping_method']==3:
+                    early_stopping(val_loss=-acc_val, model=models, epoch=i+1)
 
                 if self.finetuning_config['early_stopping_method'] == 1:
                     if early_stopping.early_stop:
@@ -1016,6 +1023,7 @@ class Tracker:
         if self.finetuning_config['early_stopping_classifier'] and self.finetuning_config["validate"] and len(val_set) > 0:
             # load the last checkpoint with the best model
             self.trained_epochs.append(early_stopping.epoch)
+            print("Best model after {} epochs".format(early_stopping.epoch))
             for i, m in enumerate(models):
                 m.load_state_dict(self.checkpoints[i])
 
