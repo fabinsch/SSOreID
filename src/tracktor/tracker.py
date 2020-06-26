@@ -835,7 +835,11 @@ class Tracker:
                 counter = collections.Counter(idx)
                 for c in t:
                     p = torch.tensor(idx).to(device) == (torch.ones(scores.shape).to(device)*c)
-                    class_loss = torch.sum(p * loss_each)/counter[c]
+                    if counter[c] > 0:
+                        class_loss = torch.sum(p * loss_each)/counter[c]
+                    else:
+                        class_loss = -1
+
                     if c == 0:
                         loss_others = class_loss.detach()
                     else:
@@ -846,7 +850,11 @@ class Tracker:
 
                     scores_class = scores + ~p * torch.ones(scores.shape).to(device) * (-10000)
                     correct_class = torch.sum(mask == scores_class).item()
-                    acc_class = correct_class / counter[c]
+                    if counter[c]>0:
+                        acc_class = correct_class / counter[c]
+                    else:
+                        acc_class = -1
+
                     # if class_loss > 100.3 or (ep%50)==0:
                     #     print(
                     #         '({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
@@ -856,7 +864,10 @@ class Tracker:
                     #     print('({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
                     #         self.im_index, ep, c, class_loss.detach(), acc_class, max, fId[ind], scores_each[ind]))
                 inactive_samples = len(scores) - counter[0]
-                loss_inactives /= inactive_samples
+                if inactinactive_samples > 0:
+                    loss_inactives /= inactive_samples
+                else:
+                    loss_inactives = -1
 
         if eval:
             self.box_predictor_classification.train()
