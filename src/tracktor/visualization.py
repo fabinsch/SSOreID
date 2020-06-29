@@ -89,7 +89,7 @@ class VisdomLinePlotter(object):
             update='append')
 
         if split_name == 'val':
-            if loss_inactive > 0:
+            if (loss_inactive > 0 or loss_inactive==-1):
                 self.viz.line(
                     X=torch.ones((1, 1)).cpu() * epoch,
                     Y=torch.Tensor([loss_inactive]).unsqueeze(0).cpu(),
@@ -106,13 +106,13 @@ class VisdomLinePlotter(object):
                     name='others',
                     update='append')
 
-                self.viz.line(
-                    X=torch.ones((1, 1)).cpu() * epoch,
-                    Y=torch.Tensor([max_sample_loss_others]).unsqueeze(0).cpu(),
-                    env=self.env,
-                    win=self.loss_window,
-                    name='max_sample',
-                    update='append')
+                # self.viz.line(
+                #     X=torch.ones((1, 1)).cpu() * epoch,
+                #     Y=torch.Tensor([max_sample_loss_others]).unsqueeze(0).cpu(),
+                #     env=self.env,
+                #     win=self.loss_window,
+                #     name='max_sample',
+                #     update='append')
 
 
 

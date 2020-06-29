@@ -5,6 +5,9 @@ import cv2
 from collections import defaultdict
 import datetime
 import collections
+import matplotlib.pyplot
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 from tracktor.track import Track
 from tracktor.visualization import plot_compare_bounding_boxes, VisdomLinePlotter, plot_bounding_boxes
@@ -16,6 +19,7 @@ from torchvision.ops.boxes import clip_boxes_to_image, nms
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHead
 from torch.nn import functional as F
 from torchvision.models.detection.transform import resize_boxes
+import torch.nn as nn
 
 import time
 
@@ -798,7 +802,24 @@ class Tracker:
         if eval:
             self.box_predictor_classification.eval()
             self.box_head_classification.eval()
+
+        # if ep>=99 or ep==0:
+        #     activations = {}
+        # 
+        #     def get_activation(name):
+        #         def hook(model, input, output):
+        #             activations[name] = output.cpu().detach()
+        #
+        #         return hook
+        #
+        #     weights = self.box_head_classification.fc6.weight.data.cpu().numpy()
+        #     self.box_head_classification.fc6.register_forward_hook(get_activation('layer0'))
+
         feat = self.box_head_classification(features)
+        # if (ep>=99 or ep==0):
+        #     plt.matshow(activations['layer0'])
+        #     plt.matshow(weights)
+        #     plt.savefig('./training_set/test{}.png'.format(ep))
         class_logits, _ = self.box_predictor_classification(feat)
         if return_scores:
             if self.box_predictor_classification.cls_score.out_features == 1:
@@ -1046,6 +1067,7 @@ class Tracker:
             #print("\n--- %s seconds --- for 1 epoch" % (time.time() - start_time))
 
 
+
         if self.finetuning_config['early_stopping_classifier'] and self.finetuning_config["validate"] and len(val_set) > 0:
             # load the last checkpoint with the best model
             self.trained_epochs.append(early_stopping.epoch)
@@ -1059,6 +1081,8 @@ class Tracker:
         self.num_training += 1
         self.inactive_tracks_id = [t.id for t in self.inactive_tracks]
         self.train_on.append(self.im_index)
+
+
 
 
 #                    idf1       idp       idr    recall  precision  num_unique_objects  mostly_tracked  partially_tracked  mostly_lost  num_false_positives  num_misses  num_switches  num_fragmentations      mota      motp

@@ -1,5 +1,5 @@
 tracktor:
-  'dataset': mot17_02_FRCNN17
+  'dataset': mot17_13_SDP17
   'write_images': False
   'tracker':
     motion_model:

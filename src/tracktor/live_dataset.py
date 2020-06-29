@@ -106,8 +106,8 @@ class InactiveDataset(torch.utils.data.Dataset):
         inactive_ids = [t.id for t in inactive_tracks]
         others_db_k = list(self.others_db.keys())
         others_db_k = [k for k in others_db_k if k not in inactive_ids]
-        others_db_k = [k for k in others_db_k if k not in self.exclude_from_others]
-        print("excluding: {}".format(self.exclude_from_others))
+        #others_db_k = [k for k in others_db_k if k not in self.exclude_from_others]
+        #print("excluding: {}".format(self.exclude_from_others))
         num_tracks = len(others_db_k)
         ids = self.ids_in_others
         if num_tracks >= 2:
