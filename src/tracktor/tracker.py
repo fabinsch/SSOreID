@@ -33,7 +33,7 @@ class Tracker:
     # only track pedestrian
     cl = 1
 
-    def __init__(self, obj_detect, reid_network, tracker_cfg):
+    def __init__(self, obj_detect, reid_network, tracker_cfg, seq):
         self.obj_detect = obj_detect
         self.reid_network = reid_network
         self.detection_person_thresh = tracker_cfg['detection_person_thresh']
@@ -69,7 +69,8 @@ class Tracker:
         self.box_predictor_classification = None
         self.training_set = None
         now = datetime.datetime.now()
-        self.run_name = now.strftime("%Y-%m-%d %H:%M")
+        #self.run_name = now.strftime("%Y-%m-%d %H:%M")
+        self.run_name = now.strftime("%Y-%m-%d_%H:%M") + '_' + seq
         self.num_reids = 0
         self.checkpoints = {}
         self.killed_this_step = []

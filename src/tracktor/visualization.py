@@ -43,6 +43,7 @@ class VisdomLinePlotter(object):
         logger.setLevel(40)
         #self.viz = Visdom(port=8097, env=env, log_to_filename='experiments/logs/run.txt')
         self.viz = Visdom(port=8097, env=env)
+        #self.viz = Visdom(env=env, log_to_filename='experiments/logs/{}'.format(env), offline=True)
         logger.setLevel(20)
         self.env = env
         self.id = id

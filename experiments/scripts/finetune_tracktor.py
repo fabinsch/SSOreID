@@ -93,7 +93,7 @@ def main(tracktor, reid, _config, _log, _run):
         if 'oracle' in tracktor:
             tracker = OracleTracker(obj_detect, reid_network, tracktor['tracker'], tracktor['oracle'])
         else:
-            tracker = Tracker(obj_detect, reid_network, tracktor['tracker'])
+            tracker = Tracker(obj_detect, reid_network, tracktor['tracker'], seq._dets+'_'+seq._seq_name)
 
         start = time.time()
 
