@@ -81,6 +81,7 @@ def main(tracktor, reid, _config, _log, _run):
     num_frames = 0
     mot_accums = []
     dataset = Datasets(tracktor['dataset'])
+    #segmentation = Datasets('MOTS20_09')
 
     for seq in dataset:
 

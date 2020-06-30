@@ -850,9 +850,9 @@ class Tracker:
                 mask = torch.argmax(scores_each, dim=1, keepdim=True).squeeze()
                 #correct = torch.sum(mask == scores).item()
                 # total = len(scores)
-                # if self.im_index == 112 and (ep%50==0):
-                #     print("({}.{}) class / scores / loss / frame / ID".format(self.im_index, ep))
-                #     print(debug.data.cpu().numpy())
+                if self.im_index == 28 and (ep%50==0):
+                    print("({}.{}) class / scores / loss / frame / ID".format(self.im_index, ep))
+                    print(debug.data.cpu().numpy())
                 t, idx = np.unique(scores.cpu().numpy(), return_inverse=True)
                 counter = collections.Counter(idx)
                 for c in t:
@@ -877,10 +877,10 @@ class Tracker:
                     else:
                         acc_class = -1
 
-                    # if class_loss > 100.3 or (ep%50)==0:
-                    #     print(
-                    #         '({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
-                    #             self.im_index,ep, c, class_loss.detach(), acc_class, max, fId[ind], scores_each[ind]))
+                    if (ep%50)==0:
+                        print(
+                            '({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
+                                self.im_index,ep, c, class_loss, acc_class, max, fId[ind], scores_each[ind]))
 
                     # if (31<=ep<=52) or (ep%50==0):
                     #     print('({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(

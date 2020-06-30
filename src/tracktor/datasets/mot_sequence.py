@@ -13,6 +13,8 @@ import cv2
 from ..config import cfg
 from torchvision.transforms import ToTensor
 
+from ..io import load_txt
+
 
 class MOT17_Sequence(Dataset):
     """Multiple Object Tracking Dataset.
@@ -315,3 +317,79 @@ class MOT17LOWFPS_Sequence(MOT17_Sequence):
             self.data = self._sequence()
         else:
             self.data = []
+
+
+class MOTS20_Sequence(MOT17_Sequence):
+
+    def __init__(self, seq_name=None, dets='', vis_threshold=0.0,
+                 normalize_mean=[0.485, 0.456, 0.406],
+                 normalize_std=[0.229, 0.224, 0.225]):
+        """
+        Args:
+            seq_name (string): Sequence to take
+            vis_threshold (float): Threshold of visibility of persons above which they are selected
+        """
+        self._seq_name = seq_name
+        self._dets = dets
+        self._vis_threshold = vis_threshold
+
+        self._mot_dir = osp.join(cfg.DATA_DIR, 'MOTS')
+        self._mot17_label_dir = osp.join(cfg.DATA_DIR, 'MOT17Labels')
+
+        # # TODO: refactor code of both classes to consider 16,17 and 19
+        self._label_dir = osp.join(cfg.DATA_DIR, 'MOT16Labels')
+        self._raw_label_dir = osp.join(cfg.DATA_DIR, 'MOT16-det-dpm-raw')
+
+        self._train_folders = os.listdir(os.path.join(self._mot_dir, 'train'))
+        self._test_folders = os.listdir(os.path.join(self._mot_dir, 'test'))
+
+        # self.transforms = Compose([ToTensor(), Normalize(normalize_mean,
+        #                                                  normalize_std)])
+        self.transforms = ToTensor()
+
+
+        if seq_name:
+            assert seq_name in self._train_folders or seq_name in self._test_folders, \
+                'Image set does not exist: {}'.format(seq_name)
+
+            self.data = self._sequence()
+        else:
+            self.data = []
+
+    def _sequence(self):
+        seq_name = self._seq_name
+        if seq_name in self._train_folders:
+            seq_path = osp.join(self._mot_dir, 'train', seq_name)
+            label_path = osp.join(self._label_dir, 'train', 'MOT16-'+seq_name[-2:])
+            mot17_label_path = osp.join(self._mot17_label_dir, 'train')
+
+        else:
+            seq_path = osp.join(self._mot_dir, 'test', seq_name)
+            label_path = osp.join(self._label_dir, 'test', 'MOT16-'+seq_name[-2:])
+            mot17_label_path = osp.join(self._mot17_label_dir, 'test')
+        raw_label_path = osp.join(self._raw_label_dir, 'MOT16-'+seq_name[-2:])
+
+        config_file = osp.join(seq_path, 'seqinfo.ini')
+
+        assert osp.exists(config_file), \
+            'Config file does not exist: {}'.format(config_file)
+
+        config = configparser.ConfigParser()
+        config.read(config_file)
+        seqLength = int(config['Sequence']['seqLength'])
+        imDir = config['Sequence']['imDir']
+
+        imDir = osp.join(seq_path, imDir)
+        gt_file = osp.join(seq_path, 'gt', 'gt.txt')
+
+        objects_per_frame_per_sequence = load_txt(gt_file)
+
+    def get_det_file(self, label_path, raw_label_path, mot17_label_path):
+        # FRCNN detections
+        if "CVPR19" in self._seq_name:
+            det_file = osp.join(mot17_label_path, self._seq_name, 'det', 'det.txt')
+        else:
+            det_file = ""
+        return det_file
+
+

@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import Dataset
 
-from .mot_sequence import MOT17_Sequence, MOT19CVPR_Sequence, MOT17LOWFPS_Sequence
+from .mot_sequence import MOT17_Sequence, MOT19CVPR_Sequence, MOT17LOWFPS_Sequence, MOTS20_Sequence
 
 
 class MOT17_Wrapper(Dataset):
@@ -95,6 +95,40 @@ class MOT17LOWFPS_Wrapper(MOT17_Wrapper):
 		self._data = []
 		for s in sequences:
 			self._data.append(MOT17LOWFPS_Sequence(split=split, seq_name=s, dets='FRCNN17', **dataloader))
+
+	def __len__(self):
+		return len(self._data)
+
+	def __getitem__(self, idx):
+		return self._data[idx]
+
+class MOTS20_Wrapper(MOT17_Wrapper):
+	"""A Wrapper for the MOT_Sequence class to return multiple sequences."""
+
+	def __init__(self, split, dataloader):
+		"""Initliazes all subset of the dataset.
+
+		Keyword arguments:
+		split -- the split of the dataset to use
+		dataloader -- args for the MOT_Sequence dataloader
+		"""
+		train_sequences = ['MOTS20-02', 'MOTS20-05', 'MOTS20-09', 'MOTS20-011']
+		test_sequences = ['MOTS20-01', 'MOTS20-06', 'MOTS20-07', 'MOTS20-12']
+
+		if "train" == split:
+			sequences = train_sequences
+		elif "test" == split:
+			sequences = test_sequences
+		elif "all" == split:
+			sequences = train_sequences + test_sequences
+		elif f"MOTS20-{split}" in train_sequences + test_sequences:
+			sequences = [f"MOTS20-{split}"]
+		else:
+			raise NotImplementedError("MOTS20 split not available.")
+
+		self._data = []
+		for s in sequences:
+			self._data.append(MOTS20_Sequence(seq_name=s, **dataloader))
 
 	def __len__(self):
 		return len(self._data)
