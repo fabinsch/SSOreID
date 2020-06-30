@@ -17,6 +17,7 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.features = torch.tensor([]).to(device)
         self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
+        self.area = torch.tensor([]).to(device)
         self.keep_frames = keep_frames
         self.num_frames_keep = 0
         self.num_frames = 0
@@ -24,7 +25,7 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.data_augmentation = data_augmentation
         self.frame = torch.tensor([]).to(device)
 
-    def append_samples(self, training_set_dict, frame=0):
+    def append_samples(self, training_set_dict, frame=0, area=0):
         frame += 1 # because self.im_index is increased at the end of step
         self.num_frames += 1
         self.num_frames_keep += 1
@@ -32,6 +33,7 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.boxes = torch.cat((self.boxes, training_set_dict['boxes']))
         self.scores = torch.cat((self.scores, torch.tensor([0]).float().to(device)))
         self.frame = torch.cat((self.frame, (torch.ones(1)*frame).to(device)))
+        self.area = torch.cat((self.area, (torch.ones(1) * area).to(device)))
         if self.num_frames > self.keep_frames:
             self.remove_samples()
             self.num_frames_keep = self.keep_frames
@@ -41,6 +43,7 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.scores = self.scores[1:]
         self.features = self.features[1+self.data_augmentation:, :, :, :]
         self.frame = self.frame[1:]
+        self.area = self.area[1:]
 
     def post_process(self):
         self.pos_unique_indices = list(range(self.num_frames_keep))
@@ -104,6 +107,9 @@ class InactiveDataset(torch.utils.data.Dataset):
         train_others_frames_id = torch.tensor([]).to(device)
 
         inactive_ids = [t.id for t in inactive_tracks]
+        sorted_others_db = sorted(self.others_db.items(), key=itemgetter(1), reverse=True)
+        sorted_others_db_k = [t[0] for t in sorted_others_db]
+        sorted_others_db_k = [k for k in sorted_others_db_k if k not in inactive_ids]
         others_db_k = list(self.others_db.keys())
         others_db_k = [k for k in others_db_k if k not in inactive_ids]
         #others_db_k = [k for k in others_db_k if k not in self.exclude_from_others]
@@ -112,31 +118,17 @@ class InactiveDataset(torch.utils.data.Dataset):
         ids = self.ids_in_others
         if num_tracks >= 2:
 
-            num_frames = [t[0].shape[0] for t in list(self.others_db.values())]
-            num_frames_pp = [(t, num_frames[t]) for t in others_db_k]
+            #num_frames = [t[0].shape[0] for t in list(self.others_db.values())]
+            #num_frames_pp = [(t, num_frames[t]) for t in others_db_k]
+            val_idx_others = sorted_others_db_k[0::2]
+            train_idx_others = sorted_others_db_k[1::2]
+
+            num_frames = [len(self.others_db[t]) for t in sorted_others_db_k]
+            val_num_others = num_frames[0::2]
+            train_num_others = num_frames[1::2]
 
             if val:
                 if num_tracks >= 4:  # enough sample to provide at least two IDs in val and train others
-                    # sort others by ascending number of samples
-                    num_frames_pp = sorted(num_frames_pp, key=itemgetter(1))
-                    val_others = num_frames_pp[0:int(num_tracks/2)]
-                    train_others = num_frames_pp[int(num_tracks/2):]
-                    # sort by descreasing track ID to get the newest first
-                    val_others = sorted(val_others, key=itemgetter(0), reverse=True)
-                    train_others = sorted(train_others, key=itemgetter(0), reverse=True)
-
-                    if ids > 0:
-                        if len(val_others) > ids:
-                            print("\n take just {} instead of {} different IDs".format(ids, len(val_others)))
-                            val_others = val_others[:ids]
-                        if len(train_others) > ids:
-                            print("\n take just {} instead of {} different IDs".format(ids, len(train_others)))
-                            train_others = train_others[:ids]
-
-                    val_idx_others, val_num_others = zip(*val_others)
-                    val_num_others = list(val_num_others)
-                    train_idx_others, train_num_others = zip(*train_others)
-                    train_num_others = list(train_num_others)
 
                     print('\nIDs for val set others: {}'.format(val_idx_others))
                     print('IDs for train set others: {}'.format(train_idx_others))
@@ -150,8 +142,8 @@ class InactiveDataset(torch.utils.data.Dataset):
                             i = 0
 
                         if val_num_others[i]>0:
-                            val_others_features = torch.cat((val_others_features, self.others_db[idx][0][val_num_others[i]-1,:,:,:].unsqueeze(0)))
-                            frames_id = torch.cat((self.others_db[idx][1][val_num_others[i]-1].unsqueeze(0), (torch.ones(1)*idx).to(device)))
+                            val_others_features = torch.cat((val_others_features, self.others_db[idx][c][1].unsqueeze(0)))
+                            frames_id = torch.cat((self.others_db[idx][c][2].unsqueeze(0), (torch.ones(1)*idx).to(device)))
                             val_others_frames_id = torch.cat((val_others_frames_id, frames_id.unsqueeze(0)))
                             val_num_others[i] -= 1
                         if val_others_features.shape[0]>=(int(self.min_occ*0.2)*(self.data_augmentation+1)) or sum(val_num_others)==0:
@@ -164,8 +156,8 @@ class InactiveDataset(torch.utils.data.Dataset):
                             c += 1
                             i = 0
                         if train_num_others[i] > 0:
-                            train_others_features = torch.cat((train_others_features, self.others_db[idx][0][train_num_others[i]-1,:,:,:].unsqueeze(0)))
-                            frames_id = torch.cat((self.others_db[idx][1][train_num_others[i] - 1].unsqueeze(0),
+                            train_others_features = torch.cat((train_others_features, self.others_db[idx][c][1].unsqueeze(0)))
+                            frames_id = torch.cat((self.others_db[idx][c][2].unsqueeze(0),
                                                    (torch.ones(1)*idx).to(device)))
                             train_others_frames_id = torch.cat((train_others_frames_id, frames_id.unsqueeze(0)))
                             train_num_others[i] -= 1
@@ -175,17 +167,21 @@ class InactiveDataset(torch.utils.data.Dataset):
                     return train_others_features, val_others_features, train_others_frames_id, val_others_frames_id
 
                 else:  # just build train others because val others not divers
-                    train_others = num_frames_pp
-                    train_others = sorted(train_others, key=itemgetter(0), reverse=True)
+                    #train_others = num_frames_pp
+                    #train_others = sorted(train_others, key=itemgetter(0), reverse=True)
 
-                    if ids > 0:
-                        if len(train_others) > ids:
-                            print("take just {} instead of {} different IDs".format(ids, len(train_others)))
-                            train_others = train_others[:ids]
+                    # if ids > 0:
+                    #     if len(train_others) > ids:
+                    #         print("take just {} instead of {} different IDs".format(ids, len(train_others)))
+                    #         train_others = train_others[:ids]
+                    #
+                    # train_idx_others, train_num_others = zip(*train_others)
+                    # print('IDs for train set others: {}'.format(train_idx_others))
+                    # train_num_others = list(train_num_others)
 
-                    train_idx_others, train_num_others = zip(*train_others)
-                    print('IDs for train set others: {}'.format(train_idx_others))
-                    train_num_others = list(train_num_others)
+                    train_idx_others = sorted_others_db_k
+                    train_num_others = [len(self.others_db[t]) for t in sorted_others_db_k]
+
                     c = 0
                     for i, idx in enumerate(itertools.cycle(train_idx_others)):
                         i = i - len(train_idx_others) * c
@@ -194,8 +190,8 @@ class InactiveDataset(torch.utils.data.Dataset):
                             i = 0
                         if train_num_others[i] > 0:
                             train_others_features = torch.cat(
-                                (train_others_features, self.others_db[idx][0][train_num_others[i] - 1, :, :, :].unsqueeze(0)))
-                            frames_id = torch.cat((self.others_db[idx][1][train_num_others[i] - 1].unsqueeze(0),
+                                (train_others_features, self.others_db[idx][c][1].unsqueeze(0)))
+                            frames_id = torch.cat((self.others_db[idx][c][2].unsqueeze(0),
                                                    (torch.ones(1)*idx).to(device)))
                             train_others_frames_id = torch.cat((train_others_frames_id, frames_id.unsqueeze(0)))
 
@@ -206,14 +202,18 @@ class InactiveDataset(torch.utils.data.Dataset):
 
             #### no validation set
             else:
-                train_others = num_frames_pp
-                train_others = sorted(train_others, key=itemgetter(0), reverse=True)
-                if ids > 0:
-                    if len(train_others) > ids:
-                        print("take just {} instead of {} different IDs".format(ids, len(train_others)))
-                        train_others = train_others[:ids]
-                train_idx_others, train_num_others = zip(*train_others)
-                train_num_others = list(train_num_others)
+                # train_others = num_frames_pp
+                # train_others = sorted(train_others, key=itemgetter(0), reverse=True)
+                # if ids > 0:
+                #     if len(train_others) > ids:
+                #         print("take just {} instead of {} different IDs".format(ids, len(train_others)))
+                #         train_others = train_others[:ids]
+                # train_idx_others, train_num_others = zip(*train_others)
+                # train_num_others = list(train_num_others)
+
+                train_idx_others = sorted_others_db_k
+                train_num_others = [len(self.others_db[t]) for t in sorted_others_db_k]
+
                 c = 0
                 for i, idx in enumerate(itertools.cycle(train_idx_others)):
                     i = i - len(train_idx_others) * c
@@ -222,8 +222,8 @@ class InactiveDataset(torch.utils.data.Dataset):
                         i = 0
                     if train_num_others[i] > 0:
                         train_others_features = torch.cat(
-                            (train_others_features, self.others_db[idx][0][train_num_others[i] - 1, :, :, :].unsqueeze(0)))
-                        frames_id = torch.cat((self.others_db[idx][1][train_num_others[i] - 1].unsqueeze(0),
+                            (train_others_features, self.others_db[idx][c][1].unsqueeze(0)))
+                        frames_id = torch.cat((self.others_db[idx][c][2].unsqueeze(0),
                                                (torch.ones(1) * idx).to(device)))
                         train_others_frames_id = torch.cat((train_others_frames_id, frames_id.unsqueeze(0)))
                         train_num_others[i] -= 1
@@ -314,7 +314,7 @@ class InactiveDataset(torch.utils.data.Dataset):
             #val_set.boxes = torch.cat((val_set.boxes, t.training_set.boxes[idxs]))
             val_set.features = torch.cat((val_set.features, t.training_set.features[idx_features]))
             if len(idxs)>0:
-                val_set.frame = torch.cat((val_set.frame, torch.cat((t.training_set.frame[idxs].unsqueeze(1), torch.ones(len(idxs),1).to(device)*c), dim=1)))
+                val_set.frame = torch.cat((val_set.frame, torch.cat((t.training_set.frame[idxs].unsqueeze(1), torch.ones(len(idxs),1).to(device)*(t.id)), dim=1)))
 
         # if self.im_index == 117:
         #     id29 = torch.load('id29.pt')
@@ -370,6 +370,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         else:
             train_others_features = torch.tensor([]).to(device)
             val_others_features = torch.tensor([]).to(device)
+            val_others_fId = torch.tensor([]).to(device)
 
         for i, t in enumerate(inactive_tracks):
             c = i+1 if self.others_class else i
@@ -381,7 +382,7 @@ class InactiveDataset(torch.utils.data.Dataset):
             self.scores = torch.cat((self.scores, torch.ones(len(pos_unique_indices)).to(device) * (c)))
             #self.boxes = torch.cat((self.boxes, t.training_set.boxes[pos_unique_indices_boxes]))
             self.features = torch.cat((self.features, t.training_set.features[pos_unique_indices]))
-            self.frame = torch.cat((self.frame, torch.cat((t.training_set.frame[pos_unique_indices].unsqueeze(1), torch.ones(len(pos_unique_indices),1).to(device)*c), dim=1)))
+            self.frame = torch.cat((self.frame, torch.cat((t.training_set.frame[pos_unique_indices].unsqueeze(1), torch.ones(len(pos_unique_indices),1).to(device)*(t.id)), dim=1)))
 
         # if self.im_index == 117:
         #     id29 = torch.load('id29.pt')

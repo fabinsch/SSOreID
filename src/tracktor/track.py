@@ -45,6 +45,11 @@ class Track(object):
     def has_positive_area(self):
         return self.pos[0, 2] > self.pos[0, 0] and self.pos[0, 3] > self.pos[0, 1]
 
+    def calculate_area(self):
+        w = self.pos[0, 2] - self.pos[0, 0]
+        h = self.pos[0, 3] - self.pos[0, 1]
+        return w*h
+
     def add_features(self, features):
         """Adds new appearance features to the object."""
         self.features.append(features)
@@ -108,9 +113,9 @@ class Track(object):
     #         #print("\n--- %s seconds --- for roi pooling" % (time.time() - start_time))
     #     return {'features': roi_pool_feat, 'boxes': boxes[:, 0:4], 'scores': boxes[:, 4]}
 
-    def update_training_set_classification(self, features, pos, frame):
+    def update_training_set_classification(self, features, pos, frame, area):
         training_set_dict = {'features': features, 'boxes': pos}
-        self.training_set.append_samples(training_set_dict, frame)
+        self.training_set.append_samples(training_set_dict, frame, area)
 
     def add_classifier(self, box_head_classification, box_predictor_classification):
         self.box_head_classification_debug = box_head_classification

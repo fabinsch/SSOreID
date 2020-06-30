@@ -193,7 +193,8 @@ class Tracker:
 
             track.update_training_set_classification(features=roi_pool_per_track[i],
                                                      pos=boxes[i+self.finetuning_config['data_augmentation']].unsqueeze(0),
-                                                     frame=self.im_index)
+                                                     frame=self.im_index,
+                                                     area=track.calculate_area())
 
         self.track_num += num_new
 
@@ -505,7 +506,8 @@ class Tracker:
                 self.inactive_tracks.remove(inactive_track)
                 inactive_track.update_training_set_classification(features=roi_pool_per_track[i],
                                                                   pos=boxes[i+self.finetuning_config['data_augmentation']].unsqueeze(0),
-                                                                  frame=self.im_index)
+                                                                  frame=self.im_index,
+                                                                  area=inactive_track.calculate_area())
 
             keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
             if keep.nelement() > 0:
@@ -650,9 +652,9 @@ class Tracker:
                 keep = nms(self.get_pos(), person_scores, self.regression_nms_thresh)
                 self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
 
-                # calculate IoU distances
+                # # calculate IoU distances
                 active_pos = self.get_pos()
-                iou = bbox_overlaps(active_pos, active_pos)
+                # iou = bbox_overlaps(active_pos, active_pos)
 
                 # do augmentation in current frame
                 if self.finetuning_config['data_augmentation'] > 0:
@@ -679,10 +681,10 @@ class Tracker:
                 for i, track in enumerate(self.tracks):
                     track.frames_since_active += 1
 
-                    if torch.sum(iou[i] > self.finetuning_config['train_iou_threshold']) > 1:
-                        self.c_skipped_for_train_iou += 1
-                        track.skipped_for_train += 1
-                        continue
+                    # if torch.sum(iou[i] > self.finetuning_config['train_iou_threshold']) > 1:
+                    #     self.c_skipped_for_train_iou += 1
+                    #     track.skipped_for_train += 1
+                    #     continue
 
                     # debug
                     if hasattr(track, 'box_predictor_classification_debug'):
@@ -692,7 +694,8 @@ class Tracker:
                     #track.update_training_set_classification(features=roi_pool_feat[i].unsqueeze(0),
                     track.update_training_set_classification(features=roi_pool_per_track[i],
                                                              pos=boxes[i+self.finetuning_config['data_augmentation']].unsqueeze(0),
-                                                             frame=self.im_index)
+                                                             frame=self.im_index,
+                                                             area=track.calculate_area())
 
         # train REID model new if change in active tracks happened
         current_inactive_tracks_id = [t.id for t in self.inactive_tracks]
@@ -757,14 +760,38 @@ class Tracker:
         # Generate Results #
         ####################
 
-        for t in self.tracks:
+        # calculate IoU distances
+        active_pos = self.get_pos()
+        iou = bbox_overlaps(active_pos, active_pos)
+
+        for i, t in enumerate(self.tracks):
             if t.id not in self.results.keys():
                 self.results[t.id] = {}
-                self.others_db[t.id] = torch.tensor([]).to(device)
+                #self.others_db[t.id] = torch.tensor([]).to(device)
             self.results[t.id][self.im_index] = np.concatenate([t.pos[0].cpu().numpy(), np.array([t.score.cpu()])])
 
+            #if self.finetuning_config['others_class']:
             if self.finetuning_config['others_class']:
-                self.others_db[t.id] = (t.training_set.features, t.training_set.frame)
+                num_others = sum([len(t) for t in self.others_db.values()])
+                # make sure, tracks for inactive do not overlap
+                if torch.sum(iou[i] > 0.1) > 1 and num_others>160: # make sure to have at least 4 IDs with enough samples
+                    #self.others_db[t.id] = (torch.zeros_like(t.training_set.features), t.training_set.frame, torch.zeros(1))
+                    # if t.id not in self.others_db.keys():
+                    #     self.others_db[t.id] = [
+                    #         (0, torch.zeros_like(t.training_set.features), t.training_set.frame)]
+                    # else:
+                    #     self.others_db[t.id].append(
+                    #         (0, torch.zeros_like(t.training_set.features), t.training_set.frame))
+                    continue
+
+                #self.others_db[t.id] = (t.training_set.features, t.training_set.frame, t.training_set.area)
+                if t.id not in self.others_db.keys():
+                    self.others_db[t.id] = [(t.calculate_area(), t.training_set.features[-1], t.training_set.frame[-1])]
+                else:
+                    self.others_db[t.id].append(
+                        (t.calculate_area(), t.training_set.features[-1], t.training_set.frame[-1]))
+                #self.others_db[t.id] = t.training_set.features, t.training_set.frame, t.training_set.area)
+                self.others_db[t.id].sort(key=lambda tup: tup[0], reverse=True)
 
         for t in self.inactive_tracks:
             t.count_inactive += 1
@@ -784,10 +811,10 @@ class Tracker:
             t for t in self.inactive_tracks if t.has_positive_area() and t.count_inactive <= self.inactive_patience
         ]
 
-        if self.im_index==406:
-            for t in self.tracks:
-                if t.id==27:
-                    torch.save(t.training_set.features, 'id27.pt')
+        # if self.im_index==406:
+        #     for t in self.tracks:
+        #         if t.id==27:
+        #             torch.save(t.training_set.features, 'id27.pt')
         self.im_index += 1
         self.last_image = blob['img'][0]
 
@@ -850,15 +877,15 @@ class Tracker:
                 mask = torch.argmax(scores_each, dim=1, keepdim=True).squeeze()
                 #correct = torch.sum(mask == scores).item()
                 # total = len(scores)
-                if self.im_index == 28 and (ep%50==0):
-                    print("({}.{}) class / scores / loss / frame / ID".format(self.im_index, ep))
-                    print(debug.data.cpu().numpy())
-                t, idx = np.unique(scores.cpu().numpy(), return_inverse=True)
-                counter = collections.Counter(idx)
-                for c in t:
-                    p = torch.tensor(idx).to(device) == (torch.ones(scores.shape).to(device)*c)
-                    if counter[c] > 0:
-                        class_loss = torch.sum(p * loss_each)/counter[c]
+                # if self.im_index == 28 and (ep%50==0):
+                #     print("({}.{}) class / scores / loss / frame / ID".format(self.im_index, ep))
+                #     print(debug.data.cpu().numpy())
+                t, idx, counter = np.unique(scores.cpu().numpy(), return_inverse=True, return_counts=True)
+                #counter = collections.Counter(idx)
+                for i, c in enumerate(t):
+                    p = scores == (torch.ones(scores.shape).to(device)*c)
+                    if counter[i] > 0:
+                        class_loss = torch.sum(p * loss_each)/counter[i]
                     else:
                         class_loss = -1
 
@@ -872,15 +899,15 @@ class Tracker:
 
                     scores_class = scores + ~p * torch.ones(scores.shape).to(device) * (-10000)
                     correct_class = torch.sum(mask == scores_class).item()
-                    if counter[c]>0:
-                        acc_class = correct_class / counter[c]
+                    if counter[i]>0:
+                        acc_class = correct_class / counter[i]
                     else:
                         acc_class = -1
 
-                    if (ep%50)==0:
-                        print(
-                            '({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
-                                self.im_index,ep, c, class_loss, acc_class, max, fId[ind], scores_each[ind]))
+                    # if (ep%50)==0:
+                    #     print(
+                    #         '({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
+                    #             self.im_index,ep, c, class_loss, acc_class, max, fId[ind], scores_each[ind]))
 
                     # if (31<=ep<=52) or (ep%50==0):
                     #     print('({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
@@ -969,7 +996,7 @@ class Tracker:
             #early_stopping = EarlyStopping(patience=self.finetuning_config['early_stopping_patience'], verbose=False, delta=1e-4, checkpoints=self.checkpoints)
                 early_stopping = EarlyStopping(patience=self.finetuning_config['early_stopping_patience'], verbose=False, delta=1e-3, checkpoints=self.checkpoints)
             else:
-                early_stopping = EarlyStopping2(verbose=False, checkpoints=self.checkpoints)
+                early_stopping = EarlyStopping2(verbose=False, checkpoints=self.checkpoints, ep_safe=int(finetuning_config["epochs_wo_val"]))
 
         if self.finetuning_config["plot_training_curves"]:
             plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks],
@@ -1073,8 +1100,14 @@ class Tracker:
             # load the last checkpoint with the best model
             self.trained_epochs.append(early_stopping.epoch)
             print("Best model after {} epochs".format(early_stopping.epoch))
-            for i, m in enumerate(models):
-                m.load_state_dict(self.checkpoints[i])
+            if early_stopping.epoch>5:
+                for i, m in enumerate(models):
+                    m.load_state_dict(self.checkpoints[i])
+            else:
+                print('Avoid untrained model after {} epochs, load state after {} epochs'.format(early_stopping.epoch,int(finetuning_config["epochs_wo_val"])))
+                for i, m in enumerate(models):
+                    m.load_state_dict(early_stopping.checkpoints_250[i])
+
 
 
         self.box_predictor_classification.eval()

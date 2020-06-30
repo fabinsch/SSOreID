@@ -114,7 +114,7 @@ def main(tracktor, reid, _config, _log, _run):
         _log.info(f"Runtime for {seq}: {time.time() - start :.1f} s.")
         _log.info(f"Total number of REIDs: {tracker.num_reids}")
         _log.info(f"Total number of Trainings: {tracker.num_training}")
-        _log.info(f"Number of skipped samples because of IoU restriction: {tracker.c_skipped_for_train_iou}")
+        #_log.info(f"Number of skipped samples because of IoU restriction: {tracker.c_skipped_for_train_iou}")
         #_log.info(f"Number of skipped samples because of IoU restriction (with just one active frame): {tracker.c_skipped_and_just_and_frame_active}")
         #_log.info(f"It was trained on: {tracker.train_on}")
         _log.info(f"It happen x times that it was killed and reid in same step: {tracker.count_killed_this_step_reid}")
@@ -125,7 +125,7 @@ def main(tracktor, reid, _config, _log, _run):
             _log.info(f"Average score for others class: {sum(tracker.score_others) / len(tracker.score_others)}")
 
         if len(tracker.trained_epochs)>0:
-            _log.info(f"Epochs trained: {tracker.trained_epochs}")
+            _log.info(f"Epochs trained effectivly: {tracker.trained_epochs}")
             _log.info(f"Epochs average: {sum(tracker.trained_epochs) / len(tracker.trained_epochs)}")
 
         if tracktor['interpolate']:
