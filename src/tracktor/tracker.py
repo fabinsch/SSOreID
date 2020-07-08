@@ -106,21 +106,22 @@ class Tracker:
         self.tracks = [t for t in self.tracks if t not in tracks]
         for t in tracks:
             #t = torch.arange(self.im_index-(t.training_set.features.shape[0]))
-            gt_boxes = torch.cat(list(self.gt.values()), 0).to(device)
-            inactivetrack_iou_GT = bbox_overlaps(t.pos, gt_boxes).cpu().numpy()
-            ind = np.where(inactivetrack_iou_GT == np.max(inactivetrack_iou_GT))[1]
-            if len(ind) > 0:
-                ind = ind[0]
-                overlap = inactivetrack_iou_GT[0, ind]
-                if overlap >= 0.5:
-                    gt_id = list(self.gt.keys())[ind]
-                    t.gt_id = gt_id
-                    self.inactive_tracks_gt_id.append(gt_id)
 
-                    if gt_id not in self.db_gt_inactive.keys():
-                        self.db_gt_inactive[gt_id] = [t.id]
-                    else:
-                        self.db_gt_inactive[gt_id].append(t.id)
+            # gt_boxes = torch.cat(list(self.gt.values()), 0).to(device)
+            # inactivetrack_iou_GT = bbox_overlaps(t.pos, gt_boxes).cpu().numpy()
+            # ind = np.where(inactivetrack_iou_GT == np.max(inactivetrack_iou_GT))[1]
+            # if len(ind) > 0:
+            #     ind = ind[0]
+            #     overlap = inactivetrack_iou_GT[0, ind]
+            #     if overlap >= 0.5:
+            #         gt_id = list(self.gt.keys())[ind]
+            #         t.gt_id = gt_id
+            #         self.inactive_tracks_gt_id.append(gt_id)
+            #
+            #         if gt_id not in self.db_gt_inactive.keys():
+            #             self.db_gt_inactive[gt_id] = [t.id]
+            #         else:
+            #             self.db_gt_inactive[gt_id].append(t.id)
 
             if t.frames_since_active > 1:
                 t.pos = t.last_pos[-1]
@@ -270,6 +271,7 @@ class Tracker:
         elif len(tracks) > 1:
             pos = torch.cat([t.pos for t in tracks], 0)
         else:
+            print('no active tracks')
             pos = torch.zeros(0).to(device)
         return pos
 
@@ -277,7 +279,7 @@ class Tracker:
     def reid_by_finetuned_model_(self, new_det_pos, new_det_scores, frame, blob):
         """Do reid with one model predicting the score for each inactive track"""
         image = blob['img'][0]
-        gt = blob['gt']
+        #gt = blob['gt']
         det_gt_id = [] # list which detections corresponds to which gt id
         inactive_tracks_gt_id = []
         current_inactive_tracks_id = [t.id for t in self.inactive_tracks]
@@ -293,29 +295,18 @@ class Tracker:
             assigned = []
             inactive_tracks = self.get_pos(active=False)
 
-            # for t in self.inactive_tracks:
+
+            # for det in new_det_pos:
             #     gt_boxes = torch.cat(list(gt.values()), 0).to(device)
-            #     inactivetrack_iou_GT = bbox_overlaps(t.pos, gt_boxes).cpu().numpy()
-            #     ind = np.where(inactivetrack_iou_GT == np.max(inactivetrack_iou_GT))[1]
+            #     det_iou_GT = bbox_overlaps(det.unsqueeze(0), gt_boxes).cpu().numpy()
+            #     ind = np.where(det_iou_GT == np.max(det_iou_GT))[1]
             #     if len(ind) > 0:
             #         ind = ind[0]
-            #         overlap = inactivetrack_iou_GT[0, ind]
-            #         if overlap >= 0.2:
-            #             gt_id = list(gt.keys())[ind]
-            #             t.gt_id = gt_id
-            #             inactive_tracks_gt_id.append(gt_id)
-
-            for det in new_det_pos:
-                gt_boxes = torch.cat(list(gt.values()), 0).to(device)
-                det_iou_GT = bbox_overlaps(det.unsqueeze(0), gt_boxes).cpu().numpy()
-                ind = np.where(det_iou_GT == np.max(det_iou_GT))[1]
-                if len(ind) > 0:
-                    ind = ind[0]
-                    overlap = det_iou_GT[0, ind]
-                    if overlap >= 0.5:
-                        det_gt_id.append(list(gt.keys())[ind])
-                    else:
-                        det_gt_id.append(-1)
+            #         overlap = det_iou_GT[0, ind]
+            #         if overlap >= 0.5:
+            #             det_gt_id.append(list(gt.keys())[ind])
+            #         else:
+            #             det_gt_id.append(-1)
 
 
             boxes, scores = self.obj_detect.predict_boxes(new_det_pos,
@@ -372,19 +363,19 @@ class Tracker:
                             # idx = 0 means unknown background people, idx=1,2,.. is inactive
                             if max_idx[i] == 0:
                                 print('no reid because class 0 has score {}'.format(max[i]))
-                                if det_gt_id[i] in inactive_tracks_gt_id:  # check if the gt id has ever been seen before
-                                    f = 0
-                                    for t in self.inactive_tracks:  # if it's still in the inactive tracks
-                                        if t.gt_id == det_gt_id[i]:
-                                            #self.exclude_from_others.append(t.id)
-                                            print('!!!!! missed reID of person {}, detection {}'.format(t.id, i))
-                                            self.missed_reID += 1
-                                            self.det_new_track_exclude.append(i)
-                                            f += 1
-                                    if f==0:  # means this track is not in inactive anymore but was before
-                                        for id in self.db_gt_inactive[det_gt_id[i]]:
-                                            self.exclude_from_others.append(id)
-                                            print("exlude {}".format(id))
+                                # if det_gt_id[i] in inactive_tracks_gt_id:  # check if the gt id has ever been seen before
+                                #     f = 0
+                                #     for t in self.inactive_tracks:  # if it's still in the inactive tracks
+                                #         if t.gt_id == det_gt_id[i]:
+                                #             #self.exclude_from_others.append(t.id)
+                                #             print('!!!!! missed reID of person {}, detection {}'.format(t.id, i))
+                                #             self.missed_reID += 1
+                                #             self.det_new_track_exclude.append(i)
+                                #             f += 1
+                                #     if f==0:  # means this track is not in inactive anymore but was before
+                                #         for id in self.db_gt_inactive[det_gt_id[i]]:
+                                #             self.exclude_from_others.append(id)
+                                #             print("exlude {}".format(id))
 
                             else:
                                 inactive_track = self.inactive_tracks[max_idx[i] - 1]
@@ -398,19 +389,19 @@ class Tracker:
                     #elif max[i] > 0.0:
                     else:
                         print('no reid with score {}'.format(max[i]))
-                        if det_gt_id[i] in inactive_tracks_gt_id:
-                            f = 0
-                            for t in self.inactive_tracks:
-                                if t.gt_id == det_gt_id[i]:
-                                    #self.exclude_from_others.append(t.id)
-                                    print('!!!!! missed reID of person {}'.format(t.id))
-                                    self.missed_reID += 1
-                                    self.det_new_track_exclude.append(i)
-                                    f += 1
-                            if f == 0:
-                                for id in self.db_gt_inactive[det_gt_id[i]]:
-                                    self.exclude_from_others.append(id)
-                                    print("exlude {}".format(id))
+                        # if det_gt_id[i] in inactive_tracks_gt_id:
+                        #     f = 0
+                        #     for t in self.inactive_tracks:
+                        #         if t.gt_id == det_gt_id[i]:
+                        #             #self.exclude_from_others.append(t.id)
+                        #             print('!!!!! missed reID of person {}'.format(t.id))
+                        #             self.missed_reID += 1
+                        #             self.det_new_track_exclude.append(i)
+                        #             f += 1
+                        #     if f == 0:
+                        #         for id in self.db_gt_inactive[det_gt_id[i]]:
+                        #             self.exclude_from_others.append(id)
+                        #             print("exlude {}".format(id))
 
 
             # if frame==13800:
@@ -437,11 +428,11 @@ class Tracker:
 
                 if len(inactive_to_det[inactive_id_in_list]) == 1:
                     # check if GT id fits
-                    if inactive_track.gt_id != det_gt_id[det_index]:
-                        self.exclude_from_others.append(inactive_track.id)
-                        print('!!!!! wrong reID of person {}'.format(inactive_track.id))
-                        self.wrong_reID += 1
-                        print("exclude reID track {} from others".format(inactive_track.id))
+                    # if inactive_track.gt_id != det_gt_id[det_index]:
+                    #     self.exclude_from_others.append(inactive_track.id)
+                    #     print('!!!!! wrong reID of person {}'.format(inactive_track.id))
+                    #     self.wrong_reID += 1
+                    #     print("exclude reID track {} from others".format(inactive_track.id))
                     # make sure just 1 new detection per inactive track
                     self.tracks.append(inactive_track)
                     print(f"\n**************   Reidying track {inactive_track.id} in frame {frame} with score {candidate[1]}")
@@ -762,7 +753,10 @@ class Tracker:
 
         # calculate IoU distances
         active_pos = self.get_pos()
-        iou = bbox_overlaps(active_pos, active_pos)
+        if len(active_pos.shape)>1:
+            iou = bbox_overlaps(active_pos, active_pos)
+        else:
+            iou = torch.zeros(1,1)
 
         for i, t in enumerate(self.tracks):
             if t.id not in self.results.keys():
@@ -782,6 +776,7 @@ class Tracker:
                     # else:
                     #     self.others_db[t.id].append(
                     #         (0, torch.zeros_like(t.training_set.features), t.training_set.frame))
+                    self.c_skipped_for_train_iou += 1
                     continue
 
                 #self.others_db[t.id] = (t.training_set.features, t.training_set.frame, t.training_set.area)
@@ -792,6 +787,8 @@ class Tracker:
                         (t.calculate_area(), t.training_set.features[-1], t.training_set.frame[-1]))
                 #self.others_db[t.id] = t.training_set.features, t.training_set.frame, t.training_set.area)
                 self.others_db[t.id].sort(key=lambda tup: tup[0], reverse=True)
+                if len(self.others_db[t.id]) > 20:
+                    self.others_db[t.id] = self.others_db[t.id][:20]
 
         for t in self.inactive_tracks:
             t.count_inactive += 1
@@ -1019,10 +1016,16 @@ class Tracker:
                 run_loss_val = 0.0
                 total = 0
                 correct = 0
+                loss_val_others = -1
+                loss_val_inactive = -1
+                max_sample_loss_others = -1
                 with torch.no_grad():
                     for i_sample, sample_batch in enumerate(dataloader_val):
-                        loss_val, loss_val_others, loss_val_inactive, max_sample_loss_others = self.forward_pass_for_classifier_training(sample_batch['features'],
-                                                                         sample_batch['scores'], eval=True, ep=i, fId=sample_batch['frame_id'])
+                        # loss_val, loss_val_others, loss_val_inactive, max_sample_loss_others = self.forward_pass_for_classifier_training(sample_batch['features'],
+                        #                                                  sample_batch['scores'], eval=True, ep=i, fId=sample_batch['frame_id'])
+                        loss_val = self.forward_pass_for_classifier_training(sample_batch['features'],
+                                                                         sample_batch['scores'], eval=True)
+
                         #run_loss_val += loss_val.detach().item() / len(sample_batch['scores'])
                         run_loss_val += loss_val.detach().item()
                         pred_scores_val = self.forward_pass_for_classifier_training(sample_batch['features'],
