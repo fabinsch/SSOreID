@@ -94,11 +94,13 @@ class InactiveDataset(torch.utils.data.Dataset):
             else:
                 return []
         else:
+            i, fID = i
             # balance the others class (already features)
             diff = occ - i.shape[0]
             duplicate = torch.LongTensor(diff).random_(0,i.shape[0])
             i = torch.cat((i, i[duplicate]))
-            return i
+            fID = torch.cat((fID, fID[duplicate]))
+            return i, fID
 
     def get_others(self, inactive_tracks, val=False):
         val_others_features = torch.tensor([]).to(device)
@@ -107,8 +109,9 @@ class InactiveDataset(torch.utils.data.Dataset):
         train_others_frames_id = torch.tensor([]).to(device)
 
         inactive_ids = [t.id for t in inactive_tracks]
-        sorted_others_db = sorted(self.others_db.items(), key=itemgetter(1), reverse=True)
-        sorted_others_db_k = [t[0] for t in sorted_others_db]
+        #sorted_others_db = sorted(self.others_db.items(), key=itemgetter(1), reverse=True)
+        #sorted_others_db_k = [t[0] for t in sorted_others_db]
+        sorted_others_db_k = [t[0] for t in sorted(self.others_db.items(), key=itemgetter(1), reverse=True)]
         sorted_others_db_k = [k for k in sorted_others_db_k if k not in inactive_ids]
         others_db_k = list(self.others_db.keys())
         others_db_k = [k for k in others_db_k if k not in inactive_ids]
@@ -164,6 +167,7 @@ class InactiveDataset(torch.utils.data.Dataset):
                         if train_others_features.shape[0]>=(self.max_occ*(self.data_augmentation+1)) or sum(train_num_others)==0:
                             break
 
+                    print('There are {} train and {} val samples for others class'.format(train_others_features.shape[0], val_others_features.shape[0]))
                     return train_others_features, val_others_features, train_others_frames_id, val_others_frames_id
 
                 else:  # just build train others because val others not divers
@@ -233,7 +237,7 @@ class InactiveDataset(torch.utils.data.Dataset):
 
         else:
             print('\n no others dataset. num tracks: {}'.format(num_tracks))
-            return torch.tensor([]).to(device), torch.tensor([]).to(device)
+            return torch.tensor([]).to(device), torch.tensor([]).to(device), torch.tensor([]).to(device), torch.tensor([]).to(device)
 
     def get_val_idx(self, occ, inactive_tracks, split, val_set_random):
         """generates indices for validation set und removes them from training set"""
@@ -352,14 +356,18 @@ class InactiveDataset(torch.utils.data.Dataset):
 
         # get idx of validation samples
         if val:
-            val_idx, num_val = self.get_val_idx(occ, inactive_tracks, split, val_set_random)
-            self.max_occ -= num_val
+            #val_idx, num_val = self.get_val_idx(occ, inactive_tracks, split, val_set_random)
+            val_idx = [[]]
+            num_val = 0
+            #self.max_occ -= num_val
+
+        self.min_occ = 40 # get 8 others samples for validation
 
         if self.others_class:
             # get others dataset with label 0
             train_others_features, val_others_features, train_other_fId, val_others_fId = self.get_others(inactive_tracks, val)
             if train_others_features.shape[0] < (self.max_occ*(self.data_augmentation+1)) and train_others_features.shape[0] > 0:
-                train_others_features = self.balance(train_others_features, self.max_occ*(self.data_augmentation+1))
+                train_others_features, train_other_fId = self.balance((train_others_features, train_other_fId), self.max_occ*(self.data_augmentation+1))
                 if train_others_features.shape[0] == 0:
                     print('keine other tracks , nicht zu augmenten')
                 #print('\nbalance because others is too less')
