@@ -45,10 +45,14 @@ class MOT17_Sequence(Dataset):
 
         self.transforms = ToTensor()
 
-        assert seq_name in self._train_folders or seq_name in self._test_folders, \
-            'Image set does not exist: {}'.format(seq_name)
+        if seq_name is not None:
+            assert seq_name in self._train_folders or seq_name in self._test_folders, \
+                'Image set does not exist: {}'.format(seq_name)
 
-        self.data, self.no_gt = self._sequence()
+            self.data, self.no_gt = self._sequence()
+        else:
+            self.data = []
+            self.no_gt = True
 
     def __len__(self):
         return len(self.data)

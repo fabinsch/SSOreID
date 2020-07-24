@@ -25,6 +25,7 @@ from tracktor.oracle_tracker import OracleTracker
 from tracktor.tracker import Tracker
 from tracktor.reid.resnet import resnet50
 from tracktor.utils import interpolate, plot_sequence, get_mot_accum, evaluate_mot_accums
+import pickle
 
 ex = Experiment()
 
@@ -94,7 +95,7 @@ def main(tracktor, reid, _config, _log, _run):
         if 'oracle' in tracktor:
             tracker = OracleTracker(obj_detect, reid_network, tracktor['tracker'], tracktor['oracle'])
         else:
-            tracker = Tracker(obj_detect, reid_network, tracktor['tracker'], seq._dets+'_'+seq._seq_name)
+            tracker = Tracker(obj_detect, reid_network, tracktor['tracker'], seq._dets+'_'+seq._seq_name, tracktor['reid_weights'], tracktor['reid_ML'])
 
         start = time.time()
 
@@ -114,12 +115,21 @@ def main(tracktor, reid, _config, _log, _run):
         _log.info(f"Runtime for {seq}: {time.time() - start :.1f} s.")
         _log.info(f"Total number of REIDs: {tracker.num_reids}")
         _log.info(f"Total number of Trainings: {tracker.num_training}")
-        #_log.info(f"Number of skipped samples because of IoU restriction: {tracker.c_skipped_for_train_iou}")
+        _log.info(f"Number of skipped samples because of IoU restriction others: {tracker.c_skipped_for_train_iou}")
         #_log.info(f"Number of skipped samples because of IoU restriction (with just one active frame): {tracker.c_skipped_and_just_and_frame_active}")
         #_log.info(f"It was trained on: {tracker.train_on}")
         _log.info(f"It happen x times that it was killed and reid in same step: {tracker.count_killed_this_step_reid}")
         _log.info(f"Number of tracks which are just active 1 frame: {tracker.c_just_one_frame_active}")
         _log.info(f"In total {tracker.missed_reID} missed and {tracker.wrong_reID} wrong reIDs")
+        _log.info(f"Print statistics of training situations")
+        _log.info(f"nWays {tracker.count_nways}")
+        _log.info(f"kShots {tracker.count_kshots}")
+
+        with open(seq._seq_name + '_count_nWays'+ '.pkl', 'wb') as f:
+            pickle.dump(tracker.count_nways, f, pickle.HIGHEST_PROTOCOL)
+
+        with open(seq._seq_name + '_count_nKshots'+ '.pkl', 'wb') as f:
+            pickle.dump(tracker.count_kshots, f, pickle.HIGHEST_PROTOCOL)
 
         if len(tracker.score_others)>0:
             _log.info(f"Average score for others class: {sum(tracker.score_others) / len(tracker.score_others)}")

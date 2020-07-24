@@ -8,7 +8,7 @@ import torch
 from torch.autograd import Variable
 from torch.optim.lr_scheduler import LambdaLR
 
-from .utils import plot_tracks
+from ..utils import plot_tracks
 
 import tensorboardX as tb
 

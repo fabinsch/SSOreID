@@ -1,39 +1,23 @@
 tracktor:
-  'dataset': mot17_13_SDP17
-  'write_images': False
+  'dataset': mot17_02_FRCNN17
+  'write_images': True
+  'reid_ML': False
+  #'reid_weights': output/tracktor/ml_classification/2_fulldb_500_02val/12300_reID_Network.pth
+  'reid_weights': output/tracktor/ml_classification/2_fulldb_500_02val/12300_reID_Network.pth
   'tracker':
-    motion_model:
-      enabled: True
-      # average velocity over last n_steps steps
-      n_steps: 5
-      # if true, only model the movement of the bounding box center. If false, width and height are also modeled.
-      center_only: False
     'inactive_patience': 50
     'reid_iou_threshold': 0.2
     'finetuning':
-      'optimizer': sgd
-      'keep_frames': 40
-      'epochs': 500
-      'epochs_wo_val': 250
-      'learning_rate': 1e-2
-      'batch_size': 0
-      'validate': True
+      'epochs': 50
+      'epochs_wo_val': 50
+      'learning_rate': 1e-3
+      'validate': False
       'others_class': True
-      # how many samples per person should be included in val set [in %]
-      'val_split': 0.2
-      'val_set_random': False
-      'val_set_random_from_middle': False
       'plot_training_curves': True
       'early_stopping_classifier': True
       # method 1 means early stopping with patience and delta, 2 is pick best according to val loss, 3 acc to val accuracy, 4 just others val loss
-      'early_stopping_method': 4
+      'early_stopping_method': 2
       'early_stopping_patience': 30
-      'reset_dataset': True
-      'reset_head': True
-      'reid_score_threshold': 0.75
-      'train_iou_threshold': 0.5
-      'max_displacement': 0.01
-      'data_augmentation': 0
-      # how many different IDs should be considered for others class (0 = all possible)
-      'ids_in_others': 0
-  'output_subdir': '31'
+      'flip_p': 0.0
+      'plot_offline': True
+  'output_subdir': '109'
