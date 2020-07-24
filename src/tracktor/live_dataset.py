@@ -12,7 +12,7 @@ import random
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class IndividualDataset(torch.utils.data.Dataset):
-    def __init__(self, id, keep_frames, data_augmentation):
+    def __init__(self, id, keep_frames, data_augmentation, flip_p):
         self.id = id
         self.features = torch.tensor([]).to(device)
         self.boxes = torch.tensor([]).to(device)
@@ -24,6 +24,7 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.pos_unique_indices = None
         self.data_augmentation = data_augmentation
         self.frame = torch.tensor([]).to(device)
+        self.flip_p = flip_p
 
     def append_samples(self, training_set_dict, frame=0, area=0):
         frame += 1 # because self.im_index is increased at the end of step
@@ -53,12 +54,24 @@ class IndividualDataset(torch.utils.data.Dataset):
         return self.scores.size()[0]
 
     def __getitem__(self, idx):
-        intervall = self.data_augmentation + 1  # has to be jumped to get corresponding features
-        return {'features': self.features[idx*intervall:(idx*intervall+intervall), :, :, :], 'scores': self.scores[idx]*torch.ones(self.data_augmentation+1), 'frame': self.frame}
+        ## while working with data augmentation
+        # intervall = self.data_augmentation + 1  # has to be jumped to get corresponding features
+        # return {'features': self.features[idx*intervall:(idx*intervall+intervall), :, :, :], 'scores': self.scores[idx]*torch.ones(self.data_augmentation+1), 'frame': self.frame}
+
+        if self.flip_p>0.0:
+            ## flip FM to augment
+            features = self.features[idx, :, :, :].flip(-1)
+            features = torch.cat((self.features[idx, :, :, :], features))
+            return {'features': features, 'scores': torch.cat((self.scores[idx], self.scores[idx])),
+                    'frame_id': torch.cat((self.frame[idx], self.frame[idx]))}
+        else:
+            return {'features': self.features[idx, :, :, :], 'scores': (self.scores[idx]),
+                    'frame_id': self.frame[idx]}
 
 
 class InactiveDataset(torch.utils.data.Dataset):
-    def __init__(self, data_augmentation=0, others_db=None, others_class=False, im_index=0, ids_in_others=0, val_set_random_from_middle=False, exclude_from_others=[], results=None):
+    def __init__(self, data_augmentation=0, others_db=None, others_class=False, im_index=0,
+                 ids_in_others=0, val_set_random_from_middle=False, exclude_from_others=[], results=None, flip_p=0.5):
         self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
         self.features = torch.tensor([]).to(device)
@@ -74,6 +87,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         self.exclude_from_others = exclude_from_others
         #self.results = results
         self.frame = torch.tensor([]).to(device)
+        self.flip_p = flip_p
 
     def __len__(self):
         return self.scores.size()[0]
@@ -103,6 +117,15 @@ class InactiveDataset(torch.utils.data.Dataset):
             return i, fID
 
     def get_others(self, inactive_tracks, val=False):
+        # FIRST idea get more others because of flip
+        # if self.flip_p > 0.0:
+        #     max_occ = 2*self.max_occ  # to balance with inactive tracks (each sample gets flipped feature map)
+        # else:
+        #     max_occ = self.max_occ
+
+        # SECOND idea just flip others too, see below
+        max_occ = self.max_occ
+
         val_others_features = torch.tensor([]).to(device)
         val_others_frames_id = torch.tensor([]).to(device)
         train_others_features = torch.tensor([]).to(device)
@@ -164,7 +187,7 @@ class InactiveDataset(torch.utils.data.Dataset):
                                                    (torch.ones(1)*idx).to(device)))
                             train_others_frames_id = torch.cat((train_others_frames_id, frames_id.unsqueeze(0)))
                             train_num_others[i] -= 1
-                        if train_others_features.shape[0]>=(self.max_occ*(self.data_augmentation+1)) or sum(train_num_others)==0:
+                        if train_others_features.shape[0]>=(max_occ*(self.data_augmentation+1)) or sum(train_num_others)==0:
                             break
 
                     print('There are {} train and {} val samples for others class'.format(train_others_features.shape[0], val_others_features.shape[0]))
@@ -200,8 +223,20 @@ class InactiveDataset(torch.utils.data.Dataset):
                             train_others_frames_id = torch.cat((train_others_frames_id, frames_id.unsqueeze(0)))
 
                             train_num_others[i] -= 1
-                        if train_others_features.shape[0] >= (self.max_occ*(self.data_augmentation+1)) or sum(train_num_others) == 0:
+                        if train_others_features.shape[0] >= (max_occ*(self.data_augmentation+1)) or sum(train_num_others) == 0:
                             break
+
+                    # flip others too
+                    if self.flip_p > 0.0:
+                        ## flip FM to augment
+                        features = train_others_features.flip(-1)
+                        train_others_features = torch.cat((train_others_features, features))
+                        features = val_others_features.flip(-1)
+                        val_others_features = torch.cat((val_others_features, features))
+                        train_others_frames_id = torch.cat((train_others_frames_id, train_others_frames_id))
+                        val_others_frames_id = torch.cat((val_others_frames_id, val_others_frames_id))
+
+
                     return train_others_features, val_others_features, train_others_frames_id, val_others_frames_id
 
             #### no validation set
@@ -231,8 +266,18 @@ class InactiveDataset(torch.utils.data.Dataset):
                                                (torch.ones(1) * idx).to(device)))
                         train_others_frames_id = torch.cat((train_others_frames_id, frames_id.unsqueeze(0)))
                         train_num_others[i] -= 1
-                    if train_others_features.shape[0] >= (self.max_occ*(self.data_augmentation+1)) or sum(train_num_others) == 0:
+                    if train_others_features.shape[0] >= (max_occ*(self.data_augmentation+1)) or sum(train_num_others) == 0:
                         break
+
+                    # flip others too
+                if self.flip_p > 0.0:
+                    ## flip FM to augment
+                    features = train_others_features.flip(-1)
+                    train_others_features = torch.cat((train_others_features, features))
+                    features = val_others_features.flip(-1)
+                    val_others_features = torch.cat((val_others_features, features))
+                    train_others_frames_id = torch.cat((train_others_frames_id, train_others_frames_id))
+                    val_others_frames_id = torch.cat((val_others_frames_id, val_others_frames_id))
                 return train_others_features, val_others_features, train_others_frames_id, val_others_frames_id
 
         else:
@@ -314,11 +359,13 @@ class InactiveDataset(torch.utils.data.Dataset):
             #     idxs = self.balance(idxs, int(val_others_features.shape[0]/(self.data_augmentation+1)))
             idx_features = self.expand_indices_augmentation(idxs)
             t = inactive_tracks[i]
-            val_set.scores = torch.cat((val_set.scores, torch.ones(len(idx_features)).to(device) * (c)))
+            r = t.training_set[idx_features]
+            val_set.scores = torch.cat((val_set.scores, torch.ones(len(r['scores'])).to(device) * (c)))
             #val_set.boxes = torch.cat((val_set.boxes, t.training_set.boxes[idxs]))
-            val_set.features = torch.cat((val_set.features, t.training_set.features[idx_features]))
+            val_set.features = torch.cat((val_set.features, r['features']))
             if len(idxs)>0:
-                val_set.frame = torch.cat((val_set.frame, torch.cat((t.training_set.frame[idxs].unsqueeze(1), torch.ones(len(idxs),1).to(device)*(t.id)), dim=1)))
+                val_set.frame = torch.cat((val_set.frame, torch.cat((r['frame_id'].unsqueeze(1),
+                                                                     torch.ones(len(r['scores']),1).to(device)*(t.id)), dim=1)))
 
         # if self.im_index == 117:
         #     id29 = torch.load('id29.pt')
@@ -356,9 +403,9 @@ class InactiveDataset(torch.utils.data.Dataset):
 
         # get idx of validation samples
         if val:
-            #val_idx, num_val = self.get_val_idx(occ, inactive_tracks, split, val_set_random)
             val_idx = [[]]
             num_val = 0
+            #val_idx, num_val = self.get_val_idx(occ, inactive_tracks, split, val_set_random)
             #self.max_occ -= num_val
 
         self.min_occ = 40 # get 8 others samples for validation
@@ -387,10 +434,17 @@ class InactiveDataset(torch.utils.data.Dataset):
             if len(t.training_set.pos_unique_indices) < self.max_occ:
                 t.training_set.pos_unique_indices = self.balance(t.training_set.pos_unique_indices, self.max_occ)
             pos_unique_indices = self.expand_indices_augmentation(t.training_set.pos_unique_indices)
-            self.scores = torch.cat((self.scores, torch.ones(len(pos_unique_indices)).to(device) * (c)))
-            #self.boxes = torch.cat((self.boxes, t.training_set.boxes[pos_unique_indices_boxes]))
-            self.features = torch.cat((self.features, t.training_set.features[pos_unique_indices]))
-            self.frame = torch.cat((self.frame, torch.cat((t.training_set.frame[pos_unique_indices].unsqueeze(1), torch.ones(len(pos_unique_indices),1).to(device)*(t.id)), dim=1)))
+            r = t.training_set[pos_unique_indices]
+            self.scores = torch.cat((self.scores, torch.ones(len(r['scores'])).to(device) * (c)))
+            self.features = torch.cat((self.features, r['features']))
+            self.frame = torch.cat((self.frame, torch.cat((r['frame_id'].unsqueeze(1),
+                                                           torch.ones(len(r['scores']), 1).to(device) * (t.id)),
+                                                          dim=1)))
+
+            # self.scores = torch.cat((self.scores, torch.ones(len(pos_unique_indices)).to(device) * (c)))
+            # #self.boxes = torch.cat((self.boxes, t.training_set.boxes[pos_unique_indices_boxes]))
+            # self.features = torch.cat((self.features, t.training_set.features[pos_unique_indices]))
+            # self.frame = torch.cat((self.frame, torch.cat((t.training_set.frame[pos_unique_indices].unsqueeze(1), torch.ones(len(pos_unique_indices),1).to(device)*(t.id)), dim=1)))
 
         # if self.im_index == 117:
         #     id29 = torch.load('id29.pt')

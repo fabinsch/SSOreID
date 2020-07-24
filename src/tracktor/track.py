@@ -17,7 +17,7 @@ class Track(object):
     """This class contains all necessary for every individual track."""
 
     def __init__(self, pos, score, track_id, features, inactive_patience, max_features_num, mm_steps, im_info,
-                 transformed_image_size, batch_size, keep_frames, data_augmentation, plot=False, box_roi_pool=None):
+                 transformed_image_size, batch_size, keep_frames, data_augmentation, plot=False, box_roi_pool=None, flip_p=0):
         self.id = track_id
         self.pos = pos
         self.score = score
@@ -39,7 +39,7 @@ class Track(object):
         self.scale = self.im_info[0] / self.transformed_image_size[0][0]
         self.checkpoints = dict()
         self.box_roi_pool = box_roi_pool
-        self.training_set = IndividualDataset(self.id, keep_frames, data_augmentation)
+        self.training_set = IndividualDataset(self.id, keep_frames, data_augmentation, flip_p)
         self.skipped_for_train = 0
 
     def has_positive_area(self):
