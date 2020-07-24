@@ -1,0 +1,70 @@
+tracktor:
+  # fpn
+  obj_detect_model: output/faster_rcnn_fpn_training_mot_17/model_epoch_27.model
+reid:
+  name: test
+  module_name: ml_classification
+  desription:
+  seed: 12345
+  # smth like MOT_train, KITTI_train_Pedestrian
+  db_train: motML_train
+  db_val: False
+
+  model_args:
+    # Recommended for loss: batch_all, batch_hard
+    # Unstable, no guarantee they are working: weighted_triplet, cross_entropy
+    loss: batch_hard
+    margin: 0.2
+    # Plot prec at k to tensorboard, 0 for off
+    prec_at_k: 3
+
+  ML:
+    #nways: [2,3,4,5,6,7,8,9,10,15,20]
+    range: False
+    nways: 5
+    kshots: 3
+    num_tasks: 1
+    num_tasks_val: 1
+    adaptation_steps: 10
+    meta_batch_size: 1
+    # sample tasks from all train sequences or just 1
+    sample_from_all: False
+    db: 'db_train_2'
+    flip_p: 0.5
+
+  solver:
+    optim: Adam
+    optim_args:
+      lr: 0.0003
+      weight_decay: 0.0000
+    iterations: 100000
+    plot_training_curves: True
+    plot_inner_loop: False
+    plot_offline: False
+
+
+  dataloader:
+    # all targets with visibility lower than this are filtered out, for kitti set it to
+    # a sequence with maximal [truncation, occlusion] levels
+    vis_threshold: 0.3
+    P: 18
+    K: 4
+    # limit maximum number of images per identity
+    max_per_person: 1000
+    crop_H: 256
+    crop_W: 128
+    # center: just a center crop, random: random crop and 0.5 horizontal flip probability
+    transform: random
+    normalize_mean:
+      - 0.485
+      - 0.456
+      - 0.406
+    normalize_std:
+      - 0.229
+      - 0.224
+      - 0.225
+    build_dataset: False
+    validation_sequence: MOT17-02
+
+  cnn:
+    output_dim: 128
