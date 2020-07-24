@@ -27,13 +27,38 @@ import time
 #    matplotlib.use('TkAgg')
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+class reID_Model(torch.nn.Module):
+    def __init__(self, head, predictor, n):
+        super(reID_Model, self).__init__()
+        self.head = head
+        self.predictor = predictor.cls_score
+        self.num_output = n
+        self.additional_layer = {}
+        if len(n)>0:
+            for i in n:
+                if i>2:
+                    self.additional_layer[i] = torch.nn.Linear(1024, i - 2)
+                else:
+                    self.additional_layer[i] = None
+        else:
+            self.additional_layer = None
+
+    def forward(self, x, nways):
+        feat = self.head(x)
+        x = self.predictor(feat)
+        if self.additional_layer != None and nways>2:
+            self.additional_layer[nways].to(device)
+            add = self.additional_layer[nways](feat)
+            x = torch.cat((x, add), dim=1)
+        return x
+
 
 class Tracker:
     """The main tracking file, here is where magic happens."""
     # only track pedestrian
     cl = 1
 
-    def __init__(self, obj_detect, reid_network, tracker_cfg, seq):
+    def __init__(self, obj_detect, reid_network, tracker_cfg, seq, reID_weights, ML=False):
         self.obj_detect = obj_detect
         self.reid_network = reid_network
         self.detection_person_thresh = tracker_cfg['detection_person_thresh']
@@ -53,8 +78,24 @@ class Tracker:
         self.termination_eps = tracker_cfg['termination_eps']
         self.finetuning_config = tracker_cfg['finetuning']
         if self.finetuning_config["for_tracking"] or self.finetuning_config["for_reid"]:
-            self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
-            self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
+            # model = reID_Model(head=obj_detect.roi_heads.box_head,
+            #                    predictor=obj_detect.roi_heads.box_predictor,
+            #                    n=[2])
+            #model.load_state_dict(torch.load(reID_weights))
+            if ML:
+                a = torch.load(reID_weights)
+                self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
+                self.bbox_predictor_weights['cls_score.bias'] = a['module.predictor.bias']
+                self.bbox_predictor_weights['cls_score.weight'] = a['module.predictor.weight']
+
+                self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
+                self.bbox_head_weights['fc6.bias'] = a['module.head.fc6.bias']
+                self.bbox_head_weights['fc6.weight'] = a['module.head.fc6.weight']
+                self.bbox_head_weights['fc7.bias'] = a['module.head.fc7.bias']
+                self.bbox_head_weights['fc7.weight'] = a['module.head.fc7.weight']
+            else:
+                self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
+                self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
 
         self.tracks = []
         self.inactive_tracks = []
@@ -90,6 +131,10 @@ class Tracker:
         self.inactive_tracks_gt_id = []
         self.det_new_track_exclude = []
         self.db_gt_inactive = {}
+
+        ## get statistics
+        self.count_nways = {}
+        self.count_kshots = {}
 
     def reset(self, hard=True):
         self.tracks = []
@@ -175,7 +220,7 @@ class Tracker:
                           self.motion_model_cfg['n_steps'] if self.motion_model_cfg['n_steps'] > 0 else 1,
                           image.size()[1:3], self.obj_detect.image_size, self.finetuning_config["batch_size"],
                           box_roi_pool=box_roi_pool, keep_frames=self.finetuning_config['keep_frames'],
-                          data_augmentation = self.finetuning_config['data_augmentation'])
+                          data_augmentation = self.finetuning_config['data_augmentation'], flip_p=self.finetuning_config['flip_p'])
             self.tracks.append(track)
             if frame==138:
                 # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
@@ -457,8 +502,8 @@ class Tracker:
                         inactive_track.frames_since_active = 1
                         inactive_track.training_set = IndividualDataset(inactive_track.id,
                                                                         self.finetuning_config['keep_frames'],
-                                                                        self.finetuning_config['data_augmentation']
-                                                                        )
+                                                                        self.finetuning_config['data_augmentation'],
+                                                                        self.finetuning_config['flip_p'])
 
                     assigned.append(det_index)
                     remove_inactive.append(inactive_track)
@@ -901,10 +946,10 @@ class Tracker:
                     else:
                         acc_class = -1
 
-                    # if (ep%50)==0:
-                    #     print(
-                    #         '({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
-                    #             self.im_index,ep, c, class_loss, acc_class, max, fId[ind], scores_each[ind]))
+                    if ep<10:
+                        print(
+                            '({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
+                                self.im_index,ep, c, class_loss, acc_class, max, fId[ind], scores_each[ind]))
 
                     # if (31<=ep<=52) or (ep%50==0):
                     #     print('({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
@@ -918,7 +963,7 @@ class Tracker:
         if eval:
             self.box_predictor_classification.train()
             self.box_head_classification.train()
-        if ep>=0:
+        if ep>=800000:
             return loss, loss_others, loss_inactives, max_sample_loss_others
         else:
             return loss
@@ -932,9 +977,20 @@ class Tracker:
             self.inactive_tracks_id = [t.id for t in self.inactive_tracks]
             return
 
+        if len(self.inactive_tracks) not in self.count_nways.keys():
+            self.count_nways[len(self.inactive_tracks)] = 1
+        else:
+            self.count_nways[len(self.inactive_tracks)] += 1
+
         start_time = time.time()
         for t in self.inactive_tracks:
-               t.training_set.post_process()
+            t.training_set.post_process()
+
+            if len(t.training_set) not in self.count_kshots.keys():
+                self.count_kshots[len(t.training_set)] = 1
+            else:
+                self.count_kshots[len(t.training_set)] += 1
+
         #print("\n--- %s seconds --- for post process" % (time.time() - start_time))
 
         self.training_set = InactiveDataset(data_augmentation=self.finetuning_config['data_augmentation'],
@@ -944,7 +1000,8 @@ class Tracker:
                                             ids_in_others=self.finetuning_config['ids_in_others'],
                                             val_set_random_from_middle=self.finetuning_config['val_set_random_from_middle'],
                                             exclude_from_others=self.exclude_from_others,
-                                            results=self.results)
+                                            results=self.results,
+                                            flip_p=self.finetuning_config['flip_p'])
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
 
@@ -1002,7 +1059,8 @@ class Tracker:
                                         #n_samples_train=training_set.max_occ,
                                         n_samples_val=len(val_set),
                                         #n_samples_val=training_set.min_occ,
-                                        im=self.im_index)
+                                        im=self.im_index,
+                                        offline=self.finetuning_config['plot_offline'])
 
         # if no val set available, not early stopping possible - make sure to optimize at least 10 epochs
         if len(val_set) > 0:
@@ -1051,7 +1109,7 @@ class Tracker:
             correct = 0
             for i_sample, sample_batch in enumerate(dataloader_train):
                 optimizer.zero_grad()
-                if self.im_index==360000:
+                if self.im_index>=0:
                     loss = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                                      sample_batch['scores'], eval=False,
                                                                      ep=i, fId=sample_batch['frame_id'])
