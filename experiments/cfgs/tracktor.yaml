@@ -18,7 +18,9 @@ tracktor:
   # obj_detect_weights: output/fpn/res101/mot19_cvpr_train/v1/fpn_1_3.pth
   # obj_detect_config: output/fpn/res101/mot19_cvpr_train/v1/config.yaml
 
-  reid_weights: output/tracktor/reid/res50-mot17-batch_hard/ResNet_iter_25245.pth
+  #reid_weights: output/tracktor/reid/res50-mot17-batch_hard/ResNet_iter_25245.pth
+  reid_ML: True
+  reid_weights: output/tracktor/ml_classification/2_fulldb/reID_Network.pth
   reid_config: output/tracktor/reid/res50-mot17-batch_hard/sacred_config.yaml
 
   interpolate: False
@@ -39,7 +41,7 @@ tracktor:
     regression_nms_thresh: 0.6
     # motion model settings
     motion_model:
-      enabled: False
+      enabled: True
       # average velocity over last n_steps steps
       n_steps: 5
       # if true, only model the movement of the bounding box center. If false, width and height are also modeled.
@@ -61,7 +63,7 @@ tracktor:
     #do_reid: True
     reid_siamese: False
     # How much timesteps dead tracks are kept and cosidered for reid
-    inactive_patience: 10
+    inactive_patience: 50
     # How similar do image and old track need to be to be considered the same person
     reid_sim_threshold: 2.0
     # How much IoU do track and image need to be considered for matching
@@ -69,7 +71,7 @@ tracktor:
     # Train finetuned bounding box predictor for each track
     finetuning:
       # either adam or sgd
-      optimizer: adam
+      optimizer: sgd
       keep_frames: 40
       for_tracking: False
       for_reid: True
@@ -80,9 +82,9 @@ tracktor:
       # Learning rate for the finetuning
       learning_rate: 5e-4
       # number of rois generated per batch for training
-      batch_size: 64
+      batch_size: 0
       # number of pixels each bounding box is shifted randomly at max in x y w h direction
-      max_displacement: 0.15
+      max_displacement: 0.01
       # Finetune not only at the beginning of each track but repeatedly over the next frames
       finetune_repeatedly: False
       # Finetune on every t mod k frames
@@ -111,10 +113,13 @@ tracktor:
       plot_training_curves: False
       reset_dataset: True
       reset_head: True
-      reid_score_threshold: 0.90
-      train_iou_threshold: 0.5
+      save_fm: 1
+      reid_score_threshold: 0.75
+      train_iou_threshold: 2.5
       val_set_random: False
       val_set_random_from_middle: False
-      data_augmentation: 5
+      data_augmentation: 0
       # how many different IDs should be considered for others class (0 = all possible)
-      ids_in_others: 4
+      ids_in_others: 0
+      flip_p: 0.0
+      plot_offline: False

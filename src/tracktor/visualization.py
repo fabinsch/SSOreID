@@ -38,12 +38,16 @@ def plot_compare_bounding_boxes(box_finetune, box_no_finetune, image):
 class VisdomLinePlotter(object):
     """Plots to Visdom"""
 
-    def __init__(self, id, env, n_samples_train, n_samples_val, im):
+    def __init__(self, id, env, n_samples_train, n_samples_val, im, offline=False):
         logger = logging.getLogger()
         logger.setLevel(40)
 
-        self.viz = Visdom(port=8097, env=env)
-        #self.viz = Visdom(env=env, log_to_filename='experiments/logs/{}'.format(env), offline=True)
+        if not offline:
+            self.viz = Visdom(port=8097, env=env)
+        else:
+            self.viz = Visdom(env=env, log_to_filename='experiments/logs/{}'.format(env), offline=True)
+            print('\n save plot as experiments/logs/{}'.format(env))
+
         logger.setLevel(20)
         self.env = env
         self.id = id
@@ -64,6 +68,7 @@ class VisdomLinePlotter(object):
                                      env=self.env,
                                      title='({})Accuracy inactive {}'.format(im, id),
                                      legend=['train #{}'.format(self.n_samples_train)]))
+
 
     def plot_(self, epoch, loss, acc, split_name):
         if split_name=='train':
@@ -115,8 +120,110 @@ class VisdomLinePlotter(object):
                 #     name='max_sample',
                 #     update='append')
 
+class VisdomLinePlotter_ML(object):
+    """Plots to Visdom"""
 
+    def __init__(self, env, offline, info):
+        logger = logging.getLogger()
+        logger.setLevel(40)
 
+        if not offline:
+            self.viz = Visdom(port=8097, env=env)
+        else:
+            self.viz = Visdom(env=env, log_to_filename='experiments/logs/{}'.format(env), offline=True)
+            print('\n save plot as experiments/logs/{}'.format(env))
+        logger.setLevel(20)
+        self.env = env
+        self.viz.text(
+            env=self.env,
+            # text='nWays {}\n kShots {}\n meta batch size {}\n number train tasks {}\n number validation tasks {}\n'
+            #      ' validaiton sequence {}'.format(info)
+            text='nWays {} kShots {} meta batch size {} number train tasks per sequence {} number validation tasks {} validation sequence {} flip prob {}'.format(info[0], info[1], info[2], info[3], info[4], info[5], info[6])
+        )
+
+        self.loss_window = self.viz.line(X=torch.zeros((1,)).cpu(),
+                           Y=torch.zeros((1)).cpu(),
+                           opts=dict(xlabel='Epoch',
+                                     ylabel='Loss',
+                                     env=self.env,
+                                     title='Loss val set',
+                                     legend=['train_task_val_set']))
+        self.accuracy_window = self.viz.line(X=torch.zeros((1,)).cpu(),
+                           Y=torch.zeros((1)).cpu(),
+                           opts=dict(xlabel='Epoch',
+                                     ylabel='Accuracy in %',
+                                     env=self.env,
+                                     title='Accuracy val set',
+                                     legend=['train_task_val_set']))
+
+    def plot(self, epoch, loss, acc, split_name, info=None):
+        if split_name=='train_task_val_set':
+            name = split_name
+        elif split_name =='val_task_val_set':
+            name = split_name
+        elif split_name =='train_task_val_set MEAN':
+            name = split_name
+        elif split_name =='val_task_val_set MEAN':
+            name = split_name
+        elif split_name =='val_task_val_set_before':
+            name = split_name
+
+        elif split_name=='inner':
+            seq, nways, kshots, it, train_task, taskID = info
+            if train_task:
+                task='({})train_task'.format(taskID)
+            else:
+                task='({})val_task'.format(taskID)
+            if epoch==0:
+                self.inner_window_loss = self.viz.line(X=torch.zeros((1,)).cpu(),
+                                            Y=torch.Tensor([loss]).unsqueeze(0).cpu(),
+                                            opts=dict(xlabel='Epoch',
+                                                      ylabel='Loss',
+                                                      env=self.env,
+                                                      title='Loss train set {} [{}]'.format(seq, it),
+                                                      legend=['{} {}n_{}k'.format(task, nways, kshots)]))
+                self.inner_window_acc = self.viz.line(X=torch.zeros((1,)).cpu(),
+                                            Y=torch.Tensor([acc]).unsqueeze(0).cpu(),
+                                            opts=dict(xlabel='Epoch',
+                                                      ylabel='Accuracy',
+                                                      env=self.env,
+                                                      title='Accuracy train set {} [{}]'.format(seq, it),
+                                                      legend=['{} {}n_{}k'.format(task, nways, kshots)]))
+            else:
+                self.viz.line(
+                X=torch.ones((1, 1)).cpu() * epoch,
+                Y=torch.Tensor([loss]).unsqueeze(0).cpu(),
+                env=self.env,
+                win=self.inner_window_loss,
+                name='{} {}n_{}k'.format(task, nways, kshots),
+                update='append')
+
+                self.viz.line(
+                X=torch.ones((1, 1)).cpu() * epoch,
+                Y=torch.Tensor([acc]).unsqueeze(0).cpu(),
+                env=self.env,
+                win=self.inner_window_acc,
+                name='{} {}n_{}k'.format(task, nways, kshots),
+                update='append')
+            return
+
+        else:
+            print('error, splitname incorrect')
+
+        self.viz.line(
+            X=torch.ones((1, 1)).cpu() * epoch,
+            Y=torch.Tensor([loss]).unsqueeze(0).cpu(),
+            env=self.env,
+            win=self.loss_window,
+            name=name,
+            update='append')
+        self.viz.line(
+            X=torch.ones((1, 1)).cpu() * epoch,
+            Y=torch.Tensor([acc]).unsqueeze(0).cpu(),
+            env=self.env,
+            win=self.accuracy_window,
+            name=name,
+            update='append')
 
 def plot_bounding_boxes(im_info, gt_pos, image, proposals, iteration, id, validate=False):
     num_proposals = len(proposals)
