@@ -11,6 +11,7 @@ import random
 
 import torch
 import torch.nn
+from torch.autograd import grad
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from collections import namedtuple
@@ -26,6 +27,7 @@ from tracktor.utils import HDF5Dataset
 
 import learn2learn as l2l
 from learn2learn.data.transforms import NWays, KShots, LoadData
+from learn2learn.utils import clone_module, clone_parameters
 import h5py
 import datetime
 
@@ -33,16 +35,97 @@ ex = Experiment()
 ex.add_config('experiments/cfgs/ML_reid.yaml')
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+    torch.save(state, filename)
+    print('safe checkpoint {}'.format(filename))
+    if is_best:
+        shutil.copyfile(filename, 'model_best.pth.tar')
+
+def meta_sgd_update(model, lrs=None, grads=None):
+    """
+    **Description**
+    Performs a MetaSGD update on model using grads and lrs.
+    The function re-routes the Python object, thus avoiding in-place
+    operations.
+    NOTE: The model itself is updated in-place (no deepcopy), but the
+          parameters' tensors are not.
+    **Arguments**
+    * **model** (Module) - The model to update.
+    * **lrs** (list) - The meta-learned learning rates used to update the model.
+    * **grads** (list, *optional*, default=None) - A list of gradients for each parameter
+        of the model. If None, will use the gradients in .grad attributes.
+    **Example**
+    ~~~python
+    meta = l2l.algorithms.MetaSGD(Model(), lr=1.0)
+    lrs = [th.ones_like(p) for p in meta.model.parameters()]
+    model = meta.clone() # The next two lines essentially implement model.adapt(loss)
+    grads = autograd.grad(loss, model.parameters(), create_graph=True)
+    meta_sgd_update(model, lrs=lrs, grads)
+    ~~~
+    """
+    if grads is not None and lrs is not None:
+        lr = lrs
+        for p, g in zip(model.parameters(), grads):
+            p.grad = g
+            p._lr = lr
+
+    # Update the params
+    for param_key in model._parameters:
+        p = model._parameters[param_key]
+        if p is not None and p.grad is not None:
+            model._parameters[param_key] = p - p._lr * p.grad
+
+    # Second, handle the buffers if necessary
+    for buffer_key in model._buffers:
+        buff = model._buffers[buffer_key]
+        if buff is not None and buff.grad is not None and buff._lr is not None:
+            model._buffers[buffer_key] = buff - buff._lr * buff.grad
+
+    # Then, recurse for each submodule
+    for module_key in model._modules:
+        model._modules[module_key] = meta_sgd_update(model._modules[module_key])
+    return model
+
 class MetaSGD_(l2l.algorithms.MetaSGD):
     def __init__(self, model, lr=1.0, first_order=False, lrs=None):
         super(l2l.algorithms.MetaSGD, self).__init__()
         self.module = model
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        # LR per layer
+        # if lrs is None:
+        #     lrs = [torch.ones(1).to(device) * lr for p in model.parameters()]
+        #     lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs])
+
+        # one global LR
         if lrs is None:
-            lrs = [torch.ones(1).to(device) * lr for p in model.parameters()]
-            lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs])
-        self.lrs = lrs
+            lrs = [torch.nn.Parameter(torch.ones(1).to(device) * lr)]
+        self.lrs = lrs[0]
         self.first_order = first_order
+
+    def clone(self):
+        """
+        **Descritpion**
+        Akin to `MAML.clone()` but for MetaSGD: it includes a set of learnable fast-adaptation
+        learning rates.
+        """
+        return MetaSGD_(clone_module(self.module),
+                       lrs=clone_parameters(self.lrs),
+                       first_order=self.first_order)
+
+    def adapt(self, loss, first_order=None):
+        """
+        **Descritpion**
+        Akin to `MAML.adapt()` but for MetaSGD: it updates the model with the learnable
+        per-parameter learning rates.
+        """
+        if first_order is None:
+            first_order = self.first_order
+        second_order = not first_order
+        gradients = grad(loss,
+                         self.module.parameters(),
+                         retain_graph=second_order,
+                         create_graph=second_order)
+        self.module = meta_sgd_update(self.module, self.lrs, gradients)
 
 class ML_dataset(Dataset):
     def __init__(self, data, flip_p):
@@ -67,6 +150,8 @@ class ML_dataset(Dataset):
             label = self.data[0][item] #.unsqueeze(0)
             #label = torch.cat((self.data[0][item].unsqueeze(0), label))
             return (features, label)
+        else:
+            return (self.data[1][item], self.data[0][item].unsqueeze(0))
 
     def __len__(self):
         return len(self.data[0])
@@ -148,7 +233,8 @@ class AverageMeter(object):
 
 
 def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_task=True,
-               plotter=None, iteration=-1, sequence=None, task=-1, taskID=-1):
+               plotter=None, iteration=-1, sequence=None, task=-1, taskID=-1, reid=None):
+    flip_p = reid['ML']['flip_p']
     valid_accuracy_before = torch.zeros(1)
     validation_error_before = torch.zeros(1)
 
@@ -161,15 +247,15 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_tas
     evaluation_indices = torch.from_numpy(~adaptation_indices)
     adaptation_indices = torch.from_numpy(adaptation_indices)
 
-    # get flipped feature maps
-    data = data.view(-1, 256, 7, 7)
-    labels = labels.repeat_interleave(2)
+    if flip_p>0.0:
+        # get flipped feature maps
+        data = data.view(-1, 256, 7, 7)
+        labels = labels.repeat_interleave(2)
+        # because of flip
+        adaptation_indices = adaptation_indices.repeat_interleave(2)
+        evaluation_indices = evaluation_indices.repeat_interleave(2)
 
     info = (sequence, ways, shots, iteration, train_task, taskID)
-
-    # because of flip
-    adaptation_indices = adaptation_indices.repeat_interleave(2)
-    evaluation_indices = evaluation_indices.repeat_interleave(2)
 
     adaptation_data, adaptation_labels = data[adaptation_indices], labels[adaptation_indices]
     evaluation_data, evaluation_labels = data[evaluation_indices], labels[evaluation_indices]
@@ -205,15 +291,18 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_tas
 
     # Adapt the model
     for step in range(adaptation_steps):
-        if (plotter != None) and (iteration%500==0) and task%50==0:
+        plot_inner=False
+        if (plotter != None) and (iteration%500==0) and task%50==0 and plot_inner==True:
             train_predictions, train_error = forward_pass_for_classifier_training(learner, adaptation_data, adaptation_labels, ways, return_scores=True)
             train_accuracy = accuracy(train_predictions, adaptation_labels)
             plotter.plot(epoch=step, loss=train_error, acc=train_accuracy, split_name='inner', info=info)
         else:
             train_error = forward_pass_for_classifier_training(learner, adaptation_data, adaptation_labels, ways)
         #train_error /= len(adaptation_data)
-        #learner.adapt(train_error, first_order=True)  # for meta sgd specify first order here
-        learner.adapt(train_error)  # Takes a gradient step on the loss and updates the cloned parameters in place
+        if reid['ML']['maml']:
+            learner.adapt(train_error)  # Takes a gradient step on the loss and updates the cloned parameters in place
+        if reid['ML']['learn_LR']:
+            learner.adapt(train_error, first_order=True)  # for meta sgd specify first order here
 
 
     # Evaluate the adapted model
@@ -235,34 +324,117 @@ def statistics(dataset):
         if samples_per_id[i]<80:
             print('{} samples per ID: {} times'.format(samples_per_id[i], counter_samples[i]))
 
-def sample_task(tasksets, i_to_dataset, sample, val=False):
-    try:
-        i = random.choice(range(len(tasksets)))  # sample sequence
-        seq = i_to_dataset[i]
-        seq_tasks = tasksets[list(tasksets.keys())[i]]
-        if sample==False and val==False:
-            i=1
-            seq_tasks = tasksets[list(tasksets.keys())[i]]
-            seq = i_to_dataset[i]
-        j = random.choice(range(len(seq_tasks)))  # sample task
-        nways = seq_tasks[j].task_transforms[0].n
-        kshots = int(seq_tasks[j].task_transforms[0].k / 2)
-        batch = seq_tasks[j].sample()
-        return batch, nways, kshots, seq, j
-    except ValueError:
-        nways = seq_tasks[j].task_transforms[0].n
-        kshots = int(seq_tasks[j].task_transforms[0].k / 2)
-        # if len(tasksets)>1:
-        #     print('Problem to sample {} ways and {} shots from {}'.format(nways, kshots, i_to_dataset[i]))
-        # else:
-        #     print('Problem to sample {} ways and {} shots from validation sequence'.format(nways, kshots))
-        return sample_task(tasksets, i_to_dataset, sample, val)
+# 1. version
+# def sample_task(tasksets, i_to_dataset, sample, val=False):
+#     try:
+#         i = random.choice(range(len(tasksets)))  # sample sequence
+#         seq = i_to_dataset[i]
+#         seq_tasks = tasksets[list(tasksets.keys())[i]]
+#         if sample==False and val==False:
+#             i=1
+#             seq_tasks = tasksets[list(tasksets.keys())[i]]
+#             seq = i_to_dataset[i]
+#         j = random.choice(range(len(seq_tasks)))  # sample task
+#         nways = seq_tasks[j].task_transforms[0].n
+#         kshots = int(seq_tasks[j].task_transforms[0].k / 2)
+#         batch = seq_tasks[j].sample()
+#         return batch, nways, kshots, seq, j
+#     except ValueError:
+#         nways = seq_tasks[j].task_transforms[0].n
+#         kshots = int(seq_tasks[j].task_transforms[0].k / 2)
+#         # if len(tasksets)>1:
+#         #     print('Problem to sample {} ways and {} shots from {}'.format(nways, kshots, i_to_dataset[i]))
+#         # else:
+#         #     print('Problem to sample {} ways and {} shots from validation sequence'.format(nways, kshots))
+#         return sample_task(tasksets, i_to_dataset, sample, val)
+#         # i = random.choice(range(len(tasksets)))
+#         # batch = tasksets[i].sample()
+
+# 2. version max recursion depth
+# def try_to_sample(taskset):
+#     try:
+#         batch = taskset.sample()
+#         return batch
+#     except ValueError:
+#         return try_to_sample(taskset)
+#
+#
+# def sample_task(sets, nways, kshots, i_to_dataset, sample, val=False):
+#     i = random.choice(range(len(sets)))  # sample sequence
+#     seq = i_to_dataset[i]
+#     # if sample == False and val == False:
+#     #     i = 1
+#     #     seq_tasks = tasksets[list(tasksets.keys())[i]]
+#     #     seq = i_to_dataset[i]
+#     n = random.sample(nways, 1)[0]
+#     k = random.sample(kshots, 1)[0]
+#     transform = [l2l.data.transforms.FusedNWaysKShots(sets[i], n=n, k=k * 2),
+#                  l2l.data.transforms.LoadData(sets[i]),
+#                  l2l.data.transforms.RemapLabels(sets[i], shuffle=True)]
+#     taskset = l2l.data.TaskDataset(dataset=sets[i],
+#                                    task_transforms=transform,
+#                                    num_tasks=1000)
+#
+#         # i = random.choice(range(len(tasksets)))
+#         # batch = tasksets[i].sample()
+#     batch = try_to_sample(taskset)
+#     return batch, n, k, seq, i
+def sample_task_val(sets, nways, kshots, i_to_dataset, sample, val=False):
+    nways = [3,5,10]
+    kshots = [3,20,40]
+    i = random.choice(range(len(sets)))  # sample sequence
+    seq = i_to_dataset[i]
+    # if sample == False and val == False:
+    #     i = 1
+    #     seq_tasks = tasksets[list(tasksets.keys())[i]]
+    #     seq = i_to_dataset[i]
+    n = random.sample(nways, 1)[0]
+    k = random.sample(kshots, 1)[0]
+    transform = [l2l.data.transforms.FusedNWaysKShots(sets[i], n=n, k=k * 2),
+                 l2l.data.transforms.LoadData(sets[i]),
+                 l2l.data.transforms.RemapLabels(sets[i], shuffle=True)]
+    taskset = l2l.data.TaskDataset(dataset=sets[i],
+                                   task_transforms=transform,
+                                   num_tasks=1000)
+
         # i = random.choice(range(len(tasksets)))
         # batch = tasksets[i].sample()
+    try:
+        batch = taskset.sample()
+        return batch, n, k, seq, i
+    except ValueError:
+        return sample_task(sets, nways, kshots, i_to_dataset, sample, val)
+
+def sample_task(sets, nways, kshots, i_to_dataset, sample, val=False, num_tasks=-1):
+    i = random.choice(range(len(sets)))  # sample sequence
+    seq = i_to_dataset[i]
+    if sample == False and val == False:
+        i = 1
+        seq = i_to_dataset[i]
+    n = random.sample(nways, 1)[0]
+    k = random.sample(kshots, 1)[0]
+    transform = [l2l.data.transforms.FusedNWaysKShots(sets[i], n=n, k=k * 2),
+                 l2l.data.transforms.LoadData(sets[i]),
+                 l2l.data.transforms.RemapLabels(sets[i], shuffle=True)]
+    taskset = l2l.data.TaskDataset(dataset=sets[i],
+                                   task_transforms=transform,
+                                   num_tasks=num_tasks)
+
+        # i = random.choice(range(len(tasksets)))
+        # batch = tasksets[i].sample()
+    try:
+        batch = taskset.sample()
+        return batch, n, k, seq, i
+    except ValueError:
+        return sample_task(sets, nways, kshots, i_to_dataset, sample, val, num_tasks)
+
 
 @ex.automain
 def my_main(_config, reid, _run):
     sacred.commands.print_config(_run)
+
+    sampled_val = {}
+    sampled_train = {}
 
     # set all seeds
     torch.manual_seed(reid['seed'])
@@ -341,28 +513,27 @@ def my_main(_config, reid, _run):
 
 
     validation_set = ML_dataset(validation_data, reid['ML']['flip_p'])
-    validation_set = l2l.data.MetaDataset(validation_set)
-    val_transform = []
-    for i in nways_list:
-        for kshots in kshots_list:
-            val_transform.append([l2l.data.transforms.FusedNWaysKShots(validation_set, n=i, k=kshots * 2),
-                                  l2l.data.transforms.LoadData(validation_set),
-                                  l2l.data.transforms.RemapLabels(validation_set, shuffle=True)
-                                  ])
-    # val_transform =[l2l.data.transforms.FusedNWaysKShots(validation_set, n=nways, k=kshots * 2),
-    #      l2l.data.transforms.LoadData(validation_set),
-    #      l2l.data.transforms.RemapLabels(validation_set, shuffle=True)
-    #      ]
-    val_taskset = {}
-    for t in val_transform:
-        if 'val' not in val_taskset.keys():
-            val_taskset['val']=[l2l.data.TaskDataset(dataset=validation_set,
-                                                    task_transforms=t,
-                                                    num_tasks=num_tasks_val)]
-        else:
-            val_taskset['val'].append(l2l.data.TaskDataset(dataset=validation_set,
-                                                 task_transforms=t,
-                                                 num_tasks=num_tasks_val))
+    validation_set = [l2l.data.MetaDataset(validation_set)]
+
+
+    # val_transform = []
+    # for i in nways_list:
+    #     for kshots in kshots_list:
+    #         val_transform.append([l2l.data.transforms.FusedNWaysKShots(validation_set, n=i, k=kshots * 2),
+    #                               l2l.data.transforms.LoadData(validation_set),
+    #                               l2l.data.transforms.RemapLabels(validation_set, shuffle=True)
+    #                               ])
+    #
+    # val_taskset = {}
+    # for t in val_transform:
+    #     if 'val' not in val_taskset.keys():
+    #         val_taskset['val']=[l2l.data.TaskDataset(dataset=validation_set,
+    #                                                 task_transforms=t,
+    #                                                 num_tasks=num_tasks_val)]
+    #     else:
+    #         val_taskset['val'].append(l2l.data.TaskDataset(dataset=validation_set,
+    #                                              task_transforms=t,
+    #                                              num_tasks=num_tasks_val))
 
     # val_taskset = l2l.data.TaskDataset(dataset=validation_set,
     #                                      task_transforms=val_transform,
@@ -375,23 +546,24 @@ def my_main(_config, reid, _run):
     meta_datasets = []
     #transforms = []
     #tasksets = []
-    tasksets = {}
+    #tasksets = {}
 
     for i, s in enumerate(sequences):
-        meta_datasets = l2l.data.MetaDataset(s)
-        for j in nways_list:
-            for kshots in kshots_list:
-                transform = [l2l.data.transforms.FusedNWaysKShots(meta_datasets, n=j, k=kshots*2),
-                    l2l.data.transforms.LoadData(meta_datasets),
-                     l2l.data.transforms.RemapLabels(meta_datasets, shuffle=True)]
-                if i not in tasksets.keys():
-                    tasksets[i] = [l2l.data.TaskDataset(dataset=meta_datasets,
-                                                     task_transforms=transform,
-                                                     num_tasks=num_tasks)]
-                else:
-                    tasksets[i].append(l2l.data.TaskDataset(dataset=meta_datasets,
-                                                     task_transforms=transform,
-                                                     num_tasks=num_tasks))
+        meta_datasets.append(l2l.data.MetaDataset(s))
+        # for j in nways_list:
+        #     for kshots in kshots_list:
+        #         transform = [l2l.data.transforms.FusedNWaysKShots(meta_datasets, n=j, k=kshots*2),
+        #             l2l.data.transforms.LoadData(meta_datasets),
+        #              l2l.data.transforms.RemapLabels(meta_datasets, shuffle=True)]
+        #         if i not in tasksets.keys():
+        #             tasksets[i] = [l2l.data.TaskDataset(dataset=meta_datasets,
+        #                                              task_transforms=transform,
+        #                                              num_tasks=num_tasks)]
+        #         else:
+        #             tasksets[i].append(l2l.data.TaskDataset(dataset=meta_datasets,
+        #                                              task_transforms=transform,
+        #                                              num_tasks=num_tasks))
+
     print("--- %s seconds --- for construction of meta-datasets and tasks" % (time.time() - start_time_tasks))
     print("--- %s seconds --- for loading db and building tasksets " % (time.time() - start_time))
     
@@ -400,8 +572,8 @@ def my_main(_config, reid, _run):
     ##########################
     del data
     del validation_data
-    del meta_datasets
-    del validation_set
+    #del meta_datasets
+    #del validation_set
     del sequences
     ##########################
     # Initialize the modules #
@@ -424,21 +596,40 @@ def my_main(_config, reid, _run):
             for p in reID_network.additional_layer[n].parameters():
                 p.requires_grad = False
 
-
-    maml = l2l.algorithms.MAML(reID_network, lr=1e-3, first_order=True, allow_nograd=True)
-    opt = torch.optim.Adam(maml.parameters(), lr=1e-4)
-
-    # for p in maml.parameters():
+    if reid['ML']['maml']:
+        model = l2l.algorithms.MAML(reID_network, lr=1e-3, first_order=True, allow_nograd=True)
+        opt = torch.optim.Adam(model.parameters(), lr=1e-4)
+    if reid['ML']['learn_LR']:
+        model = MetaSGD_(reID_network, lr=1e-3)
+        opt = torch.optim.Adam(model.parameters(), lr=1e-4)
+    # for p in mode.parameters():
     #     a = p.numel
-    # opt = torch.optim.Adam(maml.parameters(), lr=4e-3)
+
+
+    if reid['solver']['continue_training']:
+        if os.path.isfile(reid['solver']['checkpoint']):
+            print("=> loading checkpoint '{}'".format(reid['solver']['checkpoint']))
+            checkpoint = torch.load(reid['solver']['checkpoint'])
+            start_epoch = checkpoint['epoch']
+            best_acc = checkpoint['best_acc']
+            model.load_state_dict(checkpoint['state_dict'])
+            opt.load_state_dict(checkpoint['optimizer'])
+            print("=> loaded checkpoint '{}' (epoch {})"
+                  .format(reid['solver']['checkpoint'], checkpoint['epoch']))
+        else:
+            print("=> no checkpoint found at '{}'".format(args.resume))
+    # for p in model.parameters():
+    #     a = p.numel
+    # opt = torch.optim.Adam(model.parameters(), lr=4e-3)
     # print(sum(p.numel() for p in box_head.parameters() if p.requires_grad))
 
-    #meta_sgd = MetaSGD_(reID_network, lr=1e-3)
+
 
     ##################
     # Begin training #
     ##################
     print("[*] Training ...")
+    #print('!!!! sample val differently')
     losses_meta_train = AverageMeter('Loss', ':.4e')
     losses_meta_val = AverageMeter('Loss', ':.4e')
     acc_meta_train = AverageMeter('Acc', ':6.2f')
@@ -453,6 +644,8 @@ def my_main(_config, reid, _run):
                                              num_tasks_val, reid['dataloader']['validation_sequence'],
                                              reid['ML']['flip_p']))
 
+    # safe model 10 times
+    safe_every = int(_config['reid']['solver']['iterations'] / 10)
     for iteration in range(_config['reid']['solver']['iterations']):
         opt.zero_grad()
         meta_train_error = 0.0
@@ -461,12 +654,19 @@ def my_main(_config, reid, _run):
         meta_valid_accuracy = 0.0
         meta_valid_error_before = 0.0
         meta_valid_accuracy_before = 0.0
+
         for task in range(meta_batch_size):
             # Compute meta-validation loss
             # here no backward in outer loop, just inner
-            learner = maml.clone()
-            #learner = meta_sgd.clone()
-            batch, nways, kshots, _, taskID = sample_task(val_taskset, i_to_dataset, reid['ML']['sample_from_all'], val=True)
+            learner = model.clone()
+            #batch, nways, kshots, _, taskID = sample_task_val(validation_set, nways_list, kshots_list, i_to_dataset, reid['ML']['sample_from_all'], val=True)
+            batch, nways, kshots, _, taskID = sample_task(validation_set, nways_list, kshots_list, i_to_dataset,
+                                                          reid['ML']['sample_from_all'], val=True, num_tasks=num_tasks_val)
+            if (nways, kshots) not in sampled_val.keys():
+                sampled_val[(nways, kshots)] = 1
+            else:
+                sampled_val[(nways, kshots)] += 1
+
 
             evaluation_error, evaluation_accuracy = fast_adapt(batch,
                                                                learner,
@@ -479,7 +679,8 @@ def my_main(_config, reid, _run):
                                                                iteration,
                                                                reid['dataloader']['validation_sequence'],
                                                                task,
-                                                               taskID)
+                                                               taskID,
+                                                               reid)
 
             evaluation_error, evaluation_error_before = evaluation_error
             evaluation_accuracy, evaluation_accuracy_before = evaluation_accuracy
@@ -494,10 +695,17 @@ def my_main(_config, reid, _run):
 
 
             # Compute meta-training loss
-            learner = maml.clone()  #back-propagating losses on the cloned module will populate the buffers of the original module
-            #learner = meta_sgd.clone()  #back-propagating losses on the cloned module will populate the buffers of the original module
+            learner = model.clone()  #back-propagating losses on the cloned module will populate the buffers of the original module
 
-            batch, nways, kshots, sequence, taskID = sample_task(tasksets, i_to_dataset, reid['ML']['sample_from_all'])
+            batch, nways, kshots, sequence, taskID = sample_task(meta_datasets, nways_list, kshots_list, i_to_dataset,
+                                                                 reid['ML']['sample_from_all'], num_tasks=num_tasks_val)
+            if sequence not in sampled_train.keys():
+                sampled_train[sequence] = {}
+
+            if (nways, kshots) not in sampled_train[sequence].keys():
+                sampled_train[sequence][(nways, kshots)] = 1
+            else:
+                sampled_train[sequence][(nways, kshots)] += 1
             evaluation_error, evaluation_accuracy = fast_adapt(batch,
                                                                learner,
                                                                adaptation_steps,
@@ -509,7 +717,8 @@ def my_main(_config, reid, _run):
                                                                iteration,
                                                                sequence,
                                                                task,
-                                                               taskID)
+                                                               taskID,
+                                                               reid)
             evaluation_error.backward()  # compute gradients, populate grad buffers of maml
             meta_train_error += evaluation_error.item()
             meta_train_accuracy += evaluation_accuracy.item()
@@ -530,31 +739,50 @@ def my_main(_config, reid, _run):
             print('Mean Meta Train Accuracy', acc_meta_train.avg)
             print('Mean Meta Val Error', losses_meta_val.avg)
             print('Mean Meta Val Accuracy', acc_meta_val.avg)
+
+            if reid['ML']['learn_LR']:
+                for p in model.lrs:
+                    print(p)
             # print('safe state dict')
             # model = osp.join(output_dir, 'reID_Network.pth')
             # torch.save(maml.state_dict(), model)
+            # print('sampled tasks from train {}'.format(sampled_train))
+            # print('sampled tasks from val {}'.format(sampled_val))
 
-        if iteration%100==0:
+        if iteration%safe_every==0 and iteration>0:
             model_s = '{}_reID_Network.pth'.format(iteration)
-            print('safe state dict {}'.format(model_s))
-            model = osp.join(output_dir, model_s)
-            torch.save(maml.state_dict(), model)
+            #print('safe state dict {}'.format(model_s))
+            model_name = osp.join(output_dir, model_s)
+            #torch.save(model.state_dict(), model_name)
+
+            save_checkpoint({
+                'epoch': iteration + 1,
+                'state_dict': model.state_dict(),
+                'best_acc': (acc_meta_train.avg, acc_meta_val.avg),
+                'optimizer': opt.state_dict(),
+            }, is_best=False, filename=model_name)
 
 
 
-        if reid['solver']["plot_training_curves"]:
-            plotter.plot(epoch=iteration, loss=meta_train_error/meta_batch_size, acc=meta_train_accuracy/meta_batch_size, split_name='train_task_val_set')
+        if reid['solver']["plot_training_curves"] and iteration%100==0:
+            if reid['ML']['learn_LR']:
+                plotter.plot(epoch=iteration, loss=meta_train_error/meta_batch_size,
+                             acc=meta_train_accuracy/meta_batch_size, split_name='train_task_val_set', LR=model.lrs[0])
+            else:
+                plotter.plot(epoch=iteration, loss=meta_train_error / meta_batch_size,
+                             acc=meta_train_accuracy / meta_batch_size, split_name='train_task_val_set')
             plotter.plot(epoch=iteration, loss=losses_meta_train.avg, acc=acc_meta_train.avg, split_name='train_task_val_set MEAN')
             plotter.plot(epoch=iteration, loss=meta_valid_error/meta_batch_size, acc=meta_valid_accuracy/meta_batch_size, split_name='val_task_val_set')
             plotter.plot(epoch=iteration, loss=losses_meta_val.avg, acc=acc_meta_val.avg, split_name='val_task_val_set MEAN')
             #plotter.plot(epoch=iteration, loss=meta_valid_error_before/meta_batch_size, acc=meta_valid_accuracy_before/meta_batch_size, split_name='val_task_val_set_before')
         # Average the accumulated gradients and optimize
-        for p in maml.parameters():
+        for p in model.parameters():
             p.grad.data.mul_(1.0 / meta_batch_size)
-        # for p in meta_sgd.parameters():
-        #     p.grad.data.mul_(1.0 / meta_batch_size)
+
         opt.step()
 
+    print('sampled tasks from train {}'.format(sampled_train))
+    print('sampled tasks from val {}'.format(sampled_val))
     # meta_test_error = 0.0
     # meta_test_accuracy = 0.0
     # for task in range(meta_batch_size):
