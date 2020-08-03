@@ -85,6 +85,11 @@ class Tracker:
             #model.load_state_dict(torch.load(reID_weights))
             if ML:
                 a = torch.load(reID_weights)
+
+                # when changed to checkpoint that safes optimizer, but some older ones are still working without this if
+                if len(a)==4:
+                    a = a['state_dict']
+
                 self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
                 self.bbox_predictor_weights['cls_score.bias'] = a['module.predictor.bias']
                 self.bbox_predictor_weights['cls_score.weight'] = a['module.predictor.weight']
@@ -100,9 +105,13 @@ class Tracker:
                     # fc6, fc6, cls_score
                     self.lrs = []
 
-                    for i in range(6):
-                        l = 'lrs.'+str(i)
-                        self.lrs.append(a[l].item())
+                    if len(a)==7:
+                        self.lrs.append(a['lrs'].item())
+                    else:
+                        # LR per layer
+                        for i in range(6):
+                            l = 'lrs.'+str(i)
+                            self.lrs.append(a[l].item())
             else:
                 self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
                 self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
@@ -1054,17 +1063,25 @@ class Tracker:
                 list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()),
                 lr=float(finetuning_config["learning_rate"]))
             if self.lrs_ml:
-                optimizer = torch.optim.SGD(
-                    [
-                        {"params": self.box_head_classification.fc6.weight, "lr": self.lrs[0]},
-                        {"params": self.box_head_classification.fc6.bias, "lr": self.lrs[1]},
-                        {"params": self.box_head_classification.fc7.weight, "lr": self.lrs[2]},
-                        {"params": self.box_head_classification.fc7.bias, "lr": self.lrs[3]},
-                        {"params": self.box_predictor_classification.cls_score.weight, "lr": self.lrs[4]},
-                        {"params": self.box_predictor_classification.cls_score.bias, "lr": self.lrs[5]},
-                    ],
-                    lr=float(finetuning_config["learning_rate"])
-                )
+                if len(self.lrs)>1:
+                    optimizer = torch.optim.SGD(
+                        [
+                            {"params": self.box_head_classification.fc6.weight, "lr": self.lrs[0]},
+                            {"params": self.box_head_classification.fc6.bias, "lr": self.lrs[1]},
+                            {"params": self.box_head_classification.fc7.weight, "lr": self.lrs[2]},
+                            {"params": self.box_head_classification.fc7.bias, "lr": self.lrs[3]},
+                            {"params": self.box_predictor_classification.cls_score.weight, "lr": self.lrs[4]},
+                            {"params": self.box_predictor_classification.cls_score.bias, "lr": self.lrs[5]},
+                        ],
+                        lr=float(finetuning_config["learning_rate"])
+                    )
+                else:
+                    lr = self.lrs[0]
+                    optimizer = torch.optim.SGD(
+                        list(self.box_predictor_classification.parameters()) + list(
+                            self.box_head_classification.parameters()),
+                        lr=float(lr))
+
         else:
             print('\ninvalid optimizer')
 
