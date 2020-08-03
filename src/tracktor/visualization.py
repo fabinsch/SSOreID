@@ -155,8 +155,15 @@ class VisdomLinePlotter_ML(object):
                                      env=self.env,
                                      title='Accuracy val set',
                                      legend=['train_task_val_set']))
+        self.LR_window = self.viz.line(X=torch.zeros((1,)).cpu(),
+                           Y=torch.zeros((1)).cpu(),
+                           opts=dict(xlabel='Epoch',
+                                     ylabel='LR',
+                                     env=self.env,
+                                     title='Globally learned LR',
+                                     legend=['LR']))
 
-    def plot(self, epoch, loss, acc, split_name, info=None):
+    def plot(self, epoch, loss, acc, split_name, info=None, LR=-100):
         if split_name=='train_task_val_set':
             name = split_name
         elif split_name =='val_task_val_set':
@@ -224,6 +231,15 @@ class VisdomLinePlotter_ML(object):
             win=self.accuracy_window,
             name=name,
             update='append')
+
+        if LR!=-100:
+            self.viz.line(
+                X=torch.ones((1, 1)).cpu() * epoch,
+                Y=torch.Tensor([LR]).unsqueeze(0).cpu(),
+                env=self.env,
+                win=self.LR_window,
+                name='LR',
+                update='append')
 
 def plot_bounding_boxes(im_info, gt_pos, image, proposals, iteration, id, validate=False):
     num_proposals = len(proposals)

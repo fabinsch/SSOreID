@@ -102,8 +102,8 @@ class InactiveDataset(torch.utils.data.Dataset):
                 diff = occ - len(i)
                 for j in range(diff):
                     i.append(random.choice(i))
-                if self.im_index==207:
-                    print("DEBUG balanced: {}".format(i))
+                # if self.im_index==207:
+                #     print("DEBUG balanced: {}".format(i))
                 return i
             else:
                 return []
