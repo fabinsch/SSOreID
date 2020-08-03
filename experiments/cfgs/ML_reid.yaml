@@ -2,7 +2,7 @@ tracktor:
   # fpn
   obj_detect_model: output/faster_rcnn_fpn_training_mot_17/model_epoch_27.model
 reid:
-  name: test
+  name: test_load
   module_name: ml_classification
   desription:
   seed: 12345
@@ -21,7 +21,9 @@ reid:
   ML:
     #nways: [2,3,4,5,6,7,8,9,10,15,20]
     range: False
+    #nways: 20
     nways: 5
+    #kshots: 40
     kshots: 3
     num_tasks: 1
     num_tasks_val: 1
@@ -31,16 +33,20 @@ reid:
     sample_from_all: False
     db: 'db_train_2'
     flip_p: 0.5
+    maml: False
+    learn_LR: True
 
   solver:
     optim: Adam
     optim_args:
       lr: 0.0003
       weight_decay: 0.0000
-    iterations: 100000
+    iterations: 50000
     plot_training_curves: True
     plot_inner_loop: False
     plot_offline: False
+    continue_training: True
+    checkpoint: output/tracktor/ml_classification/test_load/0_reID_Network.pth
 
 
   dataloader:

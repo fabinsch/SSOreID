@@ -1,15 +1,16 @@
 tracktor:
   'dataset': mot17_02_FRCNN17
-  'write_images': True
-  'reid_ML': False
+  'write_images': False
+  'reid_ML': True
+  'LR_ML': False
   #'reid_weights': output/tracktor/ml_classification/2_fulldb_500_02val/12300_reID_Network.pth
-  'reid_weights': output/tracktor/ml_classification/2_fulldb_500_02val/12300_reID_Network.pth
+  'reid_weights': output/tracktor/ml_classification/2_fulldb_500_02val/24900_reID_Network.pth
   'tracker':
     'inactive_patience': 50
     'reid_iou_threshold': 0.2
     'finetuning':
       'epochs': 50
-      'epochs_wo_val': 50
+      'epochs_wo_val': 10
       'learning_rate': 1e-3
       'validate': False
       'others_class': True
@@ -19,5 +20,5 @@ tracktor:
       'early_stopping_method': 2
       'early_stopping_patience': 30
       'flip_p': 0.0
-      'plot_offline': True
+      'plot_offline': False
   'output_subdir': '109'

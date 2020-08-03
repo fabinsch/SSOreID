@@ -19,7 +19,8 @@ tracktor:
   # obj_detect_config: output/fpn/res101/mot19_cvpr_train/v1/config.yaml
 
   #reid_weights: output/tracktor/reid/res50-mot17-batch_hard/ResNet_iter_25245.pth
-  reid_ML: True
+  reid_ML: False
+  LR_ML: False
   reid_weights: output/tracktor/ml_classification/2_fulldb/reID_Network.pth
   reid_config: output/tracktor/reid/res50-mot17-batch_hard/sacred_config.yaml
 
@@ -41,7 +42,7 @@ tracktor:
     regression_nms_thresh: 0.6
     # motion model settings
     motion_model:
-      enabled: True
+      enabled: False
       # average velocity over last n_steps steps
       n_steps: 5
       # if true, only model the movement of the bounding box center. If false, width and height are also modeled.

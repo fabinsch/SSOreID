@@ -58,7 +58,7 @@ class Tracker:
     # only track pedestrian
     cl = 1
 
-    def __init__(self, obj_detect, reid_network, tracker_cfg, seq, reID_weights, ML=False):
+    def __init__(self, obj_detect, reid_network, tracker_cfg, seq, reID_weights, ML=False, LR=False):
         self.obj_detect = obj_detect
         self.reid_network = reid_network
         self.detection_person_thresh = tracker_cfg['detection_person_thresh']
@@ -77,6 +77,7 @@ class Tracker:
         self.number_of_iterations = tracker_cfg['number_of_iterations']
         self.termination_eps = tracker_cfg['termination_eps']
         self.finetuning_config = tracker_cfg['finetuning']
+        self.lrs_ml = LR
         if self.finetuning_config["for_tracking"] or self.finetuning_config["for_reid"]:
             # model = reID_Model(head=obj_detect.roi_heads.box_head,
             #                    predictor=obj_detect.roi_heads.box_predictor,
@@ -93,6 +94,15 @@ class Tracker:
                 self.bbox_head_weights['fc6.weight'] = a['module.head.fc6.weight']
                 self.bbox_head_weights['fc7.bias'] = a['module.head.fc7.bias']
                 self.bbox_head_weights['fc7.weight'] = a['module.head.fc7.weight']
+
+                if LR:
+                    # weight, bias, weight, bias, weight, bias
+                    # fc6, fc6, cls_score
+                    self.lrs = []
+
+                    for i in range(6):
+                        l = 'lrs.'+str(i)
+                        self.lrs.append(a[l].item())
             else:
                 self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
                 self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
@@ -250,7 +260,34 @@ class Tracker:
             box_predictor = FastRCNNPredictor(1024, n + 1).to(device)
         else:
             box_predictor = FastRCNNPredictor(1024, n).to(device)
+
         #box_predictor.load_state_dict(self.bbox_predictor_weights)
+        with torch.no_grad():
+            a = self.bbox_predictor_weights['cls_score.weight']
+            bias = self.bbox_predictor_weights['cls_score.bias']
+            if n == 1:
+
+                box_predictor.cls_score.weight = nn.Parameter(a)
+                box_predictor.cls_score.bias = nn.Parameter(bias)
+            elif n%2==0:
+                times = int(n/2)
+                b = a[0,:]
+                a = torch.repeat_interleave(a, times, dim=0)
+                a = torch.cat((a, b.unsqueeze(0)))
+                box_predictor.cls_score.weight = nn.Parameter(a)
+
+                c = bias[0]
+                bias = torch.repeat_interleave(bias, times)
+                bias = torch.cat((bias, c.unsqueeze(0)))
+                box_predictor.cls_score.bias = nn.Parameter(bias)
+            else:
+                times = int(n / 2)
+                a = torch.repeat_interleave(a, times+1, dim=0)
+                box_predictor.cls_score.weight = nn.Parameter(a)
+
+                bias = torch.repeat_interleave(bias, times+1)
+                box_predictor.cls_score.bias = nn.Parameter(bias)
+
         return box_predictor
 
     def get_box_predictor(self):
@@ -747,7 +784,8 @@ class Tracker:
                                              box_predictor_copy_for_classifier,
                                              early_stopping=self.finetuning_config[
                                                  'early_stopping_classifier'],
-                                             killed_this_step=self.killed_this_step)
+                                             killed_this_step=self.killed_this_step,
+                                             LR=self.lrs_ml)
 
         #####################
         # Create new tracks #
@@ -970,7 +1008,7 @@ class Tracker:
 
 
     def finetune_classification(self, finetuning_config, box_head_classification,
-                                box_predictor_classification, early_stopping, killed_this_step):
+                                box_predictor_classification, early_stopping, killed_this_step, LR):
 
         # do not train when no tracks
         if len(self.inactive_tracks) == 0:
@@ -1015,6 +1053,18 @@ class Tracker:
             optimizer = torch.optim.SGD(
                 list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters()),
                 lr=float(finetuning_config["learning_rate"]))
+            if self.lrs_ml:
+                optimizer = torch.optim.SGD(
+                    [
+                        {"params": self.box_head_classification.fc6.weight, "lr": self.lrs[0]},
+                        {"params": self.box_head_classification.fc6.bias, "lr": self.lrs[1]},
+                        {"params": self.box_head_classification.fc7.weight, "lr": self.lrs[2]},
+                        {"params": self.box_head_classification.fc7.bias, "lr": self.lrs[3]},
+                        {"params": self.box_predictor_classification.cls_score.weight, "lr": self.lrs[4]},
+                        {"params": self.box_predictor_classification.cls_score.bias, "lr": self.lrs[5]},
+                    ],
+                    lr=float(finetuning_config["learning_rate"])
+                )
         else:
             print('\ninvalid optimizer')
 
@@ -1109,7 +1159,7 @@ class Tracker:
             correct = 0
             for i_sample, sample_batch in enumerate(dataloader_train):
                 optimizer.zero_grad()
-                if self.im_index>=0:
+                if self.im_index>=5000000:
                     loss = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                                      sample_batch['scores'], eval=False,
                                                                      ep=i, fId=sample_batch['frame_id'])
