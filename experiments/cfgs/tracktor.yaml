@@ -42,7 +42,7 @@ tracktor:
     regression_nms_thresh: 0.6
     # motion model settings
     motion_model:
-      enabled: False
+      enabled: True
       # average velocity over last n_steps steps
       n_steps: 5
       # if true, only model the movement of the bounding box center. If false, width and height are also modeled.

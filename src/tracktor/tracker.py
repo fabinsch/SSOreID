@@ -78,6 +78,8 @@ class Tracker:
         self.termination_eps = tracker_cfg['termination_eps']
         self.finetuning_config = tracker_cfg['finetuning']
         self.lrs_ml = LR
+        self.init_last_same = self.finetuning_config["init_last_same"]
+        self.init_last = self.finetuning_config["init_last"]
         if self.finetuning_config["for_tracking"] or self.finetuning_config["for_reid"]:
             # model = reID_Model(head=obj_detect.roi_heads.box_head,
             #                    predictor=obj_detect.roi_heads.box_predictor,
@@ -88,6 +90,7 @@ class Tracker:
 
                 # when changed to checkpoint that safes optimizer, but some older ones are still working without this if
                 if len(a)==4:
+                    print('loaded init after {} epochs'.format(a['epoch']))
                     a = a['state_dict']
 
                 self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
@@ -100,6 +103,10 @@ class Tracker:
                 self.bbox_head_weights['fc7.bias'] = a['module.head.fc7.bias']
                 self.bbox_head_weights['fc7.weight'] = a['module.head.fc7.weight']
 
+                if len(self.bbox_predictor_weights['cls_score.bias'])>1 and self.init_last_same==True:
+                    self.bbox_predictor_weights['cls_score.bias'] = self.bbox_predictor_weights['cls_score.bias'][0]
+                    self.bbox_predictor_weights['cls_score.weight'] = self.bbox_predictor_weights['cls_score.weight'][0,:].unsqueeze(0)
+
                 if LR:
                     # weight, bias, weight, bias, weight, bias
                     # fc6, fc6, cls_score
@@ -107,11 +114,13 @@ class Tracker:
 
                     if len(a)==7:
                         self.lrs.append(a['lrs'].item())
+                        print('LR is {}'.format(a['lrs'].item()))
                     else:
                         # LR per layer
                         for i in range(6):
                             l = 'lrs.'+str(i)
                             self.lrs.append(a[l].item())
+                            print('LR is {}'.format(a[l].item()))
             else:
                 self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
                 self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
@@ -265,37 +274,43 @@ class Tracker:
 
     def get_box_predictor_(self, n=2):
         if self.finetuning_config['others_class']:
-            # Get a box predictor with number of output neurons corresponding to number of inactive tracks + 1 for others
-            box_predictor = FastRCNNPredictor(1024, n + 1).to(device)
-        else:
-            box_predictor = FastRCNNPredictor(1024, n).to(device)
+            n = n + 1  # Get a box predictor with number of output neurons corresponding to number of inactive tracks + 1 for others
 
-        #box_predictor.load_state_dict(self.bbox_predictor_weights)
-        with torch.no_grad():
-            a = self.bbox_predictor_weights['cls_score.weight']
-            bias = self.bbox_predictor_weights['cls_score.bias']
-            if n == 1:
+        box_predictor = FastRCNNPredictor(1024, n).to(device)
 
-                box_predictor.cls_score.weight = nn.Parameter(a)
-                box_predictor.cls_score.bias = nn.Parameter(bias)
-            elif n%2==0:
-                times = int(n/2)
-                b = a[0,:]
-                a = torch.repeat_interleave(a, times, dim=0)
-                a = torch.cat((a, b.unsqueeze(0)))
-                box_predictor.cls_score.weight = nn.Parameter(a)
+        if self.init_last:
+            if self.init_last_same:
+                with torch.no_grad():
+                    repeated_bias = self.bbox_predictor_weights['cls_score.bias'].clone().repeat(n)
+                    repeated_weight = self.bbox_predictor_weights['cls_score.weight'].clone().repeat(n,1)
 
-                c = bias[0]
-                bias = torch.repeat_interleave(bias, times)
-                bias = torch.cat((bias, c.unsqueeze(0)))
-                box_predictor.cls_score.bias = nn.Parameter(bias)
+                    box_predictor.cls_score.bias.data = repeated_bias
+                    box_predictor.cls_score.weight.data = repeated_weight
+
             else:
-                times = int(n / 2)
-                a = torch.repeat_interleave(a, times+1, dim=0)
-                box_predictor.cls_score.weight = nn.Parameter(a)
+                #box_predictor.load_state_dict(self.bbox_predictor_weights)
+                with torch.no_grad():
+                    a = self.bbox_predictor_weights['cls_score.weight']
+                    bias = self.bbox_predictor_weights['cls_score.bias']
+                    if n == 2:
+                        box_predictor.cls_score.weight = nn.Parameter(a)
+                        box_predictor.cls_score.bias = nn.Parameter(bias)
+                    elif n%2==0:
+                        times = int(n/2)
+                        a = torch.repeat_interleave(a, times, dim=0)
+                        box_predictor.cls_score.weight = nn.Parameter(a)
 
-                bias = torch.repeat_interleave(bias, times+1)
-                box_predictor.cls_score.bias = nn.Parameter(bias)
+                        bias = torch.repeat_interleave(bias, times)
+                        box_predictor.cls_score.bias = nn.Parameter(bias)
+                    else:
+                        times = int(n / 2)
+                        a = torch.repeat_interleave(a, times, dim=0)
+                        a = torch.cat((a, a[0,:].unsqueeze(0)))
+                        box_predictor.cls_score.weight = nn.Parameter(a)
+
+                        bias = torch.repeat_interleave(bias, times)
+                        bias = torch.cat((bias, bias[0].unsqueeze(0)))
+                        box_predictor.cls_score.bias = nn.Parameter(bias)
 
         return box_predictor
 

@@ -3,8 +3,8 @@ tracktor:
   'write_images': False
   'reid_ML': True
   'LR_ML': False
-  #'reid_weights': output/tracktor/ml_classification/2_fulldb_500_02val/12300_reID_Network.pth
-  'reid_weights': output/tracktor/ml_classification/2_fulldb_500_02val/24900_reID_Network.pth
+  #'reid_weights': output/tracktor/ml_classification/_range02val/75000_reID_Network.pth
+  'reid_weights': output/tracktor/ml_classification/+C02_MAML_flip/best_reID_Network.pth
   'tracker':
     'inactive_patience': 50
     'reid_iou_threshold': 0.2
@@ -19,6 +19,8 @@ tracktor:
       # method 1 means early stopping with patience and delta, 2 is pick best according to val loss, 3 acc to val accuracy, 4 just others val loss
       'early_stopping_method': 2
       'early_stopping_patience': 30
-      'flip_p': 0.0
+      'flip_p': 0.5
       'plot_offline': False
+      'init_last': True
+      'init_last_same': True
   'output_subdir': '109'
