@@ -35,11 +35,11 @@ ex = Experiment()
 ex.add_config('experiments/cfgs/ML_reid.yaml')
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+
+def save_checkpoint(state, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
-    print('safe checkpoint {}'.format(filename))
-    if is_best:
-        shutil.copyfile(filename, 'model_best.pth.tar')
+    #print('[{}] safe checkpoint {}'.format(state['epoch'], filename))
+
 
 def meta_sgd_update(model, lrs=None, grads=None):
     """
@@ -63,6 +63,7 @@ def meta_sgd_update(model, lrs=None, grads=None):
     meta_sgd_update(model, lrs=lrs, grads)
     ~~~
     """
+    #diff_params = [p for p in model.parameters() if p.requires_grad]
     if grads is not None and lrs is not None:
         lr = lrs
         for p, g in zip(model.parameters(), grads):
@@ -84,10 +85,58 @@ def meta_sgd_update(model, lrs=None, grads=None):
     # Then, recurse for each submodule
     for module_key in model._modules:
         model._modules[module_key] = meta_sgd_update(model._modules[module_key])
+    #model._apply(lambda x: x)
     return model
 
-class MetaSGD_(l2l.algorithms.MetaSGD):
-    def __init__(self, model, lr=1.0, first_order=False, lrs=None):
+
+class MAML(l2l.algorithms.MAML):
+    def __init__(self,
+                 model,
+                 lr,
+                 first_order=False,
+                 allow_unused=None,
+                 allow_nograd=False):
+        super(l2l.algorithms.MAML, self).__init__()
+        self.module = model
+        self.lr = lr
+        self.first_order = first_order
+        self.allow_nograd = allow_nograd
+        if allow_unused is None:
+            allow_unused = allow_nograd
+        self.allow_unused = allow_unused
+
+
+    def clone(self, first_order=None, allow_unused=None, allow_nograd=None):
+        if first_order is None:
+            first_order = self.first_order
+        if allow_unused is None:
+            allow_unused = self.allow_unused
+        if allow_nograd is None:
+            allow_nograd = self.allow_nograd
+        return MAML(clone_module(self.module),
+                    lr=self.lr,
+                    first_order=first_order,
+                    allow_unused=allow_unused,
+                    allow_nograd=allow_nograd)
+
+
+    def init_last(self, ways):
+        last_n = 'last_{}'.format(ways-1)
+        repeated_bias = self.predictor.bias.clone().repeat(ways - 1)
+        repeated_weights = self.predictor.weight.clone().repeat(ways - 1, 1)
+        for name, layer in self.module.named_modules():
+            if name == last_n:
+                for param_key in layer._parameters:
+                    p = layer._parameters[param_key]
+                    #p.requires_grad = True
+                    if param_key=='weight':
+                        p.data = repeated_weights
+                    elif param_key=='bias':
+                        p.data = repeated_bias
+
+
+class MetaSGD(l2l.algorithms.MetaSGD):
+    def __init__(self, model, lr=1.0, first_order=False, allow_unused=None, allow_nograd=False, lrs=None):
         super(l2l.algorithms.MetaSGD, self).__init__()
         self.module = model
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -101,18 +150,30 @@ class MetaSGD_(l2l.algorithms.MetaSGD):
             lrs = [torch.nn.Parameter(torch.ones(1).to(device) * lr)]
         self.lrs = lrs[0]
         self.first_order = first_order
+        self.allow_nograd = allow_nograd
+        if allow_unused is None:
+            allow_unused = allow_nograd
+        self.allow_unused = allow_unused
 
-    def clone(self):
+    def clone(self, first_order=None, allow_unused=None, allow_nograd=None):
         """
         **Descritpion**
         Akin to `MAML.clone()` but for MetaSGD: it includes a set of learnable fast-adaptation
         learning rates.
         """
-        return MetaSGD_(clone_module(self.module),
+        if first_order is None:
+            first_order = self.first_order
+        if allow_unused is None:
+            allow_unused = self.allow_unused
+        if allow_nograd is None:
+            allow_nograd = self.allow_nograd
+        return MetaSGD(clone_module(self.module),
                        lrs=clone_parameters(self.lrs),
-                       first_order=self.first_order)
+                       first_order=first_order,
+                       allow_unused=allow_unused,
+                       allow_nograd=allow_nograd)
 
-    def adapt(self, loss, first_order=None):
+    def adapt(self, loss, first_order=None, allow_nograd=False):
         """
         **Descritpion**
         Akin to `MAML.adapt()` but for MetaSGD: it updates the model with the learnable
@@ -120,12 +181,86 @@ class MetaSGD_(l2l.algorithms.MetaSGD):
         """
         if first_order is None:
             first_order = self.first_order
+
         second_order = not first_order
+        diff_params = [p for p in self.module.parameters() if p.requires_grad]
         gradients = grad(loss,
-                         self.module.parameters(),
+                         diff_params,
                          retain_graph=second_order,
-                         create_graph=second_order)
+                         create_graph=second_order,
+                         allow_unused=self.allow_unused)
+        # gradients = []
+        # grad_counter = 0
+        #
+        # # Handles gradients for non-differentiable parameters
+        # for param in self.module.parameters():
+        #     if param.requires_grad:
+        #         gradient = grad_params[grad_counter]
+        #         grad_counter += 1
+        #     else:
+        #         gradient = None
+        #     gradients.append(gradient)
+
         self.module = meta_sgd_update(self.module, self.lrs, gradients)
+
+    def init_last(self, ways):
+        last_n = 'last_{}'.format(ways-1)
+        repeated_bias = self.predictor.bias.clone().repeat(ways - 1)
+        repeated_weights = self.predictor.weight.clone().repeat(ways - 1, 1)
+        for name, layer in self.module.named_modules():
+            if name == last_n:
+                for param_key in layer._parameters:
+                    p = layer._parameters[param_key]
+                    #p.requires_grad = True
+                    if param_key=='weight':
+                        p.data = repeated_weights
+                    elif param_key=='bias':
+                        p.data = repeated_bias
+                # layer.bias.requires_grad = True
+                # layer.weight.requires_grad = True
+                # layer.bias.data = repeated_bias
+                # layer.weight.data = repeated_weights
+                break
+
+    def last_layers_freeze(self):
+        last_layers = ['last_{}'.format(n-1) for n in self.num_output]
+        # for name, layer in self.module.named_modules():
+        #     if name in last_layers:
+        #         for param in layer.parameters():
+        #             param.requires_grad = False
+                #layer.bias.requires_grad = False
+                #layer.weight.requires_grad = False
+
+    # def init_last(self, ways):
+    #     last_n = 'last_{}'.format(ways-1)
+    #     repeated_bias = self.module.predictor.bias.repeat(ways - 1)
+    #     repeated_weights = self.module.predictor.weight.clone().repeat(ways - 1, 1)
+    #     for name, layer in self.module.named_modules():
+    #         if name == last_n:
+    #             layer.bias.data = repeated_bias
+    #             layer.weight.data = repeated_weights
+    #     #self.module.last.bias.data = torch.ones(4).to(device)
+    #     # last = self.additional_layer[ways].to(device)
+    #     # cm = clone_module(self.module)
+    #     # cm.add_module('last', torch.nn.Linear(1024, ways-2).to(device))
+    #     # self.module = cm
+    #     #self.last.weight.requires_grad = False
+    #     #self.last.bias.requires_grad = False
+    #
+    #     # weight = self.predictor.weight
+    #     # weight_repeated = weight.repeat(ways, 1)
+    #     # bias = self.predictor.bias
+    #     # bias_repeated = bias.repeat(ways)
+    #     #
+    #     #repeated_bias = self.predictor.bias.clone().repeat(ways-1)
+    #     #repeated_weights = self.predictor.weight.clone().repeat(ways-1, 1)
+    #     #with torch.no_grad():
+    #     #self.last.weight = torch.nn.Parameter(repeated_weights)
+    #     #self.last.bias = torch.nn.Parameter(repeated_bias)
+    #
+    #     #self.last.weight.data.fill_(self.predictor.weight.repeat(ways-1, 1))
+    #     #self.last.bias.data.fill_(self.predictor.bias.repeat(ways-1))
+    #     return self
 
 class ML_dataset(Dataset):
     def __init__(self, data, flip_p):
@@ -158,29 +293,70 @@ class ML_dataset(Dataset):
 
 
 class reID_Model(torch.nn.Module):
-    def __init__(self, head, predictor, n):
+    def __init__(self, head, predictor, n_list):
         super(reID_Model, self).__init__()
         self.head = head
         self.predictor = predictor.cls_score
-        self.num_output = n
-        self.additional_layer = {}
-        if len(n)>0:
-            for i in n:
-                if i>2:
-                    self.additional_layer[i] = torch.nn.Linear(1024, i - 2)
-                else:
-                    self.additional_layer[i] = None
-        else:
-            self.additional_layer = None
+        #self.last = torch.nn.Linear(1024, 4).to(device)
+        self.predictor.weight = torch.nn.Parameter(self.predictor.weight[0,:].unsqueeze(0))
+        self.predictor.bias = torch.nn.Parameter(self.predictor.bias[0].unsqueeze(0))
+        for n in n_list:
+            self.add_module('last_{}'.format(n-1), torch.nn.Linear(1024, n-1).to(device))
+        self.num_output = n_list
+        # self.additional_layer = {}
+        # if len(n)>0:
+        #     for i in n:
+        #         if i>2:
+        #             self.additional_layer[i] = torch.nn.Linear(1024, i - 2)
+        #         else:
+        #             self.additional_layer[i] = None
+        # else:
+        #     self.additional_layer = None
 
     def forward(self, x, nways):
         feat = self.head(x)
         x = self.predictor(feat)
-        if self.additional_layer != None and nways>2:
-            self.additional_layer[nways].to(device)
-            add = self.additional_layer[nways](feat)
+        # if self.additional_layer != None and nways>2:
+        #     self.additional_layer[nways].to(device)
+        #     add = self.additional_layer[nways](feat)
+        #     x = torch.cat((x, add), dim=1)
+
+        if nways>1:
+            last_n = 'last_{}'.format(nways - 1)
+            for name, layer in self.named_modules():
+                if name == last_n:
+                    add = layer(feat)
+                    break
             x = torch.cat((x, add), dim=1)
+        # else:
+
         return x
+    # def init_last(self, ways):
+    #     last_n = 'last_{}'.format(ways-1)
+    #     repeated_bias = self.predictor.bias.repeat(ways - 1)
+    #     repeated_weights = self.predictor.weight.clone().repeat(ways - 1, 1)
+    #     for name, layer in self.named_modules():
+    #         if name == last_n:
+    #             layer.bias.requires_grad = True
+    #             layer.weight.requires_grad = True
+    #             layer.bias.data = repeated_bias
+    #             layer.weight.data = repeated_weights
+
+    def last_layers_freeze(self):
+        last_layers = ['last_{}'.format(n-1) for n in self.num_output]
+        for name, layer in self.named_modules():
+            if name in last_layers:
+                layer.bias.requires_grad = False
+                layer.weight.requires_grad = False
+
+def remove_last(state_dict, num_output):
+    r = dict(state_dict)
+    for n in num_output:
+        key_weight = 'module.last_{}.weight'.format(n-1)
+        key_bias = 'module.last_{}.bias'.format(n-1)
+        del r[key_weight]
+        del r[key_bias]
+    return r
 
 
 def forward_pass_for_classifier_training(learner, features, scores, nways, eval=False, return_scores=False):
@@ -220,6 +396,8 @@ class AverageMeter(object):
         self.avg = 0
         self.sum = 0
         self.count = 0
+        self.best = 1000
+        self.best_it = 0
 
     def update(self, val, n=1):
         self.val = val
@@ -227,13 +405,24 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+
+    def update_best(self, val, it):
+        save = 0
+        if val < self.best:
+            self.best = val
+            self.best_it = it
+            save = 1
+        return save
+
+
     def __str__(self):
         fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
         return fmtstr.format(**self.__dict__)
 
 
 def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_task=True,
-               plotter=None, iteration=-1, sequence=None, task=-1, taskID=-1, reid=None):
+               plotter=None, iteration=-1, sequence=None, task=-1, taskID=-1, reid=None,
+               init_last=True):
     flip_p = reid['ML']['flip_p']
     valid_accuracy_before = torch.zeros(1)
     validation_error_before = torch.zeros(1)
@@ -289,21 +478,21 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_tas
     #                                                                          evaluation_labels, ways, return_scores=True)
     #     valid_accuracy_before = accuracy(predictions_before, evaluation_labels)
 
+    # init last layer with the same weights
+    if init_last==True:
+        learner.init_last(ways)
+
     # Adapt the model
     for step in range(adaptation_steps):
         plot_inner=False
-        if (plotter != None) and (iteration%500==0) and task%50==0 and plot_inner==True:
+        if (plotter != None) and (iteration%10==0) and task==0 and plot_inner==True:
             train_predictions, train_error = forward_pass_for_classifier_training(learner, adaptation_data, adaptation_labels, ways, return_scores=True)
             train_accuracy = accuracy(train_predictions, adaptation_labels)
             plotter.plot(epoch=step, loss=train_error, acc=train_accuracy, split_name='inner', info=info)
         else:
             train_error = forward_pass_for_classifier_training(learner, adaptation_data, adaptation_labels, ways)
         #train_error /= len(adaptation_data)
-        if reid['ML']['maml']:
-            learner.adapt(train_error)  # Takes a gradient step on the loss and updates the cloned parameters in place
-        if reid['ML']['learn_LR']:
-            learner.adapt(train_error, first_order=True)  # for meta sgd specify first order here
-
+        learner.adapt(train_error)  # Takes a gradient step on the loss and updates the cloned parameters in place
 
     # Evaluate the adapted model
     predictions, validation_error = forward_pass_for_classifier_training(learner, evaluation_data, evaluation_labels, ways, return_scores=True)
@@ -317,12 +506,15 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_tas
 
 def statistics(dataset):
     unique_id, counter = np.unique(dataset[0].numpy(), return_counts=True)
-    num = len(unique_id)
+    num_id = len(unique_id)
+    num_bb = sum(counter)
     samples_per_id, counter_samples = np.unique(counter, return_counts=True)
-    print('in total {} unique IDs, print until 80 samples per ID'.format(num))
-    for i in range(len(counter_samples)):
-        if samples_per_id[i]<80:
-            print('{} samples per ID: {} times'.format(samples_per_id[i], counter_samples[i]))
+    print('in total {} unique IDs, and {} BBs in total, av. {} BB/ID  '.format(num_id, num_bb, (num_bb/num_id)))
+    #print('in total {} unique IDs, print until 80 samples per ID'.format(num_id))
+    # for i in range(len(counter_samples)):
+    #     if samples_per_id[i]<80:
+    #         print('{} samples per ID: {} times'.format(samples_per_id[i], counter_samples[i]))
+    return num_id, num_bb
 
 # 1. version
 # def sample_task(tasksets, i_to_dataset, sample, val=False):
@@ -422,6 +614,7 @@ def sample_task(sets, nways, kshots, i_to_dataset, sample, val=False, num_tasks=
 
         # i = random.choice(range(len(tasksets)))
         # batch = tasksets[i].sample()
+
     try:
         batch = taskset.sample()
         return batch, n, k, seq, i
@@ -477,20 +670,27 @@ def my_main(_config, reid, _run):
             print('Train with {} and use {} as validation set'.format(datasets, reid['dataloader']['validation_sequence']))
 
             data = {}
+            bb_total = 0
+            ids_total = 0
             for set in datasets:
                 seq = hf.get(set)
                 d, l = seq.items()
                 data[set] = ((torch.tensor(l[1]), torch.tensor(d[1])))
                 print('loaded {}'.format(set))
-                #statistics(data[set])
+                ids, bb = statistics(data[set])
+                ids_total += ids
+                bb_total += bb
                 # for i in data[set][0]:
                 #     print(i)
+            print(
+                'OVERALL: {} unique IDs, and {} BBs in total, av. {} BB/ID  '.format(ids_total, bb_total, (bb_total / ids_total)))
 
-            validation_data = hf.get(reid['dataloader']['validation_sequence'])
-            d, l = validation_data.items()
-            validation_data = ((torch.tensor(l[1]), torch.tensor(d[1])))
-            print('loaded validation {}'.format(reid['dataloader']['validation_sequence']))
-            #statistics(validation_data)
+            if reid['dataloader']['validation_sequence'] != 'None':
+                validation_data = hf.get(reid['dataloader']['validation_sequence'])
+                d, l = validation_data.items()
+                validation_data = ((torch.tensor(l[1]), torch.tensor(d[1])))
+                print('loaded validation {}'.format(reid['dataloader']['validation_sequence']))
+                #statistics(validation_data)
             print("--- %s seconds --- for loading hdf5 database" % (time.time() - start_time_load))
 
     start_time_tasks = time.time()
@@ -511,10 +711,11 @@ def my_main(_config, reid, _run):
     adaptation_steps = reid['ML']['adaptation_steps']
     meta_batch_size = reid['ML']['meta_batch_size']
 
-
-    validation_set = ML_dataset(validation_data, reid['ML']['flip_p'])
-    validation_set = [l2l.data.MetaDataset(validation_set)]
-
+    if reid['dataloader']['validation_sequence'] != 'None':
+        validation_set = ML_dataset(validation_data, reid['ML']['flip_p'])
+        validation_set = [l2l.data.MetaDataset(validation_set)]
+    else:
+        validation_set = []
 
     # val_transform = []
     # for i in nways_list:
@@ -571,7 +772,7 @@ def my_main(_config, reid, _run):
     # Clean #
     ##########################
     del data
-    del validation_data
+    #del validation_data
     #del meta_datasets
     #del validation_set
     del sequences
@@ -587,22 +788,34 @@ def my_main(_config, reid, _run):
     box_head_classification = obj_detect.roi_heads.box_head
     box_predictor_classification = obj_detect.roi_heads.box_predictor
 
-    reID_network = reID_Model(box_head_classification, box_predictor_classification, n=nways_list)
+    reID_network = reID_Model(box_head_classification, box_predictor_classification, n_list=nways_list)
     reID_network.train()
     reID_network.cuda()
+    #reID_network.last_layers_freeze()
 
-    for n in nways_list:
-        if n>2:
-            for p in reID_network.additional_layer[n].parameters():
-                p.requires_grad = False
-
+    # for n in nways_list:
+    #     if n>2:
+    #         for p in reID_network.additional_layer[n].parameters():
+    #             p.requires_grad = False
+    lr = float(reid['solver']['LR_init'])
     if reid['ML']['maml']:
-        model = l2l.algorithms.MAML(reID_network, lr=1e-3, first_order=True, allow_nograd=True)
-        opt = torch.optim.Adam(model.parameters(), lr=1e-4)
+        model = MAML(reID_network, lr=1e-3, first_order=True, allow_nograd=True)
+        #opt = torch.optim.Adam(model.parameters(), lr=1e-4)
+        opt = torch.optim.Adam([
+            {'params':model.module.head.parameters()},
+            {'params':model.module.predictor.parameters()}
+        ], lr=lr)
     if reid['ML']['learn_LR']:
-        model = MetaSGD_(reID_network, lr=1e-3)
-        opt = torch.optim.Adam(model.parameters(), lr=1e-4)
-    # for p in mode.parameters():
+        model = MetaSGD(reID_network, lr=1e-3, first_order=True, allow_nograd=True)
+        #opt = torch.optim.Adam(model.parameters(), lr=1e-4)
+        lr_lr = float(reid['solver']['LR_LR'])
+        opt = torch.optim.Adam([
+            {'params':model.module.head.parameters()},
+            {'params':model.module.predictor.parameters()},
+            {'params':model.lrs, 'lr': lr_lr}
+        ], lr=lr)
+        #model.last_layers_freeze()
+    # for p in model.parameters():
     #     a = p.numel
 
 
@@ -646,7 +859,8 @@ def my_main(_config, reid, _run):
 
     # safe model 10 times
     safe_every = int(_config['reid']['solver']['iterations'] / 10)
-    for iteration in range(_config['reid']['solver']['iterations']):
+    init_last = reid['ML']['init_last']
+    for iteration in range(1,_config['reid']['solver']['iterations']+1):
         opt.zero_grad()
         meta_train_error = 0.0
         meta_train_accuracy = 0.0
@@ -658,47 +872,49 @@ def my_main(_config, reid, _run):
         for task in range(meta_batch_size):
             # Compute meta-validation loss
             # here no backward in outer loop, just inner
-            learner = model.clone()
-            #batch, nways, kshots, _, taskID = sample_task_val(validation_set, nways_list, kshots_list, i_to_dataset, reid['ML']['sample_from_all'], val=True)
-            batch, nways, kshots, _, taskID = sample_task(validation_set, nways_list, kshots_list, i_to_dataset,
-                                                          reid['ML']['sample_from_all'], val=True, num_tasks=num_tasks_val)
-            if (nways, kshots) not in sampled_val.keys():
-                sampled_val[(nways, kshots)] = 1
-            else:
-                sampled_val[(nways, kshots)] += 1
+            if len(validation_set)>0:
+                learner = model.clone()
+                #batch, nways, kshots, _, taskID = sample_task_val(validation_set, nways_list, kshots_list, i_to_dataset, reid['ML']['sample_from_all'], val=True)
+                batch, nways, kshots, _, taskID = sample_task(validation_set, nways_list, kshots_list, i_to_dataset,
+                                                              reid['ML']['sample_from_all'], val=True, num_tasks=num_tasks_val)
+                if (nways, kshots) not in sampled_val.keys():
+                    sampled_val[(nways, kshots)] = 1
+                else:
+                    sampled_val[(nways, kshots)] += 1
 
 
-            evaluation_error, evaluation_accuracy = fast_adapt(batch,
-                                                               learner,
-                                                               adaptation_steps,
-                                                               kshots,
-                                                               nways,
-                                                               device,
-                                                               False,
-                                                               plotter,
-                                                               iteration,
-                                                               reid['dataloader']['validation_sequence'],
-                                                               task,
-                                                               taskID,
-                                                               reid)
+                evaluation_error, evaluation_accuracy = fast_adapt(batch,
+                                                                   learner,
+                                                                   adaptation_steps,
+                                                                   kshots,
+                                                                   nways,
+                                                                   device,
+                                                                   False,
+                                                                   plotter,
+                                                                   iteration,
+                                                                   reid['dataloader']['validation_sequence'],
+                                                                   task,
+                                                                   taskID,
+                                                                   reid,
+                                                                   init_last)
 
-            evaluation_error, evaluation_error_before = evaluation_error
-            evaluation_accuracy, evaluation_accuracy_before = evaluation_accuracy
-            meta_valid_error_before += evaluation_error_before.item()
-            meta_valid_accuracy_before += evaluation_accuracy_before.item()
+                evaluation_error, evaluation_error_before = evaluation_error
+                evaluation_accuracy, evaluation_accuracy_before = evaluation_accuracy
+                meta_valid_error_before += evaluation_error_before.item()
+                meta_valid_accuracy_before += evaluation_accuracy_before.item()
 
-            meta_valid_error += evaluation_error.item()
-            meta_valid_accuracy += evaluation_accuracy.item()
+                meta_valid_error += evaluation_error.item()
+                meta_valid_accuracy += evaluation_accuracy.item()
 
-            losses_meta_val.update(evaluation_error.item())
-            acc_meta_val.update(evaluation_accuracy.item())
+                losses_meta_val.update(evaluation_error.item())
+                acc_meta_val.update(evaluation_accuracy.item())
 
 
             # Compute meta-training loss
             learner = model.clone()  #back-propagating losses on the cloned module will populate the buffers of the original module
 
             batch, nways, kshots, sequence, taskID = sample_task(meta_datasets, nways_list, kshots_list, i_to_dataset,
-                                                                 reid['ML']['sample_from_all'], num_tasks=num_tasks_val)
+                                                                 reid['ML']['sample_from_all'], num_tasks=num_tasks)
             if sequence not in sampled_train.keys():
                 sampled_train[sequence] = {}
 
@@ -718,13 +934,20 @@ def my_main(_config, reid, _run):
                                                                sequence,
                                                                task,
                                                                taskID,
-                                                               reid)
+                                                               reid,
+                                                               init_last)
             evaluation_error.backward()  # compute gradients, populate grad buffers of maml
             meta_train_error += evaluation_error.item()
             meta_train_accuracy += evaluation_accuracy.item()
 
             losses_meta_train.update(evaluation_error.item())
             acc_meta_train.update(evaluation_accuracy.item())
+
+        # update the best value for loss
+        if len(validation_set)>0:
+            safe_best_loss = losses_meta_val.update_best(losses_meta_val.avg , iteration)
+        else:
+            safe_best_loss = losses_meta_val.update_best(losses_meta_train.avg, iteration)
 
         if iteration%100==0:
             # Print some metrics
@@ -742,29 +965,34 @@ def my_main(_config, reid, _run):
 
             if reid['ML']['learn_LR']:
                 for p in model.lrs:
-                    print(p)
+                    print('LR: {}'.format(p.item()))
             # print('safe state dict')
             # model = osp.join(output_dir, 'reID_Network.pth')
             # torch.save(maml.state_dict(), model)
             # print('sampled tasks from train {}'.format(sampled_train))
             # print('sampled tasks from val {}'.format(sampled_val))
 
-        if iteration%safe_every==0 and iteration>0:
+        if iteration%safe_every==0 or safe_best_loss==1:
             model_s = '{}_reID_Network.pth'.format(iteration)
+            if safe_best_loss:
+                model_s = 'best_reID_Network.pth'
+                # if reid['ML']['learn_LR']:
+                #     for p in model.lrs:
+                #         print('LR: {}'.format(p.item()))
+
             #print('safe state dict {}'.format(model_s))
             model_name = osp.join(output_dir, model_s)
             #torch.save(model.state_dict(), model_name)
 
+            state_dict_to_safe = remove_last(model.state_dict(), model.module.num_output)
             save_checkpoint({
-                'epoch': iteration + 1,
-                'state_dict': model.state_dict(),
+                'epoch': iteration,
+                'state_dict': state_dict_to_safe,
                 'best_acc': (acc_meta_train.avg, acc_meta_val.avg),
                 'optimizer': opt.state_dict(),
-            }, is_best=False, filename=model_name)
+            }, filename=model_name)
 
-
-
-        if reid['solver']["plot_training_curves"] and iteration%100==0:
+        if reid['solver']["plot_training_curves"] and (iteration%100==0 or iteration==1):
             if reid['ML']['learn_LR']:
                 plotter.plot(epoch=iteration, loss=meta_train_error/meta_batch_size,
                              acc=meta_train_accuracy/meta_batch_size, split_name='train_task_val_set', LR=model.lrs[0])
@@ -776,30 +1004,12 @@ def my_main(_config, reid, _run):
             plotter.plot(epoch=iteration, loss=losses_meta_val.avg, acc=acc_meta_val.avg, split_name='val_task_val_set MEAN')
             #plotter.plot(epoch=iteration, loss=meta_valid_error_before/meta_batch_size, acc=meta_valid_accuracy_before/meta_batch_size, split_name='val_task_val_set_before')
         # Average the accumulated gradients and optimize
-        for p in model.parameters():
-            p.grad.data.mul_(1.0 / meta_batch_size)
+        diff_params = [p for p in model.parameters() if p.requires_grad]
+        for p in diff_params:
+            if p.grad is not None:
+                p.grad.data.mul_(1.0 / meta_batch_size)
 
         opt.step()
 
     print('sampled tasks from train {}'.format(sampled_train))
     print('sampled tasks from val {}'.format(sampled_val))
-    # meta_test_error = 0.0
-    # meta_test_accuracy = 0.0
-    # for task in range(meta_batch_size):
-    #     # Compute meta-testing loss
-    #     learner = maml.clone()
-    #     batch = tasksets.test.sample()
-    #     evaluation_error, evaluation_accuracy = fast_adapt(batch,
-    #                                                        learner,
-    #                                                        loss,
-    #                                                        adaptation_steps,
-    #                                                        shots,
-    #                                                        ways,
-    #                                                        device)
-    #     meta_test_error += evaluation_error.item()
-    #     meta_test_accuracy += evaluation_accuracy.item()
-    # print('Meta Test Error', meta_test_error / meta_batch_size)
-    # print('Meta Test Accuracy', meta_test_accuracy / meta_batch_size)
-
-    #
-    #
