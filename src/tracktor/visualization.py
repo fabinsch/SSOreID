@@ -164,6 +164,7 @@ class VisdomLinePlotter_ML(object):
                                      legend=['LR']))
 
     def plot(self, epoch, loss, acc, split_name, info=None, LR=-100):
+        epoch -= 1
         if split_name=='train_task_val_set':
             name = split_name
         elif split_name =='val_task_val_set':
