@@ -42,6 +42,7 @@ class MOT_ML(MOT17_Sequence):
 		self.obj_detect.load_state_dict(torch.load('output/faster_rcnn_fpn_training_mot_17/model_epoch_27.model',
 											  map_location=lambda storage, loc: storage))
 		self.obj_detect.eval()
+		self.name = seq_name
 
 		if transform == "random":
 			self.transform = Compose([RandomCrop((crop_H, crop_W)), RandomHorizontalFlip(), ToTensor(), Normalize(normalize_mean, normalize_std)])
@@ -107,8 +108,8 @@ class MOT_ML(MOT17_Sequence):
 				tracks[k] = [{'id':k, 'im_path':im_path, 'gt':v, 'feat': roi_pool_per_track[i].cpu()}]
 
 			## for debug just to the first N pictures
-			if j > 50:
-				break
+			# if j > 10:
+			# 	break
 
 		# sample max_per_person images and filter out tracks smaller than 4 samples
 		#outdir = get_output_dir("siamese_test")
