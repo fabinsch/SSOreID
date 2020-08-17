@@ -597,8 +597,21 @@ def sample_task_val(sets, nways, kshots, i_to_dataset, sample, val=False):
     except ValueError:
         return sample_task(sets, nways, kshots, i_to_dataset, sample, val)
 
-def sample_task(sets, nways, kshots, i_to_dataset, sample, val=False, num_tasks=-1):
-    i = random.choice(range(len(sets)))  # sample sequence
+def sample_task(sets, nways, kshots, i_to_dataset, sample, val=False, num_tasks=-1, sample_uniform_DB=False):
+    if sample_uniform_DB:
+        if len(sets)>1:
+            j = random.choice(range(3))  # sample which dataset
+            if j == 0:
+                i = random.choice(range(6))  # which of the MOT sequence
+            elif j == 1:
+                i = 6
+            elif j == 2:
+                i = 7
+        else:
+            i = random.choice(range(len(sets)))  # sample sequence
+    else:
+        i = random.choice(range(len(sets)))  # sample sequence
+
     seq = i_to_dataset[i]
     if sample == False and val == False:
         i = 1
@@ -848,6 +861,9 @@ def my_main(_config, reid, _run):
     acc_meta_train = AverageMeter('Acc', ':6.2f')
     acc_meta_val = AverageMeter('Acc', ':6.2f')
 
+    # how to sample, uniform from the 3 db or uniform over sequences
+    sample_db = reid['ML']['db_sample_uniform']
+
     plotter=None
     if reid['solver']["plot_training_curves"]:
         now = datetime.datetime.now()
@@ -914,7 +930,8 @@ def my_main(_config, reid, _run):
             learner = model.clone()  #back-propagating losses on the cloned module will populate the buffers of the original module
 
             batch, nways, kshots, sequence, taskID = sample_task(meta_datasets, nways_list, kshots_list, i_to_dataset,
-                                                                 reid['ML']['sample_from_all'], num_tasks=num_tasks)
+                                                                 reid['ML']['sample_from_all'], num_tasks=num_tasks,
+                                                                 sample_uniform_DB=sample_db)
             if sequence not in sampled_train.keys():
                 sampled_train[sequence] = {}
 
@@ -945,7 +962,7 @@ def my_main(_config, reid, _run):
 
         # update the best value for loss
         if len(validation_set)>0:
-            safe_best_loss = losses_meta_val.update_best(losses_meta_val.avg , iteration)
+            safe_best_loss = losses_meta_val.update_best(losses_meta_val.avg, iteration)
         else:
             safe_best_loss = losses_meta_val.update_best(losses_meta_train.avg, iteration)
 

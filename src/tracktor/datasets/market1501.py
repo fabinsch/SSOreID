@@ -310,7 +310,14 @@ class Market1501_ML(Dataset):
 		img = Image.open(im_path).convert("RGB")
 		transform = ToTensor()
 		org_size = img.size
-		img, delta_w, delta_h = self.padding(img, [1920,1080])
+		img, delta_w, delta_h = self.padding(img, [1400,800])
+
+		# im_name = 'test.jpg'
+		# save_path = os.path.join(self.data_dir, 'test_print')
+		# im_path = os.path.join(save_path, im_name)
+		# if not os.path.isfile(im_path):
+		# 	img = img.save(im_path)
+
 		img = transform(img)
 
 		self.obj_detect.load_image(img.unsqueeze(0))

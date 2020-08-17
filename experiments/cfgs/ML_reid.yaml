@@ -33,6 +33,7 @@ reid:
     sample_from_all: True
     #db: 'db_train_2'
     db: 'db_train_marchumot_ML_2'
+    db_sample_uniform: True
     flip_p: 0.5
     maml: True
     learn_LR: False

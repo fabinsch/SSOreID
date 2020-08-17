@@ -388,7 +388,14 @@ class CUHK03_ML(Dataset):
 		img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 		img = Image.fromarray(img)
 		org_size = img.size
-		img, delta_w, delta_h = self.padding(img, [1920, 1080])
+		img, delta_w, delta_h = self.padding(img, [1400, 800])
+
+		im_name = 'test'
+		save_path = os.path.join(self.data_dir, 'test_print')
+		im_path = os.path.join(save_path, im_name)
+		if not os.path.isfile(im_path):
+			img = img.save(im_path)
+
 		transform = ToTensor()
 		img = transform(img)
 		self.obj_detect.load_image(img.unsqueeze(0))
