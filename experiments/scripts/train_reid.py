@@ -42,8 +42,8 @@ def my_main(_config, reid):
     # Initialize dataloader #
     #########################
     print("[*] Initializing Dataloader")
-
-    db_train = Datasets(reid['db_train'], reid['dataloader'])
+    MOT_val_seq = reid['MOT_val_sequence']
+    db_train = Datasets(reid['db_train'], reid['dataloader'], MOT_val_seq)
     db_train = DataLoader(db_train, batch_size=1, shuffle=True)
 
     if reid['db_val']:

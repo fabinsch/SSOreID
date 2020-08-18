@@ -13,13 +13,13 @@ class MarCUHMOT(Dataset):
 	The other datasets are always fully used.
 	"""
 
-	def __init__(self, split, dataloader):
+	def __init__(self, split, dataloader, MOT_val_seq):
 		print("[*] Loading Market1501")
 		market = Market1501('gt_bbox', **dataloader)
 		print("[*] Loading CUHK03")
 		cuhk = CUHK03('labeled', **dataloader)
 		print("[*] Loading MOT")
-		mot = MOTreIDWrapper(split, dataloader)
+		mot = MOTreIDWrapper(split, dataloader, val_seq=MOT_val_seq)
 
 		self.dataset = ConcatDataset([market, cuhk, mot])
 

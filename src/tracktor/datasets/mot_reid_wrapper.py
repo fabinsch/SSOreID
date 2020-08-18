@@ -11,10 +11,12 @@ class MOTreIDWrapper(Dataset):
 	Dataset.
 	"""
 
-	def __init__(self, split, dataloader):
+	def __init__(self, split, dataloader, val_seq):
 
 		train_folders = ['MOT17-02', 'MOT17-04', 'MOT17-05', 'MOT17-09', 'MOT17-10',
 				         'MOT17-11', 'MOT17-13']
+		train_folders = [s for s in train_folders if s != val_seq]
+		print('Exclude {} as validation sequence'.format(val_seq))
 
 		self._dataloader = MOTreID(None, split=split, **dataloader)
 
