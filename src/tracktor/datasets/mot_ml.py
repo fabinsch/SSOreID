@@ -14,6 +14,8 @@ from tracktor.frcnn_fpn import FRCNN_FPN
 from torchvision.models.detection.transform import resize_boxes
 from tqdm import tqdm
 import copy
+import random, os
+from ..config import cfg
 
 
 class MOT_ML(MOT17_Sequence):
@@ -29,6 +31,7 @@ class MOT_ML(MOT17_Sequence):
 				transform, normalize_mean=None, normalize_std=None, build_dataset=True, validation_sequence='MOT17-02'):
 		super().__init__(seq_name, vis_threshold=vis_threshold)
 
+		self.data_dir = osp.join(cfg.DATA_DIR, 'MOT_Test')
 		self.P = P
 		self.K = K
 		self.max_per_person = max_per_person
@@ -79,6 +82,14 @@ class MOT_ML(MOT17_Sequence):
 
 		for j, sample in enumerate(tqdm(self.data)):
 			img = Image.open(sample['im_path']).convert("RGB")
+
+			# z = random.randint(0,1000)
+			# im_name = '{}_mot.jpg'.format(z)
+			# save_path = os.path.join(self.data_dir, 'test_print')
+			# im_path = os.path.join(save_path, im_name)
+			# if not os.path.isfile(im_path):
+			# 	img.save(im_path)
+
 			transform = ToTensor()
 			img = transform(img)
 			self.obj_detect.load_image(img.unsqueeze(0))

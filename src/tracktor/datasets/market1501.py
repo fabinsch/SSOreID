@@ -16,6 +16,7 @@ from torchvision.models.detection.transform import resize_boxes
 
 from ..config import cfg
 from tqdm import tqdm
+import random
 
 
 class Market1501(Dataset):
@@ -312,11 +313,12 @@ class Market1501_ML(Dataset):
 		org_size = img.size
 		img, delta_w, delta_h = self.padding(img, [1400,800])
 
-		# im_name = 'test.jpg'
+		# z = random.randint(0, 1000)
+		# im_name = '{}_market.jpg'.format(z)
 		# save_path = os.path.join(self.data_dir, 'test_print')
 		# im_path = os.path.join(save_path, im_name)
 		# if not os.path.isfile(im_path):
-		# 	img = img.save(im_path)
+		# 	img.save(im_path)
 
 		img = transform(img)
 

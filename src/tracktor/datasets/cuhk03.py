@@ -16,6 +16,8 @@ from torchvision.models.detection.transform import resize_boxes
 from ..config import cfg
 from tqdm import tqdm
 
+import random
+
 
 class CUHK03(Dataset):
 	"""CUHK03 dataloader.
@@ -390,11 +392,12 @@ class CUHK03_ML(Dataset):
 		org_size = img.size
 		img, delta_w, delta_h = self.padding(img, [1400, 800])
 
-		# im_name = 'test'
+		# z = random.randint(0,1000)
+		# im_name = '{}_cuhk.jpg'.format(z)
 		# save_path = os.path.join(self.data_dir, 'test_print')
 		# im_path = os.path.join(save_path, im_name)
 		# if not os.path.isfile(im_path):
-		# 	img = img.save(im_path)
+		# 	img.save(im_path)
 
 		transform = ToTensor()
 		img = transform(img)
