@@ -7,7 +7,8 @@ reid:
   desription:
   seed: 12345
   # smth like MOT_train, KITTI_train_Pedestrian
-  db_train: motML_train
+  #db_train: motML_train
+  db_train: marcuhmot_ML_train
   db_val: False
 
   model_args:
@@ -60,7 +61,7 @@ reid:
     vis_threshold: 0.3
     P: 18
     # minimum number of images per identity
-    K: 4
+    K: 6
     # limit maximum number of images per identity
     max_per_person: 1000
     crop_H: 256

@@ -62,7 +62,7 @@ class MarCUHMOT_ML(Dataset):
 
 
 		#self.dataset = ConcatDataset([market, cuhk, mot])
-		name = 'marchumot_ML_pad'
+		name = 'marchumot_ML_pad_filtered6'
 		if os.path.exists('./data/ML_dataset/db_train_{}.h5'.format(name)):
 			os.remove('./data/ML_dataset/db_train_{}.h5'.format(name))
 		self.save([market, cuhk, mot], name)

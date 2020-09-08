@@ -111,7 +111,7 @@ class MOT_ML(MOT17_Sequence):
 			# if j > 10:
 			# 	break
 
-		# sample max_per_person images and filter out tracks smaller than 4 samples
+		# sample max_per_person images and filter out tracks smaller than 4 samples / K samples
 		#outdir = get_output_dir("siamese_test")
 		#res = []
 		pers = []
