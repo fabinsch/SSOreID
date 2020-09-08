@@ -2,7 +2,7 @@
 from .mot_wrapper import MOT17Wrapper, MOT19Wrapper, MOT17LOWFPSWrapper
 from .mot_reid_wrapper import MOTreIDWrapper
 from .mot15_wrapper import MOT15Wrapper
-from .marcuhmot import MarCUHMOT
+from .marcuhmot import MarCUHMOT, MarCUH
 
 
 _sets = {}
@@ -37,6 +37,10 @@ for split in ['PETS09-S2L1', 'TUD-Stadtmitte', 'TUD-Campus', 'train', 'test', 'l
 for split in ['small_train', 'small_val', 'train']:
     name = f'marcuhmot_{split}'
     _sets[name] = (lambda *args, split=split: MarCUHMOT(split, *args))
+
+for split in ['small_train', 'small_val', 'train']:
+    name = f'marcuh_{split}'
+    _sets[name] = (lambda *args, split=split: MarCUH(split, *args))
 
 
 class Datasets(object):
