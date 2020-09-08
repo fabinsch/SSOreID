@@ -634,6 +634,42 @@ def sample_task(sets, nways, kshots, i_to_dataset, sample, val=False, num_tasks=
     except ValueError:
         return sample_task(sets, nways, kshots, i_to_dataset, sample, val, num_tasks)
 
+def sample_task_new(sets, nways, kshots, i_to_dataset, sample, val=False, num_tasks=-1, sample_uniform_DB=False):
+    if sample_uniform_DB:
+        if len(sets)>1:
+            j = random.choice(range(7))  # sample which dataset, 0 MOT, 1,2,3 cuhk, 4,5,6 market
+            if j == 0:
+                i = random.choice(range(6))  # which of the MOT sequence
+            elif j == 1 or j == 2 or j == 3:
+                i = 6
+            elif j == 4 or j == 5 or j == 6:
+                i = 7
+        else:
+            i = random.choice(range(len(sets)))  # sample sequence
+    else:
+        i = random.choice(range(len(sets)))  # sample sequence
+
+    seq = i_to_dataset[i]
+    if sample == False and val == False:
+        i = 1
+        seq = i_to_dataset[i]
+    n = random.sample(nways, 1)[0]
+    k = random.sample(kshots, 1)[0]
+    transform = [l2l.data.transforms.FusedNWaysKShots(sets[i], n=n, k=k * 2),
+                 l2l.data.transforms.LoadData(sets[i]),
+                 l2l.data.transforms.RemapLabels(sets[i], shuffle=True)]
+    taskset = l2l.data.TaskDataset(dataset=sets[i],
+                                   task_transforms=transform,
+                                   num_tasks=num_tasks)
+
+        # i = random.choice(range(len(tasksets)))
+        # batch = tasksets[i].sample()
+
+    try:
+        batch = taskset.sample()
+        return batch, n, k, seq, i
+    except ValueError:
+        return sample_task(sets, nways, kshots, i_to_dataset, sample, val, num_tasks)
 
 @ex.automain
 def my_main(_config, reid, _run):
@@ -929,7 +965,7 @@ def my_main(_config, reid, _run):
             # Compute meta-training loss
             learner = model.clone()  #back-propagating losses on the cloned module will populate the buffers of the original module
 
-            batch, nways, kshots, sequence, taskID = sample_task(meta_datasets, nways_list, kshots_list, i_to_dataset,
+            batch, nways, kshots, sequence, taskID = sample_task_new(meta_datasets, nways_list, kshots_list, i_to_dataset,
                                                                  reid['ML']['sample_from_all'], num_tasks=num_tasks,
                                                                  sample_uniform_DB=sample_db)
             if sequence not in sampled_train.keys():
