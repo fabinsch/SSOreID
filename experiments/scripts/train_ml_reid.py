@@ -714,6 +714,8 @@ def my_main(_config, reid, _run):
         with h5py.File('./data/ML_dataset/{}.h5'.format(reid['ML']['db']), 'r') as hf:
             datasets = list(hf.keys())
             datasets = [d for d in datasets if d != reid['dataloader']['validation_sequence']]
+            #datasets = [d for d in datasets if d not in ['MOT-02', 'MOT-04', 'MOT-05', 'MOT-09', 'MOT-10', 'MOT-11', 'MOT-13']]
+            #datasets = [d for d in datasets if d == 'cuhk03' or d == 'market1501']
             for  i,d in enumerate(datasets):
                 i_to_dataset[i] = d
             print('Train with {} and use {} as validation set'.format(datasets, reid['dataloader']['validation_sequence']))
