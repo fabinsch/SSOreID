@@ -26,6 +26,7 @@ from tracktor.tracker import Tracker
 from tracktor.reid.resnet import resnet50
 from tracktor.utils import interpolate, plot_sequence, get_mot_accum, evaluate_mot_accums
 import pickle
+from time import sleep
 
 ex = Experiment()
 
@@ -65,7 +66,7 @@ def main(tracktor, reid, _config, _log, _run):
     ##########################
     # Initialize the modules #
     ##########################
-
+    print('always others class DBs built')
     # object detection
     _log.info("Initializing object detector.")
 
@@ -82,7 +83,20 @@ def main(tracktor, reid, _config, _log, _run):
     num_frames = 0
     mot_accums = []
     dataset = Datasets(tracktor['dataset'])
-    #segmentation = Datasets('MOTS20_09')
+
+    def load_w(weights):
+        try:
+            a = torch.load(weights)
+            print('load succesfull')
+            return a
+        except:
+            sleep(10)
+            print('load again')
+            return load_w(weights)
+
+    if tracktor['tracker']['finetuning']['for_reid']:
+        if tracktor['reid_ML']:
+           a = load_w(tracktor['reid_weights'])
 
     for seq in dataset:
 
@@ -95,7 +109,7 @@ def main(tracktor, reid, _config, _log, _run):
         if 'oracle' in tracktor:
             tracker = OracleTracker(obj_detect, reid_network, tracktor['tracker'], tracktor['oracle'])
         else:
-            tracker = Tracker(obj_detect, reid_network, tracktor['tracker'], seq._dets+'_'+seq._seq_name, tracktor['reid_weights'], tracktor['reid_ML'], tracktor['LR_ML'])
+            tracker = Tracker(obj_detect, reid_network, tracktor['tracker'], seq._dets+'_'+seq._seq_name, a, tracktor['reid_ML'], tracktor['LR_ML'])
 
         start = time.time()
 
@@ -114,16 +128,32 @@ def main(tracktor, reid, _config, _log, _run):
         _log.info(f"Tracks found: {len(results)}")
         _log.info(f"Runtime for {seq}: {time.time() - start :.1f} s.")
         _log.info(f"Total number of REIDs: {tracker.num_reids}")
+        _log.info(f"{tracker.correct_reID} correct reIDs  {tracker.wrong_reID} wrong reIDs")
+        _log.info(f"{tracker.correct_no_reID} correct NO reIDs , new track initialized")
+        _log.info(f"{tracker.missed_reID} missed reIDs: {tracker.missed_reID_others} others, {tracker.missed_reID_score} score, {tracker.missed_reID_patience} patience")
+        _log.info(f"{tracker.missed_reID_score_iou} missed reIDs scores iou, {tracker.correct_no_reID_iou} correct no reIDs scores iou")
+        _log.info(f"Total number of predictions {tracker.number_made_predictions}: {tracker.correct_reID+tracker.correct_no_reID} correct, {tracker.missed_reID+tracker.wrong_reID} wrong")
+        _log.info(f"How long reID tracks were inactive {tracker.inactive_count_succesfull_reID}")
+        if len(tracker.inactive_count_succesfull_reID) > 0:
+            _log.info(f"average is {sum(tracker.inactive_count_succesfull_reID) / len(tracker.inactive_count_succesfull_reID)}")
+
+
         _log.info(f"Total number of Trainings: {tracker.num_training}")
         _log.info(f"Number of skipped samples because of IoU restriction others: {tracker.c_skipped_for_train_iou}")
         #_log.info(f"Number of skipped samples because of IoU restriction (with just one active frame): {tracker.c_skipped_and_just_and_frame_active}")
         #_log.info(f"It was trained on: {tracker.train_on}")
         _log.info(f"It happen x times that it was killed and reid in same step: {tracker.count_killed_this_step_reid}")
         _log.info(f"Number of tracks which are just active 1 frame: {tracker.c_just_one_frame_active}")
-        _log.info(f"In total {tracker.missed_reID} missed and {tracker.wrong_reID} wrong reIDs")
+
         _log.info(f"Print statistics of training situations")
         _log.info(f"nWays {tracker.count_nways}")
         _log.info(f"kShots {tracker.count_kshots}")
+        _log.info(f"TRAIN Acc values after training {tracker.acc_after_train}")
+        _log.info(f"TRAIN Acc avg. {sum(tracker.acc_after_train)/len(tracker.acc_after_train)}")
+        _log.info(f"VAL Acc values after training {tracker.acc_val_after_train}")
+        if len(tracker.acc_val_after_train)>0:
+            _log.info(f"VAL Acc avg. {sum(tracker.acc_val_after_train)/len(tracker.acc_val_after_train)}")
+        _log.info(f"Currently always calculates scores for train samples - DEACTIVATE l. 1205")
 
         with open(seq._seq_name + '_count_nWays'+ '.pkl', 'wb') as f:
             pickle.dump(tracker.count_nways, f, pickle.HIGHEST_PROTOCOL)
