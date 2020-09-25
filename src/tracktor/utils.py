@@ -18,11 +18,18 @@ import motmetrics as mm
 import copy
 
 import h5py
-#import helpers
+# import helpers
 import numpy as np
 from pathlib import Path
 import torch
 from torch.utils import data
+
+
+from tracktor.live_dataset import IndividualDataset
+from tracktor.training_set_generation import replicate_and_randomize_boxes
+from torchvision.models.detection.transform import resize_boxes
+from torchvision.ops.boxes import clip_boxes_to_image
+
 matplotlib.use('Agg')
 
 # https://matplotlib.org/cycler/
@@ -30,6 +37,7 @@ matplotlib.use('Agg')
 # colors = []
 #	for name,_ in matplotlib.colors.cnames.items():
 #		colors.append(name)
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 colors = [
     'aliceblue', 'antiquewhite', 'aqua', 'aquamarine', 'azure', 'beige', 'bisque',
@@ -273,9 +281,9 @@ def bbox_transform_inv(boxes, deltas):
 
     pred_boxes = torch.cat(
         [_.unsqueeze(2) for _ in [pred_ctr_x - 0.5 * pred_w,
-                                pred_ctr_y - 0.5 * pred_h,
-                                pred_ctr_x + 0.5 * pred_w,
-                                pred_ctr_y + 0.5 * pred_h]], 2).view(len(boxes), -1)
+                                  pred_ctr_y - 0.5 * pred_h,
+                                  pred_ctr_x + 0.5 * pred_w,
+                                  pred_ctr_y + 0.5 * pred_h]], 2).view(len(boxes), -1)
     return pred_boxes
 
 
@@ -371,7 +379,7 @@ def get_mot_accum(results, seq):
                                     track_boxes[:, 1],
                                     track_boxes[:, 2] - track_boxes[:, 0],
                                     track_boxes[:, 3] - track_boxes[:, 1]),
-                                    axis=1)
+                                   axis=1)
         else:
             track_boxes = np.array([])
 
@@ -391,12 +399,12 @@ def evaluate_mot_accums(accums, names, generate_overall=False):
         accums,
         metrics=mm.metrics.motchallenge_metrics,
         names=names,
-        generate_overall=generate_overall,)
+        generate_overall=generate_overall, )
 
     str_summary = mm.io.render_summary(
         summary,
         formatters=mh.formatters,
-        namemap=mm.io.motchallenge_metric_names,)
+        namemap=mm.io.motchallenge_metric_names, )
     print(str_summary)
     return summary
 
@@ -404,6 +412,7 @@ def evaluate_mot_accums(accums, names, generate_overall=False):
 class EarlyStopping:
     """Early stops the training if validation loss doesn't improve after a given patience.
    from https://github.com/Bjarten/early-stopping-pytorch """
+
     def __init__(self, patience=7, verbose=False, delta=0, checkpoints={}):
         """
         Args:
@@ -483,7 +492,7 @@ class EarlyStopping2:
             self.epoch = epoch
             self.save_checkpoint(val_loss, model)
 
-        if epoch==self.ep_safe:
+        if epoch == self.ep_safe:
             self.save_checkpoint(val_loss, model, safe=True)
 
     def save_checkpoint(self, val_loss, model, safe=False):
@@ -627,3 +636,291 @@ class HDF5Dataset(data.Dataset):
         return self.data_cache[fp][cache_idx]
 
 
+def tracks_to_inactive_oracle(self, tracks):
+    self.tracks = [t for t in self.tracks if t not in tracks]
+    for t in tracks:
+        # t = torch.arange(self.im_index-(t.training_set.features.shape[0]))
+
+        gt_boxes = torch.cat(list(self.gt.values()), 0).to(device)
+        inactivetrack_iou_GT = bbox_overlaps(t.pos, gt_boxes).cpu().numpy()
+        ind = np.where(inactivetrack_iou_GT == np.max(inactivetrack_iou_GT))[1]
+        if len(ind) > 0:
+            ind = ind[0]
+            overlap = inactivetrack_iou_GT[0, ind]
+            if overlap >= 0.5:
+                gt_id = list(self.gt.keys())[ind]
+                t.gt_id = gt_id
+                self.inactive_tracks_gt_id.append(gt_id)
+
+                if gt_id not in self.db_gt_inactive.keys():
+                    self.db_gt_inactive[gt_id] = [t.id]
+                else:
+                    self.db_gt_inactive[gt_id].append(t.id)
+
+        if t.frames_since_active > 1:
+            t.pos = t.last_pos[-1]
+            self.inactive_number_changes += 1
+            self.killed_this_step.append(t.id)
+            if t.skipped_for_train == 1:
+                self.c_skipped_and_just_and_frame_active += 1
+        else:
+            self.c_just_one_frame_active += 1
+            # remove tracks with just 1 active frame
+            # tracks.remove(t)
+            t.pos = t.last_pos[-1]
+            self.inactive_number_changes += 1
+            self.killed_this_step.append(t.id)
+            if t.skipped_for_train == 1:
+                self.c_skipped_and_just_and_frame_active += 1
+    self.inactive_tracks += tracks
+
+
+def reid_by_finetuned_model_oracle(self, new_det_pos, new_det_scores, frame, blob):
+    """Do reid with one model predicting the score for each inactive track"""
+    image = blob['img'][0]
+    gt = blob['gt']
+    det_gt_id = []  # list which detections corresponds to which gt id
+    inactive_tracks_gt_id = []
+    current_inactive_tracks_id = [t.id for t in self.inactive_tracks]
+    inactive_tracks_gt_id = self.inactive_tracks_gt_id
+    samples_per_track = [t.training_set.num_frames_keep for t in self.inactive_tracks]
+    assert current_inactive_tracks_id == self.inactive_tracks_id
+
+    # active_tracks = self.get_pos()
+    if len(new_det_pos.size()) > 1 and len(self.inactive_tracks) > 0:
+        remove_inactive = []
+        det_index_to_candidate = defaultdict(list)
+        inactive_to_det = defaultdict(list)
+        assigned = []
+        inactive_tracks = self.get_pos(active=False)
+
+        for det in new_det_pos:
+            self.number_made_predictions += 1
+            gt_boxes = torch.cat(list(gt.values()), 0).to(device)
+            det_iou_GT = bbox_overlaps(det.unsqueeze(0), gt_boxes).cpu().numpy()
+            ind = np.where(det_iou_GT == np.max(det_iou_GT))[1]
+            if len(ind) > 0:
+                ind = ind[0]
+                overlap = det_iou_GT[0, ind]
+                if overlap >= 0.5:
+                    det_gt_id.append(list(gt.keys())[ind])
+                else:
+                    det_gt_id.append(-1)
+
+        boxes, scores = self.obj_detect.predict_boxes(new_det_pos,
+                                                      box_predictor_classification=self.box_predictor_classification,
+                                                      box_head_classification=self.box_head_classification,
+                                                      pred_multiclass=True)
+
+        zero_scores = [s.item() for s in scores[:, 0]] if self.finetuning_config['others_class'] else []
+        for zero_score in zero_scores:
+            self.score_others.append(zero_score)
+
+        # if frame==420:
+        if frame >= 0:
+            print('\n{}: scores reID: {}'.format(self.im_index, scores))
+            print('IDs: {} with respectively {} samples'.format(current_inactive_tracks_id, samples_per_track))
+
+        # check if scores has very high value, don't use IoU restriction in that case
+        # no_mask = torch.ge(scores, 0.95)
+        # calculate IoU distances
+        iou = bbox_overlaps(new_det_pos, inactive_tracks)
+        if self.finetuning_config['others_class']:
+            # iou has just values for the inactive tracks -> extend for others class
+            iou = torch.cat((torch.ones(iou.shape[0], 1).to(device), iou), dim=1)
+        iou_mask = torch.ge(iou, self.reid_iou_threshold)
+        # scores = scores * iou_mask + scores * no_mask
+
+        if self.box_predictor_classification.cls_score.out_features == 1:
+            scores = scores * iou_mask.squeeze()
+            for i, s in enumerate(scores.cpu().numpy()):
+                #if s > 0.5:
+                if s > self.finetuning_config['reid_score_threshold']:
+                    inactive_track = self.inactive_tracks[0]
+                    det_index_to_candidate[i].append((inactive_track, s))
+                    inactive_to_det[0].append(i)
+
+        else:
+            # if self.im_index==138:
+            #     iou_mask = torch.cat((iou_mask, torch.tensor([False]).unsqueeze(0).to(device)), dim=1)
+            #     iou_mask = torch.cat((iou_mask, torch.tensor([False]).unsqueeze(0).to(device)), dim=1)
+            #     #iou_mask = iou_mask
+            old_scores = scores.cpu().numpy().copy()
+            old_max = old_scores.max(axis=1)
+
+            scores = scores * iou_mask
+            scores = scores.cpu().numpy()
+            max = scores.max(axis=1)
+            max_idx = scores.argmax(axis=1)
+            scores[:, max_idx] = 0
+            max2 = scores.max(axis=1)
+            # max_idx2 = scores.argmax(axis=1)
+            dist = max - max2
+
+            for i, d in enumerate(dist):
+                if (max[i] > self.finetuning_config['reid_score_threshold']):
+                    if self.finetuning_config['others_class'] or len(inactive_tracks)==1:
+                        # idx = 0 means unknown background people, idx=1,2,.. is inactive
+                        if max_idx[i] == 0:
+                            print('no reid because class 0 has score {}'.format(max[i]))
+                            if det_gt_id[i] in inactive_tracks_gt_id:  # check if the gt id has ever been seen before
+                                f = 0
+                                self.missed_reID += 1
+                                self.missed_reID_others += 1
+                                for t in self.inactive_tracks:  # if it's still in the inactive tracks
+                                    if t.gt_id == det_gt_id[i]:
+                                        # self.exclude_from_others.append(t.id)
+                                        print('!!!!! missed reID of person {}, detection {}'.format(t.id, i))
+                                        #self.missed_reID += 1
+                                        #self.missed_reID_others += 1
+                                        #self.det_new_track_exclude.append(i)
+                                        f += 1
+                                if f == 0:  # means this track is not in inactive anymore but was before
+                                    for id in self.db_gt_inactive[det_gt_id[i]]:
+                                        #self.exclude_from_others.append(id)
+                                        #print("exlude {}".format(id))
+                                        print("track {} not in inactive frames anymore".format(id))
+                                        self.missed_reID_patience += 1
+                            else:
+                                print("correctly initialized new track")
+                                self.correct_no_reID += 1
+
+                        else:
+                            inactive_track = self.inactive_tracks[max_idx[i] - 1]
+                            det_index_to_candidate[i].append((inactive_track, max[i]))
+                            inactive_to_det[max_idx[i] - 1].append(i)
+
+                    else:
+                        inactive_track = self.inactive_tracks[max_idx[i]]
+                        det_index_to_candidate[i].append((inactive_track, max[i]))
+                        inactive_to_det[max_idx[i]].append(i)
+
+                # elif max[i] > 0.0:
+                else:
+                    print('no reid with score {}, old max {}'.format(max[i], old_max[i]))
+                    if det_gt_id[i] in inactive_tracks_gt_id:
+                        f = 0
+                        self.missed_reID += 1
+                        self.missed_reID_score += 1
+                        if max[i]!=old_max[i]:
+                            self.missed_reID_score_iou += 1
+                        for t in self.inactive_tracks:
+                            if t.gt_id == det_gt_id[i]:
+                                # self.exclude_from_others.append(t.id)
+                                print('!!!!! missed reID of person {}'.format(t.id))
+                                #self.missed_reID += 1
+                                #self.det_new_track_exclude.append(i)
+                                #self.missed_reID_score += 1
+                                f += 1
+
+                        if f == 0:
+                            for id in self.db_gt_inactive[det_gt_id[i]]:
+                                # self.exclude_from_others.append(id)
+                                # print("exlude {}".format(id))
+                                print("track not inactive frames anymore")
+                                self.missed_reID_patience += 1
+                    else:
+                        print("correctly initialized new track")
+                        self.correct_no_reID += 1
+                        if max[i]!=old_max[i]:
+                            self.correct_no_reID_iou += 1
+
+        for det_index, candidates in det_index_to_candidate.items():
+            candidate = candidates[0]
+            inactive_track = candidate[0]
+            # get the position of the inactive track in inactive_tracks
+            # if just one track, position "is 1" because 0 is unknown background person
+            # important for check in next if statement
+            inactive_id_in_list = self.inactive_tracks.index(inactive_track)
+
+            if len(inactive_to_det[inactive_id_in_list]) == 1:
+                # check if GT id fits
+                if inactive_track.gt_id != det_gt_id[det_index]:
+                    #self.exclude_from_others.append(inactive_track.id)
+                    print('!!!!! wrong reID of person {}'.format(inactive_track.id))
+                    self.wrong_reID += 1
+                    #print("exclude reID track {} from others".format(inactive_track.id))
+                else:
+                    print('correct reID of person {}'.format(inactive_track.id))
+                    self.correct_reID += 1
+                # make sure just 1 new detection per inactive track
+                self.tracks.append(inactive_track)
+                print(
+                    f"\n**************   Reidying track {inactive_track.id} in frame {frame} with score {candidate[1]}")
+                print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks]))
+                self.num_reids += 1
+                self.inactive_count_succesfull_reID.append(inactive_track.count_inactive)
+
+                if inactive_track.id in self.killed_this_step:
+                    self.count_killed_this_step_reid += 1
+                # print('\n track {} was killed and reid in frame {}'.format(inactive_track.id, self.im_index))
+
+                # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
+                if frame == 4200:
+                    inactive_track.add_classifier(self.box_predictor_classification, self.box_head_classification)
+
+                # reset inactive track
+                inactive_track.count_inactive = 0
+                inactive_track.pos = new_det_pos[det_index].view(1, -1)
+                inactive_track.reset_last_pos()
+                inactive_track.skipped_for_train = 0
+
+                if self.finetuning_config['reset_dataset']:
+                    inactive_track.frames_since_active = 1
+                    inactive_track.training_set = IndividualDataset(inactive_track.id,
+                                                                    self.finetuning_config['keep_frames'],
+                                                                    self.finetuning_config['data_augmentation'],
+                                                                    self.finetuning_config['flip_p'])
+
+                assigned.append(det_index)
+                remove_inactive.append(inactive_track)
+            else:
+                print('\nerror, {} new det for 1 inactive track ID {}'.format(len(inactive_to_det[inactive_id_in_list]),
+                                                                              inactive_track.id))
+                print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks]))
+
+        if len(remove_inactive) > 0:
+            # do batched roi pooling
+            box_roi_pool = self.obj_detect.roi_heads.box_roi_pool
+            if len(remove_inactive) == 1:
+                pos = remove_inactive[0].pos
+            else:
+                pos = torch.cat([t.pos for t in remove_inactive], 0)
+
+            # do augmentation in current frame
+            if self.finetuning_config['data_augmentation'] > 0:
+                boxes = torch.tensor([]).to(device)
+                for i, track in enumerate(pos):
+                    box = track
+                    augmented_boxes = replicate_and_randomize_boxes(box.unsqueeze(0),
+                                                                    self.finetuning_config['data_augmentation'],
+                                                                    self.finetuning_config['max_displacement'])
+                    augmented_boxes = clip_boxes_to_image(augmented_boxes, image.shape[-2:])
+                    boxes = torch.cat((boxes, torch.cat((box.unsqueeze(0), augmented_boxes))))
+            else:
+                # boxes = clip_boxes(pos, image.size()[1:3])
+                boxes = pos
+
+            boxes_resized = resize_boxes(boxes, image.size()[1:3], self.obj_detect.image_size[0])
+            proposals = [boxes_resized]
+            with torch.no_grad():
+                roi_pool_feat = box_roi_pool(self.obj_detect.fpn_features, proposals, image.size()[1:3]).to(device)
+            roi_pool_per_track = roi_pool_feat.split(self.finetuning_config['data_augmentation'] + 1)
+
+        for i, inactive_track in enumerate(remove_inactive):
+            self.inactive_tracks.remove(inactive_track)
+            inactive_track.update_training_set_classification(features=roi_pool_per_track[i],
+                                                              pos=boxes[i + self.finetuning_config[
+                                                                  'data_augmentation']].unsqueeze(0),
+                                                              frame=self.im_index,
+                                                              area=inactive_track.calculate_area())
+
+        keep = torch.Tensor([i for i in range(new_det_pos.size(0)) if i not in assigned]).long().to(device)
+        if keep.nelement() > 0:
+            new_det_pos = new_det_pos[keep]
+            new_det_scores = new_det_scores[keep]
+        else:
+            new_det_pos = torch.zeros(0).to(device)
+            new_det_scores = torch.zeros(0).to(device)
+
+    return new_det_pos, new_det_scores

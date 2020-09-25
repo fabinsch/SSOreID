@@ -20,8 +20,13 @@ from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHe
 from torch.nn import functional as F
 from torchvision.models.detection.transform import resize_boxes
 import torch.nn as nn
+import learn2learn as l2l
+from learn2learn.algorithms.meta_sgd import meta_sgd_update
+from tracktor.utils import tracks_to_inactive_oracle, reid_by_finetuned_model_oracle
+#from tracktor.oracle_tracker import OracleTracker
 
 import time
+from torch.autograd import grad
 
 #if not torch.cuda.is_available():
 #    matplotlib.use('TkAgg')
@@ -52,6 +57,11 @@ class reID_Model(torch.nn.Module):
             x = torch.cat((x, add), dim=1)
         return x
 
+class Model(torch.nn.Module):
+    def __init__(self, head, predictor):
+        super(Model, self).__init__()
+        self.head = head
+        self.predictor = predictor
 
 class Tracker:
     """The main tracking file, here is where magic happens."""
@@ -86,7 +96,7 @@ class Tracker:
             #                    n=[2])
             #model.load_state_dict(torch.load(reID_weights))
             if ML:
-                a = torch.load(reID_weights)
+                a = reID_weights
 
                 # when changed to checkpoint that safes optimizer, but some older ones are still working without this if
                 if len(a)==4:
@@ -115,12 +125,29 @@ class Tracker:
                     if len(a)==7:
                         self.lrs.append(a['lrs'].item())
                         print('LR is {}'.format(a['lrs'].item()))
+                        self.LR_per_parameter = False
                     else:
-                        # LR per layer
+                        # LR per parameter
+                        self.LR_per_parameter = True
                         for i in range(6):
                             l = 'lrs.'+str(i)
-                            self.lrs.append(a[l].item())
-                            print('LR is {}'.format(a[l].item()))
+                            self.lrs.append(a[l])
+
+                            # # print some random weights
+                            # if len(a[l].shape) == 2:
+                            #     f = torch.randint(high=a[l].shape[0], size=(10,1))
+                            #     s = torch.randint(high=a[l].shape[1], size=(10,1))
+                            #
+                            #     print('{} LR is w {}'.format(l, a[l][f.squeeze(), s.squeeze()]))
+                            # else:
+                            #     f = torch.randint(high=a[l].shape[0], size=(10, 1))
+                            #     print('{} LR is b {}'.format(l, a[l][f.squeeze()]))
+
+                            # print the mean values
+                            if len(a[l].shape) == 2:
+                                print('{} weight LR mean is {}'.format(l, a[l].mean()))
+                            else:
+                                print('{} bias LR mean is {}'.format(l, a[l].mean()))
             else:
                 self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
                 self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
@@ -155,14 +182,26 @@ class Tracker:
         self.exclude_from_others = []
         self.gt = None
         self.missed_reID = 0
+        self.missed_reID_others = 0
+        self.missed_reID_score = 0
+        self.missed_reID_score_iou = 0
+        self.missed_reID_patience = 0
         self.wrong_reID = 0
+        self.correct_reID = 0
+        self.correct_no_reID = 0
+        self.correct_no_reID_iou = 0
         self.inactive_tracks_gt_id = []
         self.det_new_track_exclude = []
         self.db_gt_inactive = {}
+        self.number_made_predictions = 0
+        self.inactive_count_succesfull_reID = []
 
         ## get statistics
         self.count_nways = {}
         self.count_kshots = {}
+
+        self.acc_after_train = []
+        self.acc_val_after_train = []
 
     def reset(self, hard=True):
         self.tracks = []
@@ -250,7 +289,7 @@ class Tracker:
                           box_roi_pool=box_roi_pool, keep_frames=self.finetuning_config['keep_frames'],
                           data_augmentation = self.finetuning_config['data_augmentation'], flip_p=self.finetuning_config['flip_p'])
             self.tracks.append(track)
-            if frame==138:
+            if frame==13800:
                 # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
                 # debugging frcnn-09 frame 138 problem person wird fälschlicherweise als ID4
                 track.add_classifier(self.box_predictor_classification, self.box_head_classification)
@@ -283,6 +322,10 @@ class Tracker:
                 with torch.no_grad():
                     repeated_bias = self.bbox_predictor_weights['cls_score.bias'].clone().repeat(n)
                     repeated_weight = self.bbox_predictor_weights['cls_score.weight'].clone().repeat(n,1)
+
+                    if self.LR_per_parameter:
+                        box_predictor.repeated_bias_lr = self.lrs[5].clone().repeat(n)
+                        box_predictor.repeated_weight_lr = self.lrs[4].clone().repeat(n,1)
 
                     box_predictor.cls_score.bias.data = repeated_bias
                     box_predictor.cls_score.weight.data = repeated_weight
@@ -347,11 +390,18 @@ class Tracker:
         pos = clip_boxes_to_image(boxes, blob['img'].shape[-2:])
 
         s = []
+        if self.im_index > 0:
+            th = 100
+        else:
+            th = self.regression_person_thresh
         for i in range(len(self.tracks) - 1, -1, -1):
             t = self.tracks[i]
             t.score = scores[i]
-            if scores[i] <= self.regression_person_thresh:
-                self.tracks_to_inactive([t])
+
+
+            if scores[i] <= th:
+                #self.tracks_to_inactive([t])
+                tracks_to_inactive_oracle(self,[t])
             else:
                 s.append(scores[i])
                 #t.pos = pos[i].view(1, -1)  # here in original implementation
@@ -747,7 +797,8 @@ class Tracker:
 
                 # nms here if tracks overlap, delete tracks with lower score if IoU overpasses threshold
                 keep = nms(self.get_pos(), person_scores, self.regression_nms_thresh)
-                self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
+                #self.tracks_to_inactive([self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
+                tracks_to_inactive_oracle(self,[self.tracks[i] for i in list(range(len(self.tracks))) if i not in keep])
 
                 # # calculate IoU distances
                 active_pos = self.get_pos()
@@ -849,7 +900,8 @@ class Tracker:
                 new_det_features = self.reid_network.test_rois(blob['img'], new_det_pos).data
                 new_det_pos, new_det_scores = self.reid(blob, new_det_pos, new_det_features, new_det_scores)
             elif self.finetuning_config["for_reid"]:
-                new_det_pos, new_det_scores = self.reid_by_finetuned_model_(new_det_pos, new_det_scores, frame, blob)
+                #new_det_pos, new_det_scores = self.reid_by_finetuned_model_(new_det_pos, new_det_scores, frame, blob)
+                new_det_pos, new_det_scores = reid_by_finetuned_model_oracle(self, new_det_pos, new_det_scores, frame, blob)
             # add new
             if new_det_pos.nelement() > 0:
                 self.add(new_det_pos, new_det_scores, blob['img'][0], frame, new_det_features)
@@ -872,7 +924,7 @@ class Tracker:
             self.results[t.id][self.im_index] = np.concatenate([t.pos[0].cpu().numpy(), np.array([t.score.cpu()])])
 
             #if self.finetuning_config['others_class']:
-            if self.finetuning_config['others_class']:
+            if True:
                 num_others = sum([len(t) for t in self.others_db.values()])
                 # make sure, tracks for inactive do not overlap
                 if torch.sum(iou[i] > 0.1) > 1 and num_others>160: # make sure to have at least 4 IDs with enough samples
@@ -1008,7 +1060,7 @@ class Tracker:
                     else:
                         acc_class = -1
 
-                    if ep<10:
+                    if ep==10:
                         print(
                             '({}.{}) loss for class {:.0f} is {:.3f}, acc {:.3f} -- max value {:.3f} for (frame, id) {} - scores {}'.format(
                                 self.im_index,ep, c, class_loss, acc_class, max, fId[ind], scores_each[ind]))
@@ -1025,7 +1077,7 @@ class Tracker:
         if eval:
             self.box_predictor_classification.train()
             self.box_head_classification.train()
-        if ep>=800000:
+        if ep>=0:
             return loss, loss_others, loss_inactives, max_sample_loss_others
         else:
             return loss
@@ -1085,8 +1137,10 @@ class Tracker:
                             {"params": self.box_head_classification.fc6.bias, "lr": self.lrs[1]},
                             {"params": self.box_head_classification.fc7.weight, "lr": self.lrs[2]},
                             {"params": self.box_head_classification.fc7.bias, "lr": self.lrs[3]},
-                            {"params": self.box_predictor_classification.cls_score.weight, "lr": self.lrs[4]},
-                            {"params": self.box_predictor_classification.cls_score.bias, "lr": self.lrs[5]},
+                            #{"params": self.box_predictor_classification.cls_score.weight, "lr": self.lrs[4]},
+                            {"params": self.box_predictor_classification.cls_score.weight, "lr": box_predictor_classification.repeated_weight_lr},
+                            #{"params": self.box_predictor_classification.cls_score.bias, "lr": self.lrs[5]},
+                            {"params": self.box_predictor_classification.cls_score.bias, "lr": box_predictor_classification.repeated_bias_lr},
                         ],
                         lr=float(finetuning_config["learning_rate"])
                     )
@@ -1154,8 +1208,8 @@ class Tracker:
             if self.finetuning_config["validate"] and len(val_set) > 0:
                 #print('\n epoch {}'.format(i))
                 run_loss_val = 0.0
-                total = 0
-                correct = 0
+                total_val = 0
+                correct_val = 0
                 loss_val_others = -1
                 loss_val_inactive = -1
                 max_sample_loss_others = -1
@@ -1177,10 +1231,10 @@ class Tracker:
                         else:
                             mask = torch.argmax(pred_scores_val, dim=1, keepdim=True).squeeze()
 
-                        correct += torch.sum(mask == sample_batch['scores']).item()
-                        total += len(sample_batch['scores'])
+                        correct_val += torch.sum(mask == sample_batch['scores']).item()
+                        total_val += len(sample_batch['scores'])
 
-                acc_val = 100 * correct / total
+                acc_val = 100 * correct_val / total_val
                 loss_val = run_loss_val / len(dataloader_val)
                 if finetuning_config["plot_training_curves"] and len(val_set) > 0:
                     plotter.plot_(epoch=i, loss=(loss_val, loss_val_others, loss_val_inactive, max_sample_loss_others), acc=acc_val, split_name='val')
@@ -1190,7 +1244,8 @@ class Tracker:
             total = 0
             correct = 0
             for i_sample, sample_batch in enumerate(dataloader_train):
-                optimizer.zero_grad()
+                if not self.LR_per_parameter:
+                    optimizer.zero_grad()
                 if self.im_index>=5000000:
                     loss = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                                      sample_batch['scores'], eval=False,
@@ -1199,8 +1254,9 @@ class Tracker:
                     loss = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                                      sample_batch['scores'], eval=False,
                                                                      )
+                    #print(loss)
                 #if self.finetuning_config["plot_training_curves"] or len(val_set) == 0:
-                if self.finetuning_config["plot_training_curves"]:
+                if self.finetuning_config["plot_training_curves"] or True:
                     pred_scores = self.forward_pass_for_classifier_training(sample_batch['features'],
                                                           sample_batch['scores'], eval=True, return_scores=True)
 
@@ -1211,8 +1267,27 @@ class Tracker:
                         mask = torch.argmax(pred_scores, dim=1, keepdim=True).squeeze()
 
                     correct += torch.sum(mask == sample_batch['scores']).item()
-                loss.backward()
-                optimizer.step()
+
+                if self.LR_per_parameter:
+                    #parameters = list(self.box_predictor_classification.parameters()) + list(self.box_head_classification.parameters())
+                    parameters =  list(self.box_head_classification.parameters()) + list(self.box_predictor_classification.parameters())
+                    diff_params = [p for p in parameters if p.requires_grad]
+                    gradients = grad(loss,
+                                     diff_params,
+                                     allow_unused=True)
+                    model = Model(self.box_head_classification, self.box_predictor_classification)
+                    #model = l2l.algorithms.MetaSGD(model, lr=0.01)
+                    #lrs = self.lrs[0:4] + list(self.box_predictor_classification.repeated_weight_lr) + list(self.box_predictor_classification.repeated_bias_lr)
+                    lrs = self.lrs[0:4]
+                    lrs.append(self.box_predictor_classification.repeated_weight_lr)
+                    lrs.append(self.box_predictor_classification.repeated_bias_lr)
+                    model = meta_sgd_update(model, lrs, gradients)
+                    self.box_predictor_classification = model.predictor
+                    self.box_head_classification = model.head
+
+                else:
+                    loss.backward()
+                    optimizer.step()
                 #run_loss += loss.detach().item() / len(sample_batch['scores'])
                 run_loss += loss.detach().item()
                 total += len(sample_batch['scores'])
@@ -1252,7 +1327,11 @@ class Tracker:
                     m.load_state_dict(early_stopping.checkpoints_250[i])
 
 
-
+        print('TRAIN ACC {} at the end of fine-tuning 10 steps'.format(correct/total))
+        if self.finetuning_config["validate"] and len(val_set) > 0:
+            print('VAL ACC {} at the end of fine-tuning 10 steps'.format(correct_val/total_val))
+            self.acc_val_after_train.append(correct_val / total_val)
+        self.acc_after_train.append(correct/total)
         self.box_predictor_classification.eval()
         self.box_head_classification.eval()
         self.num_training += 1
