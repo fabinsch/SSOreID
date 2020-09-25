@@ -403,14 +403,21 @@ class InactiveDataset(torch.utils.data.Dataset):
 
         # get idx of validation samples
         if val:
-            val_idx = [[]]
-            num_val = 0
-            #val_idx, num_val = self.get_val_idx(occ, inactive_tracks, split, val_set_random)
-            #self.max_occ -= num_val
+            #val_idx = [[]]
+            #num_val = 0
+            val_idx, num_val = self.get_val_idx(occ, inactive_tracks, split, val_set_random)
+            self.max_occ -= num_val
 
-        self.min_occ = 40 # get 8 others samples for validation
+        #self.min_occ = 40 # get 8 others samples for validation
 
-        if self.others_class:
+        # get an others class if there is just 1 ID, otherwise training complicated, output node can stay just 1 but
+        # at least i have samples for 0 and 1 not just 0
+        if self.others_class or len(inactive_tracks) == 1:
+            get_others = True
+        else:
+            get_others = False
+
+        if get_others:
             # get others dataset with label 0
             train_others_features, val_others_features, train_other_fId, val_others_fId = self.get_others(inactive_tracks, val)
             if train_others_features.shape[0] < (self.max_occ*(self.data_augmentation+1)) and train_others_features.shape[0] > 0:
@@ -428,7 +435,7 @@ class InactiveDataset(torch.utils.data.Dataset):
             val_others_fId = torch.tensor([]).to(device)
 
         for i, t in enumerate(inactive_tracks):
-            c = i+1 if self.others_class else i
+            c = i+1 if get_others else i
             # balance dataset, same number of examples for each class
             #max_occ = max(self.max_occ, int(train_others_features.shape[0]/(self.data_augmentation+1)))
             if len(t.training_set.pos_unique_indices) < self.max_occ:
