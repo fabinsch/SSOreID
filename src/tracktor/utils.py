@@ -29,8 +29,11 @@ from tracktor.live_dataset import IndividualDataset
 from tracktor.training_set_generation import replicate_and_randomize_boxes
 from torchvision.models.detection.transform import resize_boxes
 from torchvision.ops.boxes import clip_boxes_to_image
-
+from tracktor.track import Track
 matplotlib.use('Agg')
+import logging
+
+logger = logging.getLogger('main.utils')
 
 # https://matplotlib.org/cycler/
 # get all colors with
@@ -285,6 +288,7 @@ def bbox_transform_inv(boxes, deltas):
                                   pred_ctr_x + 0.5 * pred_w,
                                   pred_ctr_y + 0.5 * pred_h]], 2).view(len(boxes), -1)
     return pred_boxes
+
 
 
 def clip_boxes(boxes, im_shape):
@@ -635,27 +639,80 @@ class HDF5Dataset(data.Dataset):
         cache_idx = self.get_data_infos(type)[i]['cache_idx']
         return self.data_cache[fp][cache_idx]
 
-
+# switch from GT searching when going inactive to GT while adding
+# def tracks_to_inactive_oracle(self, tracks):
+#     self.tracks = [t for t in self.tracks if t not in tracks]
+#     for t in tracks:
+#         # t = torch.arange(self.im_index-(t.training_set.features.shape[0]))
+#
+#         gt_boxes = torch.cat(list(self.gt.values()), 0).to(device)
+#         inactivetrack_iou_GT = bbox_overlaps(t.pos, gt_boxes).cpu().numpy()
+#         ind = np.where(inactivetrack_iou_GT == np.max(inactivetrack_iou_GT))[1]
+#         if len(ind) > 0:
+#             ind = ind[0]
+#             overlap = inactivetrack_iou_GT[0, ind]
+#             if overlap >= 0.5:
+#                 gt_id = list(self.gt.keys())[ind]
+#                 t.gt_id = gt_id
+#                 self.inactive_tracks_gt_id.append(gt_id)
+#
+#                 if gt_id not in self.db_gt_inactive.keys():
+#                     self.db_gt_inactive[gt_id] = [t.id]
+#                 else:
+#                     self.db_gt_inactive[gt_id].append(t.id)
+#             else:
+#                 print('no GT id found for track {}, overlap {}'.format(t.id, overlap))
+#
+#         if t.frames_since_active > 1:
+#             t.pos = t.last_pos[-1]
+#             self.inactive_number_changes += 1
+#             self.killed_this_step.append(t.id)
+#             if t.skipped_for_train == 1:
+#                 self.c_skipped_and_just_and_frame_active += 1
+#         else:
+#             self.c_just_one_frame_active += 1
+#             # remove tracks with just 1 active frame
+#             # tracks.remove(t)
+#             t.pos = t.last_pos[-1]
+#             self.inactive_number_changes += 1
+#             self.killed_this_step.append(t.id)
+#             if t.skipped_for_train == 1:
+#                 self.c_skipped_and_just_and_frame_active += 1
+#     self.inactive_tracks += tracks
 def tracks_to_inactive_oracle(self, tracks):
     self.tracks = [t for t in self.tracks if t not in tracks]
     for t in tracks:
-        # t = torch.arange(self.im_index-(t.training_set.features.shape[0]))
+        if t.gt_id == None:
+            logger.debug('try to get ID for track when it gets inactive')
+            gt_boxes = torch.cat(list(self.gt.values()), 0).to(device)
+            inactivetrack_iou_GT = bbox_overlaps(t.pos, gt_boxes).cpu().numpy()
+            ind = np.where(inactivetrack_iou_GT == np.max(inactivetrack_iou_GT))[1]
+            if len(ind) > 0:
+                ind = ind[0]
+                overlap = inactivetrack_iou_GT[0, ind]
+                if overlap >= 0.2:
+                    gt_id = list(self.gt.keys())[ind]
+                    t.gt_id = gt_id
 
-        gt_boxes = torch.cat(list(self.gt.values()), 0).to(device)
-        inactivetrack_iou_GT = bbox_overlaps(t.pos, gt_boxes).cpu().numpy()
-        ind = np.where(inactivetrack_iou_GT == np.max(inactivetrack_iou_GT))[1]
-        if len(ind) > 0:
-            ind = ind[0]
-            overlap = inactivetrack_iou_GT[0, ind]
-            if overlap >= 0.5:
-                gt_id = list(self.gt.keys())[ind]
-                t.gt_id = gt_id
-                self.inactive_tracks_gt_id.append(gt_id)
+        if t.gt_id not in self.db_gt_inactive.keys():
+            self.db_gt_inactive[t.gt_id] = [t.id]
+        else:
+            self.db_gt_inactive[t.gt_id].append(t.id)
 
-                if gt_id not in self.db_gt_inactive.keys():
-                    self.db_gt_inactive[gt_id] = [t.id]
-                else:
-                    self.db_gt_inactive[gt_id].append(t.id)
+        if hasattr(t, 'box_predictor_classification_debug'):
+            logger.log(5, 'Statistics for track {}|{}'.format(t.id, t.correct_prediction))
+            if len(t.following_scores)>0:
+                print(t.following_scores)
+                print(t.follwing_corr)
+                scores_sum = np.zeros(t.following_scores[0].shape)
+                for s in t.following_scores:
+                    scores_sum = np.concatenate((scores_sum, s))
+                logger.log(5, '{} mean scores {}'.format(t.correct_prediction, np.mean(scores_sum[1:], axis=0)))
+
+            # reset
+            del t.box_predictor_classification_debug
+            t.following_scores = None
+
 
         if t.frames_since_active > 1:
             t.pos = t.last_pos[-1]
@@ -674,7 +731,6 @@ def tracks_to_inactive_oracle(self, tracks):
                 self.c_skipped_and_just_and_frame_active += 1
     self.inactive_tracks += tracks
 
-
 def reid_by_finetuned_model_oracle(self, new_det_pos, new_det_scores, frame, blob):
     """Do reid with one model predicting the score for each inactive track"""
     image = blob['img'][0]
@@ -682,9 +738,11 @@ def reid_by_finetuned_model_oracle(self, new_det_pos, new_det_scores, frame, blo
     det_gt_id = []  # list which detections corresponds to which gt id
     inactive_tracks_gt_id = []
     current_inactive_tracks_id = [t.id for t in self.inactive_tracks]
-    inactive_tracks_gt_id = self.inactive_tracks_gt_id
+    #inactive_tracks_gt_id = self.inactive_tracks_gt_id
+    inactive_tracks_gt_id = [t.gt_id for t in self.inactive_tracks]
     samples_per_track = [t.training_set.num_frames_keep for t in self.inactive_tracks]
     assert current_inactive_tracks_id == self.inactive_tracks_id
+    track_missed = None
 
     # active_tracks = self.get_pos()
     if len(new_det_pos.size()) > 1 and len(self.inactive_tracks) > 0:
@@ -693,6 +751,7 @@ def reid_by_finetuned_model_oracle(self, new_det_pos, new_det_scores, frame, blo
         inactive_to_det = defaultdict(list)
         assigned = []
         inactive_tracks = self.get_pos(active=False)
+        track_missed = [-1] * new_det_pos.shape[0]
 
         for det in new_det_pos:
             self.number_made_predictions += 1
@@ -702,9 +761,10 @@ def reid_by_finetuned_model_oracle(self, new_det_pos, new_det_scores, frame, blo
             if len(ind) > 0:
                 ind = ind[0]
                 overlap = det_iou_GT[0, ind]
-                if overlap >= 0.5:
+                if overlap >= 0.2:
                     det_gt_id.append(list(gt.keys())[ind])
                 else:
+                    logger.debug('no GT found for new detection, overlap {}'.format(overlap))
                     det_gt_id.append(-1)
 
         boxes, scores = self.obj_detect.predict_boxes(new_det_pos,
@@ -718,8 +778,9 @@ def reid_by_finetuned_model_oracle(self, new_det_pos, new_det_scores, frame, blo
 
         # if frame==420:
         if frame >= 0:
-            print('\n{}: scores reID: {}'.format(self.im_index, scores))
-            print('IDs: {} with respectively {} samples'.format(current_inactive_tracks_id, samples_per_track))
+            logger.debug('\n{}: scores reID: {}'.format(self.im_index, scores))
+            logger.debug('IDs: {} with respectively {} samples'.format(current_inactive_tracks_id, samples_per_track))
+            logger.debug('GT : {} ID'.format(inactive_tracks_gt_id))
 
         # check if scores has very high value, don't use IoU restriction in that case
         # no_mask = torch.ge(scores, 0.95)
@@ -728,6 +789,18 @@ def reid_by_finetuned_model_oracle(self, new_det_pos, new_det_scores, frame, blo
         if self.finetuning_config['others_class']:
             # iou has just values for the inactive tracks -> extend for others class
             iou = torch.cat((torch.ones(iou.shape[0], 1).to(device), iou), dim=1)
+        if type(self.others_db) is tuple:
+            k = len(self.others_db[0])
+        else:
+            k = len(self.others_db)
+        if self.finetuning_config['fill_up'] and len(inactive_tracks)<self.fill_up_to and k>=self.fill_up_to: ## if filled up to always 10 inactive plus others
+                fill = self.fill_up_to-len(inactive_tracks)
+                iou = torch.cat((torch.ones(iou.shape[0], fill).to(device), iou), dim=1)
+
+        if len(self.flexible)>0:
+            fill = self.flexible[0]
+            iou = torch.cat((torch.ones(iou.shape[0], fill).to(device), iou), dim=1)
+
         iou_mask = torch.ge(iou, self.reid_iou_threshold)
         # scores = scores * iou_mask + scores * no_mask
 
@@ -759,71 +832,152 @@ def reid_by_finetuned_model_oracle(self, new_det_pos, new_det_scores, frame, blo
 
             for i, d in enumerate(dist):
                 if (max[i] > self.finetuning_config['reid_score_threshold']):
-                    if self.finetuning_config['others_class'] or len(inactive_tracks)==1:
+                    #if False: # TODO
+                    if self.finetuning_config['others_class'] or (len(inactive_tracks)==1 and not self.finetuning_config['fill_up'] and not self.finetuning_config['flexible']):
                         # idx = 0 means unknown background people, idx=1,2,.. is inactive
                         if max_idx[i] == 0:
-                            print('no reid because class 0 has score {}'.format(max[i]))
+                            logger.debug('no reid because class 0 has score {}'.format(max[i]))
                             if det_gt_id[i] in inactive_tracks_gt_id:  # check if the gt id has ever been seen before
                                 f = 0
                                 self.missed_reID += 1
                                 self.missed_reID_others += 1
-                                for t in self.inactive_tracks:  # if it's still in the inactive tracks
+                                for j, t in enumerate(self.inactive_tracks):  # if it's still in the inactive tracks
                                     if t.gt_id == det_gt_id[i]:
                                         # self.exclude_from_others.append(t.id)
-                                        print('!!!!! missed reID of person {}, detection {}'.format(t.id, i))
+                                        logger.debug('!!!!! missed reID of person {}, detection {}'.format(t.id, i))
                                         #self.missed_reID += 1
                                         #self.missed_reID_others += 1
                                         #self.det_new_track_exclude.append(i)
                                         f += 1
+
+                                        # track missed, j is position correct prediction
+                                        if track_missed[i] == -1:
+                                            track_missed[i] = [j]
+                                        else:
+                                            track_missed[i].append(j)
+
                                 if f == 0:  # means this track is not in inactive anymore but was before
                                     for id in self.db_gt_inactive[det_gt_id[i]]:
                                         #self.exclude_from_others.append(id)
                                         #print("exlude {}".format(id))
-                                        print("track {} not in inactive frames anymore".format(id))
+                                        logger.debug("track {} not in inactive frames anymore".format(id))
                                         self.missed_reID_patience += 1
                             else:
-                                print("correctly initialized new track")
+                                logger.debug("correctly initialized new track")
                                 self.correct_no_reID += 1
 
                         else:
-                            inactive_track = self.inactive_tracks[max_idx[i] - 1]
-                            det_index_to_candidate[i].append((inactive_track, max[i]))
-                            inactive_to_det[max_idx[i] - 1].append(i)
+                            if self.finetuning_config['fill_up']:
+                                if (max_idx[i]-1) >= len(inactive_tracks):
+                                    logger.debug('fill up person with highest score')
+                                else:
+                                    inactive_track = self.inactive_tracks[max_idx[i] - 1]
+                                    det_index_to_candidate[i].append((inactive_track, max[i]))
+                                    inactive_to_det[max_idx[i] - 1].append(i)
+                            else:
+                                inactive_track = self.inactive_tracks[max_idx[i] - 1]
+                                det_index_to_candidate[i].append((inactive_track, max[i]))
+                                inactive_to_det[max_idx[i] - 1].append(i)
 
                     else:
-                        inactive_track = self.inactive_tracks[max_idx[i]]
-                        det_index_to_candidate[i].append((inactive_track, max[i]))
-                        inactive_to_det[max_idx[i]].append(i)
+                        if self.finetuning_config['fill_up'] or self.finetuning_config['flexible']: # test flexible fill up
+                            if max_idx[i] >= len(inactive_tracks):
+                                logger.debug('fill up person with highest score')
+                                if det_gt_id[
+                                    i] in inactive_tracks_gt_id:  # check if the gt id has ever been seen before
+                                    f = 0
+                                    self.missed_reID += 1
+                                    self.missed_reID_others += 1
+                                    for j, t in enumerate(self.inactive_tracks):  # if it's still in the inactive tracks
+                                        if t.gt_id == det_gt_id[i]:
+                                            #self.exclude_from_others.append(t.id)
+                                            #logger.debug("exlude {}".format(t.id))
+                                            logger.debug('!!!!! missed reID of person {}, detection {}'.format(t.id, i))
+                                            # self.missed_reID += 1
+                                            # self.missed_reID_others += 1
+                                            # self.det_new_track_exclude.append(i)
+                                            f += 1
+
+                                            # track missed, j is position correct prediction
+                                            if track_missed[i] == -1:
+                                                track_missed[i] = [j]
+                                            else:
+                                                track_missed[i].append(j)
+
+                                    if f == 0:  # means this track is not in inactive anymore but was before
+                                        for id in self.db_gt_inactive[det_gt_id[i]]:
+                                            #self.exclude_from_others.append(id)
+                                            #logger.debug("exlude {}".format(id))
+                                            logger.debug("track {} not in inactive frames anymore".format(id))
+                                            self.missed_reID_patience += 1
+                                else:
+                                    logger.debug("correctly initialized new track")
+                                    self.correct_no_reID += 1
+                            else:
+                                inactive_track = self.inactive_tracks[max_idx[i]]
+                                det_index_to_candidate[i].append((inactive_track, max[i]))
+                                inactive_to_det[max_idx[i]].append(i)
+                        else:
+                            inactive_track = self.inactive_tracks[max_idx[i]]
+                            det_index_to_candidate[i].append((inactive_track, max[i]))
+                            inactive_to_det[max_idx[i]].append(i)
 
                 # elif max[i] > 0.0:
                 else:
-                    print('no reid with score {}, old max {}'.format(max[i], old_max[i]))
+                    logger.debug('no reid with score {}, old max {}'.format(max[i], old_max[i]))
                     if det_gt_id[i] in inactive_tracks_gt_id:
                         f = 0
                         self.missed_reID += 1
                         self.missed_reID_score += 1
                         if max[i]!=old_max[i]:
                             self.missed_reID_score_iou += 1
-                        for t in self.inactive_tracks:
+                        for j, t in enumerate(self.inactive_tracks):
                             if t.gt_id == det_gt_id[i]:
-                                # self.exclude_from_others.append(t.id)
-                                print('!!!!! missed reID of person {}'.format(t.id))
+                                #self.exclude_from_others.append(t.id)
+                                #logger.debug("exlude {}".format(t.id))
+                                logger.debug('!!!!! missed reID of person {}'.format(t.id))
                                 #self.missed_reID += 1
                                 #self.det_new_track_exclude.append(i)
                                 #self.missed_reID_score += 1
+
+                                # track missed, j is position correct prediction
+                                if track_missed[i] == -1:
+                                    track_missed[i] = [j]
+                                else:
+                                    track_missed[i].append(j)
+
+                                # attach classifier
+                                # t.add_classifier(box_predictor_classification=self.box_predictor_classification,
+                                #                       box_head_classification=self.box_head_classification)
+
                                 f += 1
 
                         if f == 0:
                             for id in self.db_gt_inactive[det_gt_id[i]]:
-                                # self.exclude_from_others.append(id)
-                                # print("exlude {}".format(id))
-                                print("track not inactive frames anymore")
+                                #self.exclude_from_others.append(id)
+                                #logger.debug("exlude {}".format(id))
+                                logger.debug("track not inactive frames anymore")
                                 self.missed_reID_patience += 1
                     else:
-                        print("correctly initialized new track")
+                        logger.debug("correctly initialized new track")
                         self.correct_no_reID += 1
                         if max[i]!=old_max[i]:
                             self.correct_no_reID_iou += 1
+
+        #handle case if there are 2 detections with high score for 1 inactive track
+        for z, k in inactive_to_det.items():
+            if len(k)>1:
+                logger.debug('delete detections with lower score')
+                det_scores = []
+                for j in k:
+                    det_scores.append(det_index_to_candidate[j][0][1])
+                det_max_idx = np.asarray(det_scores).argmax()
+                for o, j in enumerate(k):
+                    if o != det_max_idx:
+                        del det_index_to_candidate[j]
+                        inactive_to_det[z].remove(j)
+                        pass
+
 
         for det_index, candidates in det_index_to_candidate.items():
             candidate = candidates[0]
@@ -837,17 +991,39 @@ def reid_by_finetuned_model_oracle(self, new_det_pos, new_det_scores, frame, blo
                 # check if GT id fits
                 if inactive_track.gt_id != det_gt_id[det_index]:
                     #self.exclude_from_others.append(inactive_track.id)
-                    print('!!!!! wrong reID of person {}'.format(inactive_track.id))
-                    self.wrong_reID += 1
+                    #logger.debug("exclude reID track {} from others".format(inactive_track.id))
+                    logger.debug('!!!!! wrong reID of person {}, reID GT ID {}, det GT ID {}'.format(inactive_track.id,
+                                                                                        inactive_track.gt_id,
+                                                                                        det_gt_id[det_index]))
+                    if det_gt_id[det_index] != -1 and inactive_track.gt_id != None:
+                        # just in this case i can be sure the reID was a wrong person
+                        self.wrong_reID += 1
                     #print("exclude reID track {} from others".format(inactive_track.id))
+
+                        # attach classifier
+                        correct_prediction = []
+                        for i, t in enumerate(self.inactive_tracks):
+                            if t.gt_id == det_gt_id[det_index]:
+                                correct_prediction.append(i)
+                                logger.debug('correct prediction is {}'.format(i))
+                        if len(correct_prediction)==0:
+                            logger.debug('not possible to do correction prediction, GT ID not in inactive tracks')
+                        else:
+                            logger.debug('correct prediction saved')
+                            # inactive_track.add_classifier(
+                            #                             box_head_classification=self.box_head_classification,
+                            #                             box_predictor_classification=self.box_predictor_classification,
+                            #                             wrong_gt_id=det_gt_id[det_index],
+                            #                             correct_prediction=correct_prediction)
+
                 else:
-                    print('correct reID of person {}'.format(inactive_track.id))
+                    logger.debug('correct reID of person {}'.format(inactive_track.id))
                     self.correct_reID += 1
                 # make sure just 1 new detection per inactive track
                 self.tracks.append(inactive_track)
-                print(
+                logger.debug(
                     f"\n**************   Reidying track {inactive_track.id} in frame {frame} with score {candidate[1]}")
-                print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks]))
+                logger.debug(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks]))
                 self.num_reids += 1
                 self.inactive_count_succesfull_reID.append(inactive_track.count_inactive)
 
@@ -875,9 +1051,9 @@ def reid_by_finetuned_model_oracle(self, new_det_pos, new_det_scores, frame, blo
                 assigned.append(det_index)
                 remove_inactive.append(inactive_track)
             else:
-                print('\nerror, {} new det for 1 inactive track ID {}'.format(len(inactive_to_det[inactive_id_in_list]),
+                logger.debug('\nerror, {} new det for 1 inactive track ID {}'.format(len(inactive_to_det[inactive_id_in_list]),
                                                                               inactive_track.id))
-                print(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks]))
+                logger.debug(' - it was trained on inactive tracks {}'.format([t.id for t in self.inactive_tracks]))
 
         if len(remove_inactive) > 0:
             # do batched roi pooling
@@ -923,4 +1099,123 @@ def reid_by_finetuned_model_oracle(self, new_det_pos, new_det_scores, frame, blo
             new_det_pos = torch.zeros(0).to(device)
             new_det_scores = torch.zeros(0).to(device)
 
-    return new_det_pos, new_det_scores
+    return new_det_pos, new_det_scores, track_missed
+
+def add_oracle(self, new_det_pos, new_det_scores, image, frame, track_missed, new_det_features=None):
+    """Initializes new Track objects and saves them."""
+    num_new = new_det_pos.size(0)
+    old_tracks = self.get_pos()
+    box_roi_pool = self.obj_detect.roi_heads.box_roi_pool
+    iou = bbox_overlaps(torch.cat((new_det_pos, old_tracks)), torch.cat((new_det_pos, old_tracks)))
+
+    # do augmentation in current frame
+    if self.finetuning_config['data_augmentation'] > 0:
+        boxes = torch.tensor([]).to(device)
+        for i, track in enumerate(new_det_pos):
+            box = track
+            augmented_boxes = replicate_and_randomize_boxes(box.unsqueeze(0),
+                                                            self.finetuning_config['data_augmentation'],
+                                                            self.finetuning_config['max_displacement'])
+            augmented_boxes = clip_boxes_to_image(augmented_boxes, image.size()[1:3])
+            boxes = torch.cat((boxes, torch.cat((box.unsqueeze(0), augmented_boxes))))
+    else:
+        #boxes = clip_boxes(new_det_pos, image.size()[1:3])
+        boxes = new_det_pos
+
+    # do batched roi pooling
+    boxes_resized = resize_boxes(boxes, image.size()[1:3], self.obj_detect.image_size[0])
+    proposals = [boxes_resized]
+    with torch.no_grad():
+        roi_pool_feat = box_roi_pool(self.obj_detect.fpn_features, proposals, image.size()[1:3]).to(device)
+
+    roi_pool_per_track = roi_pool_feat.split(self.finetuning_config['data_augmentation'] + 1)
+
+    # # add GT ID for new tracks
+    # for d in new_det_pos:
+    #     # t = torch.arange(self.im_index-(t.training_set.features.shape[0]))
+    #
+    #     gt_boxes = torch.cat(list(self.gt.values()), 0).to(device)
+    #     new_det_iou_GT = bbox_overlaps(d, gt_boxes).cpu().numpy()
+    #     ind = np.where(new_det_iou_GT == np.max(new_det_iou_GT))[1]
+    #     if len(ind) > 0:
+    #         ind = ind[0]
+    #         overlap = new_det_iou_GT[0, ind]
+    #         if overlap >= 0.5:
+    #             gt_id = list(self.gt.keys())[ind]
+    #             t.gt_id = gt_id
+    #             self.inactive_tracks_gt_id.append(gt_id)
+    #
+    #             if gt_id not in self.db_gt_inactive.keys():
+    #                 self.db_gt_inactive[gt_id] = [t.id]
+    #             else:
+    #                 self.db_gt_inactive[gt_id].append(t.id)
+    #         else:
+    #             print('no GT id found for track {}, overlap {}'.format(t.id, overlap))
+
+    for i in range(num_new):
+        logger.debug('init track {}'.format(self.track_num + i))
+        track = Track(new_det_pos[i].view(1, -1), new_det_scores[i], self.track_num + i,
+                      new_det_features[i].view(1, -1) if new_det_features else None, self.inactive_patience, self.max_features_num,
+                      self.motion_model_cfg['n_steps'] if self.motion_model_cfg['n_steps'] > 0 else 1,
+                      image.size()[1:3], self.obj_detect.image_size, self.finetuning_config["batch_size"],
+                      box_roi_pool=box_roi_pool, keep_frames=self.finetuning_config['keep_frames'],
+                      data_augmentation = self.finetuning_config['data_augmentation'], flip_p=self.finetuning_config['flip_p'])
+
+        if track_missed is not None:
+            if track_missed[i]==-1:
+                pass
+            elif len(track_missed[i])==1:
+                pass
+                track.add_classifier(
+                    box_head_classification=self.box_head_classification,
+                    box_predictor_classification=self.box_predictor_classification,
+                    wrong_gt_id=-1,
+                    correct_prediction=track_missed[i])
+            else:
+                logger.debug('problem because missed reID had {} inactive tracks'.format(len(track_missed[i])))
+                track.add_classifier(
+                    box_head_classification=self.box_head_classification,
+                    box_predictor_classification=self.box_predictor_classification,
+                    wrong_gt_id=-1,
+                    correct_prediction=track_missed[i])
+
+        self.tracks.append(track)
+        if frame==13800:
+            # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
+            # debugging frcnn-09 frame 138 problem person wird fälschlicherweise als ID4
+            track.add_classifier(self.box_predictor_classification, self.box_head_classification)
+            print('\n attached classifier')
+        if i in self.det_new_track_exclude:
+            self.exclude_from_others.append(track.id)
+            print("exclude newly init track {} from others".format(track.id))
+        #other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i + 1:], old_tracks))
+        if torch.sum(iou[i] > self.finetuning_config['train_iou_threshold']) > 1:
+            print('\nSKIP SKIP SKIP beim Adden')
+            self.c_skipped_for_train_iou += 1
+            track.skipped_for_train += 1
+            continue
+
+        track.update_training_set_classification(features=roi_pool_per_track[i],
+                                                 pos=boxes[i+self.finetuning_config['data_augmentation']].unsqueeze(0),
+                                                 frame=self.im_index,
+                                                 area=track.calculate_area())
+
+    self.track_num += num_new
+
+    # add GT ID for new tracks
+    num_new = new_det_pos.size(0)
+    for t in self.tracks[-num_new:]:
+        # t = torch.arange(self.im_index-(t.training_set.features.shape[0]))
+
+        gt_boxes = torch.cat(list(self.gt.values()), 0).to(device)
+        new_det_iou_GT = bbox_overlaps(t.pos, gt_boxes).cpu().numpy()
+        ind = np.where(new_det_iou_GT == np.max(new_det_iou_GT))[1]
+        if len(ind) > 0:
+            ind = ind[0]
+            overlap = new_det_iou_GT[0, ind]
+            if overlap >= 0.2:
+                gt_id = list(self.gt.keys())[ind]
+                t.gt_id = gt_id
+
+            else:
+                logger.debug('ADD no GT id found for track {}, overlap {}'.format(t.id, overlap))

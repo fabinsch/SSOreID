@@ -46,7 +46,7 @@ class VisdomLinePlotter(object):
             self.viz = Visdom(port=8097, env=env)
         else:
             self.viz = Visdom(env=env, log_to_filename='experiments/logs/{}'.format(env), offline=True)
-            print('\n save plot as experiments/logs/{}'.format(env))
+            #print('\n save plot as experiments/logs/{}'.format(env))
 
         logger.setLevel(20)
         self.env = env
@@ -64,7 +64,7 @@ class VisdomLinePlotter(object):
         self.accuracy_window = self.viz.line(X=torch.zeros((1,)).cpu(),
                            Y=torch.zeros((1)).cpu(),
                            opts=dict(xlabel='epoch',
-                                     ylabel='accuracy in %',
+                                     ylabel='accuracy',
                                      env=self.env,
                                      title='({})Accuracy inactive {}'.format(im, id),
                                      legend=['train #{}'.format(self.n_samples_train)]))
@@ -151,7 +151,7 @@ class VisdomLinePlotter_ML(object):
         self.accuracy_window = self.viz.line(X=torch.zeros((1,)).cpu(),
                            Y=torch.zeros((1)).cpu(),
                            opts=dict(xlabel='Epoch',
-                                     ylabel='Accuracy in %',
+                                     ylabel='Accuracy',
                                      env=self.env,
                                      title='Accuracy val set',
                                      legend=['train_task_val_set']))

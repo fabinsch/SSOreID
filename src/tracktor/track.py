@@ -7,11 +7,29 @@ from torch.nn import functional as F
 from torchvision.models.detection.transform import resize_boxes
 
 from tracktor.training_set_generation import replicate_and_randomize_boxes
-from tracktor.utils import clip_boxes
+#from tracktor.utils import clip_boxes
 from tracktor.visualization import plot_bounding_boxes, VisdomLinePlotter
 from tracktor.live_dataset import IndividualDataset
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+def clip_boxes(boxes, im_shape):
+    """
+    Clip boxes to image boundaries.
+    boxes must be tensor or Variable, im_shape can be anything but Variable
+    """
+    if not hasattr(boxes, 'data'):
+        boxes_ = boxes.numpy()
+
+    boxes = boxes.view(boxes.size(0), -1, 4)
+    boxes = torch.stack([
+        boxes[:, :, 0].clamp(0, im_shape[1] - 1),
+        boxes[:, :, 1].clamp(0, im_shape[0] - 1),
+        boxes[:, :, 2].clamp(0, im_shape[1] - 1),
+        boxes[:, :, 3].clamp(0, im_shape[0] - 1)
+    ], 2).view(boxes.size(0), -1)
+
+    return boxes
 
 class Track(object):
     """This class contains all necessary for every individual track."""
@@ -41,6 +59,7 @@ class Track(object):
         self.box_roi_pool = box_roi_pool
         self.training_set = IndividualDataset(self.id, keep_frames, data_augmentation, flip_p)
         self.skipped_for_train = 0
+        self.following_scores = None
 
     def has_positive_area(self):
         return self.pos[0, 2] > self.pos[0, 0] and self.pos[0, 3] > self.pos[0, 1]
@@ -114,10 +133,22 @@ class Track(object):
     #     return {'features': roi_pool_feat, 'boxes': boxes[:, 0:4], 'scores': boxes[:, 4]}
 
     def update_training_set_classification(self, features, pos, frame, area):
-        training_set_dict = {'features': features, 'boxes': pos}
+        training_set_dict = {'features': features.cpu(), 'boxes': pos.cpu()}
         self.training_set.append_samples(training_set_dict, frame, area)
 
-    def add_classifier(self, box_head_classification, box_predictor_classification):
-        self.box_head_classification_debug = box_head_classification
-        self.box_predictor_classification_debug = box_predictor_classification
+    def add_classifier(self, box_head_classification, box_predictor_classification, wrong_gt_id, correct_prediction):
+        self.missed_since = None
+        self.wrongreID_since = None
+        if self.following_scores == None:
+            self.box_head_classification_debug = box_head_classification
+            self.box_predictor_classification_debug = box_predictor_classification
+            self.following_scores = []
+            self.follwing_corr = []
+            self.wrong_gt_id = wrong_gt_id
+            self.correct_prediction = [c+1 for c in correct_prediction] # because of others class
+            self.missed_since = 0
+
+        else:
+            print('PROBLEM, already added classifier to this track')
+            #exit()
 
