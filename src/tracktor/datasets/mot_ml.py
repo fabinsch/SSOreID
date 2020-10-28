@@ -71,6 +71,7 @@ class MOT_ML(MOT17_Sequence):
 		sample = self.data[idx]
 		#pers = id[np.random.choice(id.shape[0])]
 		id = sample[0]
+		box = sample[1]
 		feat = sample[2]
 
 		return id, feat
@@ -147,8 +148,11 @@ class MOT_ML(MOT17_Sequence):
 		if len(pers)>1:
 			self.data = np.array(pers)
 			idx = [person[0] for person in pers]
+			box = [person[1] for person in pers]
 			feats = [person[2] for person in pers]
 			feats = torch.cat(feats)
+			#box = np.concatenate(box)
+			self.box = box
 			self.idx = np.array(idx)
 			self.feats = feats
 		else:

@@ -1,21 +1,37 @@
 tracktor:
-  'dataset': mot17_09_FRCNN17
+  'loggerLevel': 10
+  'dataset': mot17_02_FRCNN17
   'write_images': False
   'reid_ML': True
-  'LR_ML': False
+  'LR_ML': True
   #'reid_weights': output/tracktor/ml_classification/_range02val/75000_reID_Network.pth
-  'reid_weights': output/tracktor/ml_classification/+C02_MAML_flip/best_reID_Network.pth
+  #'reid_weights': output/tracktor/ml_classification/test_LR_per_Parameter_02Val_5e-5BOTH/best_reID_Network.pth
+  #'reid_weights': output/tracktor/ml_classification/3DB_val_09_MAML+LR_uniformID/best_reID_Network.pth
+  #'reid_weights': output/tracktor/ml_classification/3DB_val_09/best_reID_Network.pth
+  #'reid_weights': output/tracktor/ml_classification/LR_per_Parameter_09_clamp_OLDSamp_init1e-4/best_reID_Network.pth
+  #'reid_weights': output/tracktor/ml_classification/LR_per_Parameter_clamp_2/best_reID_Network.pth
+  'reid_weights': output/tracktor/ml_classification/LR_per_Parameter_02_other_val_splitGPU/best_reID_Network.pth
   'tracker':
     'inactive_patience': 50
     'reid_iou_threshold': 0.2
     'finetuning':
-      'epochs': 50
+      'epochs': 500
       'epochs_wo_val': 10
-      'learning_rate': 1e-3
+      'learning_rate': 1e-4
       'validate': False
       'others_class': True
+      'train_others': False
+      'upsampling': False
+      'weightedLoss': True
+      'load_others': False
+      'samples_per_ID': 20
+      'sequence_others': MOT17-05
+      #'sequence_others': ALL
+      'fill_up': False
+      'fill_up_to': 10
+      'flexible': False
       'plot_training_curves': True
-      'early_stopping_classifier': True
+      'early_stopping_classifier': False
       # method 1 means early stopping with patience and delta, 2 is pick best according to val loss, 3 acc to val accuracy, 4 just others val loss
       'early_stopping_method': 2
       'early_stopping_patience': 30
@@ -23,4 +39,5 @@ tracktor:
       'plot_offline': False
       'init_last': True
       'init_last_same': True
-  'output_subdir': '109'
+      'reid_score_threshold': 0.5
+  'output_subdir': '10_01_test_fillup09_2'

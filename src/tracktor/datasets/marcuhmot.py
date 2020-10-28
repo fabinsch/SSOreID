@@ -44,14 +44,14 @@ class MarCUHMOT_ML(Dataset):
 
 		print("[*] Loading Market1501")
 		start_time = time.time()
-		market = Market1501_ML('gt_bbox', **dataloader)
+		#market = Market1501_ML('gt_bbox', **dataloader)
 		print("--- %s seconds --- for Market1501" % (time.time() - start_time))
 		#self.save(market, 'market_test')
 
 
 		print("[*] Loading CUHK03")
 		start_time = time.time()
-		cuhk = CUHK03_ML('labeled', **dataloader)
+		#cuhk = CUHK03_ML('labeled', **dataloader)
 		print("--- %s seconds --- for Cuhk03" % (time.time() - start_time))
 
 
@@ -63,9 +63,11 @@ class MarCUHMOT_ML(Dataset):
 
 		#self.dataset = ConcatDataset([market, cuhk, mot])
 		name = 'marchumot_ML_pad_filtered6'
+		name = 'mot_db_debug'
 		if os.path.exists('./data/ML_dataset/db_train_{}.h5'.format(name)):
 			os.remove('./data/ML_dataset/db_train_{}.h5'.format(name))
-		self.save([market, cuhk, mot], name)
+		#self.save([market, cuhk, mot], name)
+		self.save(mot, name)
 
 	def __len__(self):
 		return len(self.dataset)
@@ -84,6 +86,7 @@ class MarCUHMOT_ML(Dataset):
 			if data.name == 'mot_ml_wrapper':
 				for d in data.data:
 					self.save(d, name, i)
+					i += 1 ## needed if only MOT sequences
 			else:
 				if i == 0:
 					with h5py.File('./data/ML_dataset/db_train_{}.h5'.format(name), 'w') as hf:
@@ -94,6 +97,11 @@ class MarCUHMOT_ML(Dataset):
 
 				with h5py.File('./data/ML_dataset/db_train_{}.h5'.format(name), 'a') as hf:
 					hf.create_dataset('{}/data'.format(data.name), data=data.feats)
+					print('keys: {}'.format(hf.keys()))
+
+				# for others db
+				with h5py.File('./data/ML_dataset/db_train_{}.h5'.format(name), 'a') as hf:
+					hf.create_dataset('{}/box'.format(data.name), data=data.box)
 					print('keys: {}'.format(hf.keys()))
 
 
