@@ -13,7 +13,7 @@ import torch
 import torch.nn
 from torch.autograd import grad
 from torch.nn import functional as F
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, RandomSampler
 from collections import namedtuple
 
 from tracktor.config import get_output_dir, get_tb_dir
@@ -221,7 +221,7 @@ class MetaSGD(l2l.algorithms.MetaSGD):
 
         self.module = meta_sgd_update(self.module, self.lrs, gradients)
 
-    def init_last(self, ways):
+    def init_last(self, ways, train=False):
         if self.module.global_LR:
             last_n = 'last_{}'.format(ways - 1)
             repeated_bias = self.predictor.bias.clone().repeat(ways - 1)
@@ -237,11 +237,21 @@ class MetaSGD(l2l.algorithms.MetaSGD):
                             p.data = repeated_bias
                     break
         else:
-            last_n = 'last_{}'.format(ways-1)
-            repeated_bias = self.predictor.bias.clone().repeat(ways - 1)
-            repeated_bias_lr = self.lrs[5].clone().repeat(ways -1)
-            repeated_weights = self.predictor.weight.clone().repeat(ways - 1, 1)
-            repeated_weights_lr = self.lrs[4].clone().repeat(ways - 1, 1)
+            #last = ways-1 if train else ways
+            last = ways  # always others neuron + 4 times duplicated template neuron
+            last_n = 'last_{}'.format(last)
+            additional = ways-1
+            repeated_bias = self.predictor.bias.clone().repeat(additional)
+            #repeated_bias_lr = self.lrs[5].clone().repeat(additional)
+            repeated_bias_lr = self.lrs[7].clone().repeat(additional)
+            repeated_weights = self.predictor.weight.clone().repeat(additional, 1)
+            #repeated_weights_lr = self.lrs[4].clone().repeat(additional, 1)
+            repeated_weights_lr = self.lrs[6].clone().repeat(additional, 1)
+
+            repeated_weights = torch.cat((self.module.others_neuron_weight, repeated_weights))
+            repeated_bias = torch.cat((self.module.others_neuron_bias, repeated_bias))
+            repeated_weights_lr = torch.cat((self.lrs[0], repeated_weights_lr))
+            repeated_bias_lr = torch.cat((self.lrs[1], repeated_bias_lr))
             for name, layer in self.module.named_modules():
                 if name == last_n:
                     for param_key in layer._parameters:
@@ -321,7 +331,7 @@ class ML_dataset(Dataset):
 
             label = self.data[0][item] #.unsqueeze(0)
             #label = torch.cat((self.data[0][item].unsqueeze(0), label))
-            return (features, label)
+            return (features.to(device), label)
         else:
             return (self.data[1][item], self.data[0][item].unsqueeze(0))
 
@@ -335,10 +345,17 @@ class reID_Model(torch.nn.Module):
         self.head = head
         self.predictor = predictor.cls_score
         #self.last = torch.nn.Linear(1024, 4).to(device)
+        # just get 1 template neuron as output and additional last X (to be filled with template)
+        self.others_neuron_weight = torch.nn.Parameter(self.predictor.weight[1, :].unsqueeze(0))
+        self.others_neuron_bias = torch.nn.Parameter(self.predictor.bias[1].unsqueeze(0))
         self.predictor.weight = torch.nn.Parameter(self.predictor.weight[0,:].unsqueeze(0))
         self.predictor.bias = torch.nn.Parameter(self.predictor.bias[0].unsqueeze(0))
+
+
         for n in n_list:
-            self.add_module('last_{}'.format(n-1), torch.nn.Linear(1024, n-1).to(device))
+            #self.add_module('last_{}'.format(n - 1), torch.nn.Linear(1024, n - 1).to(device)) ## before having others neuron
+            n += 1
+            self.add_module('last_{}'.format(n - 1), torch.nn.Linear(1024, n - 1).to(device))
         self.num_output = n_list
         # self.additional_layer = {}
         # if len(n)>0:
@@ -350,7 +367,10 @@ class reID_Model(torch.nn.Module):
         # else:
         #     self.additional_layer = None
 
-    def forward(self, x, nways):
+    def forward(self, x, nways, train):
+        #nways += 0 if train else 1
+        nways += 1
+
         feat = self.head(x)
         x = self.predictor(feat)
         # if self.additional_layer != None and nways>2:
@@ -364,7 +384,7 @@ class reID_Model(torch.nn.Module):
                 if name == last_n:
                     add = layer(feat)
                     break
-            x = torch.cat((x, add), dim=1)
+            x = torch.cat((add, x), dim=1)
         # else:
 
         return x
@@ -389,6 +409,7 @@ class reID_Model(torch.nn.Module):
 def remove_last(state_dict, num_output):
     r = dict(state_dict)
     for n in num_output:
+        n += 1
         key_weight = 'module.last_{}.weight'.format(n-1)
         key_bias = 'module.last_{}.bias'.format(n-1)
         del r[key_weight]
@@ -396,20 +417,35 @@ def remove_last(state_dict, num_output):
     return r
 
 
-def forward_pass_for_classifier_training(learner, features, scores, nways, eval=False, return_scores=False):
+def forward_pass_for_classifier_training(learner, features, scores, nways, eval=False, return_scores=False, ratio=[], train=False):
 
     if eval:
         learner.eval()
-    class_logits = learner(features, nways)
+    class_logits = learner(features, nways, train)
 
     if return_scores:
         pred_scores = F.softmax(class_logits, -1)
-        loss = F.cross_entropy(class_logits, scores.long())
+        if not train:
+            w = torch.ones(int(torch.max(scores).item()) + 1).to(device)
+            # w[0] = w[0]*ratio  # downweight 0 class
+            # w[1:] = w[1:]*(1/ratio)  # upweight inactive
+            w = w * (1 / ratio)
+            loss = F.cross_entropy(class_logits, scores.long(), weight=w)
+        else:
+            loss = F.cross_entropy(class_logits, scores.long())
         if eval:
             learner.train()
         return pred_scores.detach(), loss
 
-    loss = F.cross_entropy(class_logits, scores.long())
+    if not train:
+        w = torch.ones(int(torch.max(scores).item()) + 1).to(device)
+        # w[0] = w[0]*ratio  # downweight 0 class
+        # w[1:] = w[1:]*(1/ratio)  # upweight inactive
+        w = w * (1 / ratio)
+        w = torch.cat((torch.ones(1).to(device),w)) if train else w
+        loss = F.cross_entropy(class_logits, scores.long(), weight=w)
+    else:
+        loss = F.cross_entropy(class_logits, scores.long())
 
     if eval:
         learner.train()
@@ -417,9 +453,34 @@ def forward_pass_for_classifier_training(learner, features, scores, nways, eval=
         return loss
 
 
-def accuracy(predictions, targets):
+def accuracy(predictions, targets, iter=-1, train=False):
+    valid_accuracy_with_zero = torch.zeros(1)
     predictions = predictions.argmax(dim=1).view(targets.shape)
-    return (predictions == targets).sum().float() / targets.size(0)
+    #print(predictions)
+    non_zero_target = (targets != 0)
+    num_non_zero_targets = non_zero_target.sum()
+    if iter%100==0 and not train:
+        zero_target = (targets == 0)
+
+        #zero_predict = (predictions == 0)
+        compare = (predictions == targets)
+        #zero_missed = (compare==False).sum()
+        num_zero_targets = zero_target.sum()
+
+        num_correct_predictions_zero_targets = compare[num_non_zero_targets:].sum()
+        zero_target_missed = num_zero_targets-num_correct_predictions_zero_targets
+        num_correct_predictions_non_zero_targets = compare[:num_non_zero_targets].sum()
+        non_zero_target_missed = num_non_zero_targets-num_correct_predictions_non_zero_targets
+        print('{}/{} persons missed, {}/{} others missed'.format(non_zero_target_missed, num_non_zero_targets, zero_target_missed, num_zero_targets))
+
+    valid_accuracy_without_zero = (predictions[:num_non_zero_targets] == targets[:num_non_zero_targets]).sum().float() / targets[:num_non_zero_targets].size(0)
+    if not train:
+        valid_accuracy_with_zero = (predictions == targets).sum().float() / targets.size(0)
+        #valid_accuracy_just_zero = 0.0
+        valid_accuracy_just_zero = (predictions[num_non_zero_targets:] == targets[num_non_zero_targets:]).sum().float() / targets[num_non_zero_targets:].size(0)
+        return (valid_accuracy_without_zero, valid_accuracy_with_zero, valid_accuracy_just_zero)
+
+    return valid_accuracy_without_zero
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -459,30 +520,35 @@ class AverageMeter(object):
 
 def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_task=True,
                plotter=None, iteration=-1, sequence=None, task=-1, taskID=-1, reid=None,
-               init_last=True):
+               init_last=True, others_own=None, others=torch.zeros(1)):
+    #print('fast adapt')
     flip_p = reid['ML']['flip_p']
     valid_accuracy_before = torch.zeros(1)
     validation_error_before = torch.zeros(1)
 
+
     data, labels = batch
-    data, labels = data.to(device), labels.to(device)
+    data, labels = data.to(device), labels.to(device)+1  ## because 0 is for others class
 
     # Separate data into adaptation/evalutation sets
     adaptation_indices = np.zeros(data.size(0), dtype=bool)
-    adaptation_indices[np.arange(shots*ways) * 2] = True  # true false true false ...
+    adaptation_indices[np.arange(shots * ways) * 2] = True  # true false true false ...
     # quick fix. get always the 3 first for training and the others 3 for validation set
     # TODO quick fix
-    #adaptation_indices[[0,1,2,6,7,8,12,13,14,18,19,20,24,25,26]] = True
+    # adaptation_indices[[0,1,2,6,7,8,12,13,14,18,19,20,24,25,26]] = True
     evaluation_indices = torch.from_numpy(~adaptation_indices)
     adaptation_indices = torch.from_numpy(adaptation_indices)
 
-    if flip_p>0.0:
-        # get flipped feature maps
+    ratio = torch.ones(ways + 1).to(device) * shots
+    if flip_p > 0.0:
+        # get flipped feature maps, in combination with getitem method
         data = data.view(-1, 256, 7, 7)
         labels = labels.repeat_interleave(2)
         # because of flip
         adaptation_indices = adaptation_indices.repeat_interleave(2)
         evaluation_indices = evaluation_indices.repeat_interleave(2)
+        ratio = torch.ones(ways + 1).to(device) * shots * 2
+
 
     info = (sequence, ways, shots, iteration, train_task, taskID)
 
@@ -520,22 +586,79 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_tas
 
     # init last layer with the same weights
     if init_last==True:
+        #learner.init_last(ways, train=True)
         learner.init_last(ways)
-
     # Adapt the model
     for step in range(adaptation_steps):
         plot_inner=False
         if (plotter != None) and (iteration%10==0) and task==0 and plot_inner==True:
-            train_predictions, train_error = forward_pass_for_classifier_training(learner, adaptation_data, adaptation_labels, ways, return_scores=True)
+        #if True:
+            train_predictions, train_error = forward_pass_for_classifier_training(learner, adaptation_data, adaptation_labels, ways, return_scores=True, ratio=ratio, train=True)
             train_accuracy = accuracy(train_predictions, adaptation_labels)
-            plotter.plot(epoch=step, loss=train_error, acc=train_accuracy, split_name='inner', info=info)
+            #print(train_accuracy)
+            #plotter.plot(epoch=step, loss=train_error, acc=train_accuracy, split_name='inner', info=info)
         else:
-            train_error = forward_pass_for_classifier_training(learner, adaptation_data, adaptation_labels, ways)
+            train_error = forward_pass_for_classifier_training(learner, adaptation_data, adaptation_labels, ways, ratio=ratio, train=True)
         #train_error /= len(adaptation_data)
         learner.adapt(train_error)  # Takes a gradient step on the loss and updates the cloned parameters in place
+    # get others for validation set and adapt learner
+    # get one idx for others, make sure always a different one
+    del train_error
+    if True:
+        #print('if true')
+        #start_time = time.time()
+        # others_ = torch.tensor([])
+        # others_ = torch.cat((others_, others[0][0]))  # take samples from all MOT sequences
+        # for o in others[1][0]:  # go through market and cuhk depending if used for train task or not
+        #     if len(o)>0:
+        #         others_ = torch.cat((others_, o))
+        ID_others = 0
+        random.shuffle(others_own)
+        others_own = others_own[:ways*shots*2]
+        #num_others = int(others[0].size(0))
+        others = torch.cat((others_own, others.to(device))) if len(others)>1 else others_own
+        del others_own
+        num_others = int(others.size(0))
+        #evaluation_data_others, evaluation_labels_others = others[0].to(device), others[1].to(device) * ID_others
 
+        #evaluation_data_others, evaluation_labels_others = others.to(device), torch.ones(num_others).long().to(device) * ID_others
+
+
+        #ID_others = random.randrange(ways)
+        #replace = (labels == ID_others)
+        #labels = labels + replace * (ways - ID_others)
+
+        #adaptation_indices_others = np.zeros(others[0].size(0), dtype=bool)
+
+        # Separate others into adaptation/evalutation sets
+        # if flip_p > 0.0:
+        # if False:
+        #     num_others = int(others[0].size(0) / 4)  # flip and eval+adapt
+        #     adaptation_indices_others[np.arange(0, others[0].size(0), 4)] = True
+        #     adaptation_indices_others[np.arange(1, others[0].size(0), 4)] = True
+        # else:
+        #     num_others = int(others[0].size(0) / 2)
+        #     adaptation_indices_others[np.arange(0, others[0].size(0), 2)] = True
+        # evaluation_indices_others = torch.from_numpy(~adaptation_indices_others)
+        # adaptation_indices_others = torch.from_numpy(adaptation_indices_others)
+        #
+        # adaptation_data_others, adaptation_labels_others = others[0][adaptation_indices_others], others[1][
+        #     adaptation_indices_others] * ID_others
+        # evaluation_data_others, evaluation_labels_others = others[0][evaluation_indices_others], others[1][
+        #     evaluation_indices_others] * ID_others
+
+        # adaptation_data = torch.cat((adaptation_data, adaptation_data_others))
+        # adaptation_labels = torch.cat((adaptation_labels, adaptation_labels_others))
+        others = torch.cat((evaluation_data, others))
+        evaluation_labels = torch.cat((evaluation_labels, torch.ones(num_others).long().to(device) * ID_others))
+        #logger.debug("--- %s seconds --- for construct others and switch to gpu" % (time.time() - start_time))
+        ratio[ID_others] = num_others
+        #ratio = torch.cat((ratio, torch.ones(1).to(device)*num_others))
+
+    # if init_last==True:
+    #     learner.init_last(ways, train=False)
     # Evaluate the adapted model
-    predictions, validation_error = forward_pass_for_classifier_training(learner, evaluation_data, evaluation_labels, ways, return_scores=True)
+    predictions, validation_error = forward_pass_for_classifier_training(learner, others, evaluation_labels, ways, return_scores=True, ratio=ratio, train=False)
 
     # debug val task val set
     # if train_task==False and iteration%10==0:
@@ -545,11 +668,11 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_tas
     #     print(predictions_debug == evaluation_labels)
 
 
-    valid_accuracy = accuracy(predictions, evaluation_labels)
+    valid_accuracy = accuracy(predictions, evaluation_labels, iteration, train_task)
     #print(valid_accuracy)
 
     if train_task==False:
-        valid_accuracy = (valid_accuracy, valid_accuracy_before)
+    #     valid_accuracy = (valid_accuracy, valid_accuracy_before)
         validation_error = (validation_error, validation_error_before)
 
     return validation_error, valid_accuracy
@@ -670,8 +793,8 @@ def sample_task(sets, nways, kshots, i_to_dataset, sample, val=False, num_tasks=
     n = random.sample(nways, 1)[0]
     k = random.sample(kshots, 1)[0]
     transform = [l2l.data.transforms.FusedNWaysKShots(sets[i], n=n, k=k * 2),
-                 l2l.data.transforms.LoadData(sets[i]),
-                 l2l.data.transforms.RemapLabels(sets[i], shuffle=True)]
+                 l2l.data.transforms.LoadData(sets[i])]
+                 #l2l.data.transforms.RemapLabels(sets[i], shuffle=True)]
                  #l2l.data.transforms.RemapLabels(sets[i], shuffle=False)]
     taskset = l2l.data.TaskDataset(dataset=sets[i],
                                    task_transforms=transform,
@@ -683,8 +806,14 @@ def sample_task(sets, nways, kshots, i_to_dataset, sample, val=False, num_tasks=
 
     try:
         #print('val')
-        batch = taskset.sample()  # val
-        return batch, n, k, seq, i
+        start_time = time.time()
+        batch = taskset.sample() # val
+        print("--- %s seconds --- [in] val sample task " % (time.time() - start_time))
+        N = n * k * 2
+        start_time = time.time()
+        l = torch.randperm(n).repeat_interleave(k*2)
+        print("--- %s seconds --- [in] val remap labels" % (time.time() - start_time))
+        return ((batch[0][:N].to(device), l.to(device)), batch[0][N:,0,:,:,:].to(device)), n, k, seq, i  # 0 hier um nicht die geflippten FM zu bekommen
     except ValueError:
         return sample_task(sets, nways, kshots, i_to_dataset, sample, val, num_tasks)
 
@@ -692,6 +821,7 @@ def sample_task_new(sets, nways, kshots, i_to_dataset, sample, val=False, num_ta
     if sample_uniform_DB:
         if len(sets)>1:
             j = random.choice(range(7))  # sample which dataset, 0 MOT, 1,2,3 cuhk, 4,5,6 market to balance IDs
+            #j = random.choice(range(4))  # sample which dataset, 0 MOT, 1,2,3 cuhk to balance IDs
             if j == 0:
                 i = random.choice(range(6))  # which of the MOT sequence
             elif j == 1 or j == 2 or j == 3:
@@ -703,15 +833,15 @@ def sample_task_new(sets, nways, kshots, i_to_dataset, sample, val=False, num_ta
     else:
         i = random.choice(range(len(sets)))  # sample sequence
 
-    seq = i_to_dataset[i]
+    seq = (i_to_dataset[i], i)
     if sample == False and val == False:
         i = 2
         seq = i_to_dataset[i]
     n = random.sample(nways, 1)[0]
     k = random.sample(kshots, 1)[0]
     transform = [l2l.data.transforms.FusedNWaysKShots(sets[i], n=n, k=k * 2),
-                 l2l.data.transforms.LoadData(sets[i]),
-                 l2l.data.transforms.RemapLabels(sets[i], shuffle=True)]
+                 l2l.data.transforms.LoadData(sets[i])]
+                 #l2l.data.transforms.RemapLabels(sets[i], shuffle=True)]
                  #l2l.data.transforms.RemapLabels(sets[i], shuffle=False)]
     taskset = l2l.data.TaskDataset(dataset=sets[i],
                                    task_transforms=transform,
@@ -722,10 +852,132 @@ def sample_task_new(sets, nways, kshots, i_to_dataset, sample, val=False, num_ta
 
     try:
         #print('train')
-        batch = taskset.sample()  # train
-        return batch, n, k, seq, i
+        start_time=time.time()
+        batch = taskset.sample() # train
+        print("--- %s seconds --- [in] train sample task " % (time.time() - start_time))
+        #print('taskset samples')
+        ## hier bricht es ab wenn man others own hat
+        N = n * k * 2
+        start_time = time.time()
+        l = torch.randperm(n).repeat_interleave(k * 2)
+        print("--- %s seconds --- [in] train remap labels" % (time.time() - start_time))
+        return ((batch[0][:N].to(device), l.to(device)), batch[0][N:,0,:,:,:].to(device)), n, k, seq, i
     except ValueError:
         return sample_task_new(sets, nways, kshots, i_to_dataset, sample, val, num_tasks)
+
+def get_others(sets, i, num_others, use_market, i_to_dataset):
+    ## new
+    others_FM = torch.tensor([])
+    others_FM_val = torch.tensor([])
+    others_ID = torch.tensor([])
+    others_ID_in_seq = torch.tensor([])
+
+    for j, s in enumerate(sets):
+        ## include train / val split ID wise
+        # idx = torch.randperm(s.dataset.data[0].nelement())
+        # s = (s.dataset.data[1][idx], s.dataset.data[0][idx])
+        # total_num_others = s[1].nelement()
+        # output, inv_idx, counts = torch.unique(s[1], return_inverse=True, return_counts=True)
+        # num_val_id = int(output.nelement() * 0.3)
+        # num_samples = 0
+        # #others_ = torch.tensor([]).to(device)
+        # for i in range(num_val_id):
+        #     num_samples += counts[i]
+        #     others_FM_val = torch.cat((others_FM_val, (s[0][(s[1] == output[i])]).float()))
+        # #others_val = (others_, torch.ones(others_.shape[0]).long().to(device))
+        # #others_ = torch.tensor([]).to(device)
+        # for i in range(num_val_id, output.nelement()):
+        #     others_FM = torch.cat((others_FM, (s[0][(s[1] == output[i])]).float()))
+        # #others = (others_, torch.ones(others_.shape[0]).long().to(device))
+        # print('work with {} train samples and {} val samples for set {}'.format(total_num_others-num_samples, num_samples, j))
+        # others_ID = torch.cat((others_ID, torch.ones(total_num_others-num_samples) * j))
+
+    # include train / val split easier
+    #     if j == 6 or j==7:
+    #         total_num = s.dataset.data[0][:-2000].nelement()
+    #         val = int(total_num * 0.3)
+    #         others_FM_val = torch.cat((others_FM_val, s.dataset.data[1][:val]))
+    #         others_FM = torch.cat((others_FM, s.dataset.data[1][val:-2000]))
+    #         others_ID = torch.cat((others_ID, torch.ones(s.dataset.data[1][val:-2000].shape[0]) * j))
+    #         print('work with {} train samples and {} val samples for set {}'.format(total_num - val,
+    #                                                                                 val, j))
+    #     else:
+    #         total_num = s.dataset.data[0].nelement()
+    #         val = int(total_num * 0.3)
+    #         others_FM_val = torch.cat((others_FM_val, s.dataset.data[1][:val]))
+    #         others_FM = torch.cat((others_FM, s.dataset.data[1][val:]))
+    #         others_ID = torch.cat((others_ID, torch.ones(s.dataset.data[1][val:].shape[0])*j))
+    #         print('work with {} train samples and {} val samples for set {}'.format(total_num - val,
+    #                                                                                 val, j))
+    #
+    # return (others_FM.to(device), others_ID.to(device), others_FM_val.to(device))
+
+
+        # without train / val split
+        #if j == 6 or j == 7 or s.dataset.data[1].shape[0]>10000:
+        if s.dataset.data[1].shape[0]>5000:
+            #i = torch.randperm(int(s.dataset.data[1].shape[0] * 0.5))
+            #others_FM = torch.cat((others_FM, s.dataset.data[1][i]))
+            #others_ID = torch.cat((others_ID, torch.ones(int(s.dataset.data[1].shape[0] * 0.5)) * j))
+            random.shuffle(s.dataset.data[1])
+            others_FM = torch.cat((others_FM, s.dataset.data[1][:5000]))
+            others_ID = torch.cat((others_ID, torch.ones(5000)*j))
+            print('work with {} samples and for set {}'.format(5000, i_to_dataset[j]))
+        else:
+            others_FM = torch.cat((others_FM, s.dataset.data[1]))
+            others_ID = torch.cat((others_ID, torch.ones(s.dataset.data[1].shape[0])*j))
+            print('work with {} samples and for set {}'.format(s.dataset.data[1].shape[0], i_to_dataset[j]))
+        #others_ID_in_seq = torch.cat((others_ID_in_seq, s.dataset.data[0].float()))
+    #return (others_FM.to(device), others_ID, others_ID_in_seq)
+    print('in total {} others'.format(others_FM.shape[0]))
+    return (others_FM.to(device), others_ID)
+    #return (others_FM, others_ID)
+
+    ## OLD too long
+    #use_market = True
+    use_cuhk = True
+    if use_market:
+        set = sets[-1]
+        others_FM = set.dataset.data[1]
+        #others_FM = torch.tensor(set.dataset.data[1]).to(device)
+
+        #others_ID = set.dataset.data[0] ## to seperate IDs
+        others_ID = torch.ones(others_FM.shape[0]).long()*7
+        #others_ID = torch.tensor([])
+
+        if use_cuhk:
+            set = sets[-2]
+            others_FM =torch.cat((set.dataset.data[1], others_FM))
+            others_ID = torch.cat((torch.ones(set.dataset.data[1].shape[0]).long()*6, others_ID))
+            #others_ID = torch.tensor([])
+        return (others_FM, others_ID)
+
+    N = num_others
+    others_FM = torch.tensor([])
+    sets = [s for j, s in enumerate(sets) if j != i]  # exclude the set used for N ways
+    if N > 0: # take specific number of samples
+        for _ in range(N):
+            j = random.randint(0,len(sets)-1)
+            k = random.randint(0,len(sets[j])-1)
+            others_FM = torch.cat((others_FM, sets[j].dataset[k][0]))
+            try:
+                others_FM = torch.cat((others_FM, sets[j].dataset[k+1][0]))
+            except:
+                others_FM = torch.cat((others_FM, sets[j].dataset[k-1][0]))
+    else:
+        # -1 take all possible samples from MOT sequences
+        if i >= 6:  # tasks come from either market or cuhk
+            end = -1
+        else:
+            end = -2
+        sets = sets[:end]
+        for s in sets:
+            others_FM = torch.cat((others_FM, s.dataset.data[1]))
+
+    #others_ID = torch.ones(others_FM.shape[0]).long()
+    others_ID = torch.tensor([])
+    return (others_FM, others_ID)
+
 
 @ex.automain
 def my_main(_config, reid, _run):
@@ -879,23 +1131,28 @@ def my_main(_config, reid, _run):
     # Clean #
     ##########################
     del data
-    #del validation_data
+    del validation_data
     #del meta_datasets
     #del validation_set
     del sequences
+    del d
+    del seq
     ##########################
     # Initialize the modules #
     ##########################
     print("[*] Building CNN")
+    print('remap on my own because of others own')
 
     obj_detect = FRCNN_FPN(num_classes=2).to(device)
     obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
                                           map_location=lambda storage, loc: storage))
 
-    box_head_classification = obj_detect.roi_heads.box_head
-    box_predictor_classification = obj_detect.roi_heads.box_predictor
+    #box_head_classification = obj_detect.roi_heads.box_head
+    #box_predictor_classification = obj_detect.roi_heads.box_predictor
+    #reID_network = reID_Model(box_head_classification, box_predictor_classification, n_list=nways_list)
 
-    reID_network = reID_Model(box_head_classification, box_predictor_classification, n_list=nways_list)
+    reID_network = reID_Model(obj_detect.roi_heads.box_head, obj_detect.roi_heads.box_predictor, n_list=nways_list)
+
     reID_network.train()
     reID_network.cuda()
     #reID_network.last_layers_freeze()
@@ -947,6 +1204,8 @@ def my_main(_config, reid, _run):
 
     ##################
     # Begin training #
+    del reID_network
+    del obj_detect
     ##################
     print("[*] Training ...")
     clamping_LR = True
@@ -957,9 +1216,42 @@ def my_main(_config, reid, _run):
     losses_meta_val = AverageMeter('Loss', ':.4e')
     acc_meta_train = AverageMeter('Acc', ':6.2f')
     acc_meta_val = AverageMeter('Acc', ':6.2f')
+    acc_zero_meta_val = AverageMeter('Acc', ':6.2f')
+    acc_just_zero_meta_val = AverageMeter('Acc', ':6.2f')
 
     # how to sample, uniform from the 3 db or uniform over sequences
     sample_db = reid['ML']['db_sample_uniform']
+
+    # get others for market and cuhk
+    #start_time = time.time()
+    #others, others_id, others_val  = get_others(meta_datasets, -1, reid['ML']['num_others'], use_market=True)
+
+    #others, others_id  = get_others(meta_datasets, -1, reid['ML']['num_others'], True, i_to_dataset)
+
+    #start_time = time.time()
+    #others_val = get_others(meta_datasets, -1, reid['ML']['num_others'], use_market=False)
+    #logger.debug("--- %s seconds --- for get others" % (time.time() - start_time))
+    #others_val = (others_val, others)
+
+    if reid['ML']['market_others']:
+        others = get_others(meta_datasets, -1, reid['ML']['num_others'], use_market=True)
+        ## split others in train and val, shuffle first
+        idx = torch.randperm(others[1].nelement())
+        others = (others[0][idx], others[1][idx])
+        total_num_others = others[1].nelement()
+        output, inv_idx, counts = torch.unique(others[1], return_inverse=True, return_counts=True)
+        num_val_id = int(output.nelement() * 0.3)
+        num_samples = 0
+        others_ = torch.tensor([]).to(device)
+        for i in range(num_val_id):
+            num_samples += counts[i]
+            others_= torch.cat((others_, (others[0][(others[1] == output[i])]).float()))
+        others_val = (others_, torch.ones(others_.shape[0]).long().to(device))
+        others_ = torch.tensor([]).to(device)
+        for i in range(num_val_id, output.nelement()):
+            others_ = torch.cat((others_, (others[0][(others[1] == output[i])]).float()))
+        others = (others_, torch.ones(others_.shape[0]).long().to(device))
+        print('work with {} train samples and {} val samples for others'.format(total_num_others-num_samples, num_samples))
 
     plotter=None
     if reid['solver']["plot_training_curves"]:
@@ -977,10 +1269,15 @@ def my_main(_config, reid, _run):
         opt.zero_grad()
         meta_train_error = 0.0
         meta_train_accuracy = 0.0
+
+        # without zero
         meta_valid_error = 0.0
         meta_valid_accuracy = 0.0
+        # with zero
         meta_valid_error_before = 0.0
         meta_valid_accuracy_before = 0.0
+        # just zero
+        meta_valid_accuracy_just_zero = 0.0
 
         # for lr in model.lrs:
         #     lr_mask = (lr > 0)
@@ -1006,15 +1303,25 @@ def my_main(_config, reid, _run):
 
 
                 #batch, nways, kshots, _, taskID = sample_task_val(validation_set, nways_list, kshots_list, i_to_dataset, reid['ML']['sample_from_all'], val=True)
+                start_time = time.time()
                 batch, nways, kshots, _, taskID = sample_task(validation_set, nways_list, kshots_list, i_to_dataset,
                                                               reid['ML']['sample_from_all'], val=True, num_tasks=num_tasks_val)
+                #N=nways*kshots*2  # because of adaptation+evaluation data
+                #not_used_IDs = batch[0][N:]  # from current train task sequence
+                #batch = (batch[0][:N], batch[1][:N])
+                batch, not_used_IDs = batch
+                print("--- %s seconds --- [out] sample val task " % (time.time() - start_time))
                 #print('sampled val task')
+                # if not reid['ML']['market_others']:
+                #     start_time = time.time()
+                #     others_val = get_others(meta_datasets, -1, reid['ML']['num_others'], use_market=False)
+                #     print("--- %s seconds --- for get others VAL" % ( time.time() - start_time))
                 if (nways, kshots) not in sampled_val.keys():
                     sampled_val[(nways, kshots)] = 1
                 else:
                     sampled_val[(nways, kshots)] += 1
 
-
+                #print('before fast adapt val')
                 evaluation_error, evaluation_accuracy = fast_adapt(batch,
                                                                    learner,
                                                                    adaptation_steps,
@@ -1028,26 +1335,49 @@ def my_main(_config, reid, _run):
                                                                    task,
                                                                    taskID,
                                                                    reid,
-                                                                   init_last)
+                                                                   init_last,
+                                                                   #others_val)
+                                                                   #torch.cat((others, not_used_IDs[:,0,:,:,:].to(device)))
+                                                                   #not_used_IDs[:,0,:,:,:].to(device)
+                                                                   not_used_IDs,
+                                                                   #others
+                                                                   )
 
                 evaluation_error, evaluation_error_before = evaluation_error
-                evaluation_accuracy, evaluation_accuracy_before = evaluation_accuracy
+                evaluation_accuracy, evaluation_accuracy_before, evaluation_accuracy_just_zero = evaluation_accuracy
+
                 meta_valid_error_before += evaluation_error_before.item()
-                meta_valid_accuracy_before += evaluation_accuracy_before.item()
+                meta_valid_accuracy_before += evaluation_accuracy_before.item()  # accuracy with zeros class
+
+                meta_valid_accuracy_just_zero += evaluation_accuracy_just_zero.item()  # track acc just zero class
 
                 meta_valid_error += evaluation_error.item()
-                meta_valid_accuracy += evaluation_accuracy.item()
+                meta_valid_accuracy += evaluation_accuracy.item()  # accuracy without zero class
 
                 losses_meta_val.update(evaluation_error.item())
                 acc_meta_val.update(evaluation_accuracy.item())
+                acc_zero_meta_val.update(evaluation_accuracy_before.item())
+                acc_just_zero_meta_val.update(evaluation_accuracy_just_zero.item())
 
 
             # Compute meta-training loss
             learner = model.clone()  #back-propagating losses on the cloned module will populate the buffers of the original module
-
+            start_time = time.time()
             batch, nways, kshots, sequence, taskID = sample_task_new(meta_datasets, nways_list, kshots_list, i_to_dataset,
                                                                  reid['ML']['sample_from_all'], num_tasks=num_tasks,
                                                                  sample_uniform_DB=sample_db)
+            #print('train samples back in main')
+            sequence, sequence_idx = sequence
+            batch, not_used_IDs = batch
+            print("--- %s seconds --- [out] sample train task " % (time.time() - start_time))
+            #N = nways * kshots * 2
+            #not_used_IDs = batch[0][N:]
+            #batch = (batch[0][:N], batch[1][:N])
+            # for i in used_IDs_train:
+            #     others_seq = others_id_in_seq[others_id == sequence_idx]
+               # use =
+
+            #others_seq =
             #print('samples train taks')
             if sequence not in sampled_train.keys():
                 sampled_train[sequence] = {}
@@ -1056,6 +1386,21 @@ def my_main(_config, reid, _run):
                 sampled_train[sequence][(nways, kshots)] = 1
             else:
                 sampled_train[sequence][(nways, kshots)] += 1
+            # if not reid['ML']['market_others']:
+            #     start_time = time.time()
+            #     others_train = get_others(meta_datasets, sequence_idx, reid['ML']['num_others'], use_market=False)
+            #     print("--- %s seconds --- for get others train" % (time.time() - start_time))
+            # if sequence_idx == 6:
+            #     others_ = (others_train, ((others[0][1],torch.tensor([])), torch.tensor([])))
+            # elif sequence_idx == 7:
+            #     others_ = (others_train, ((others[0][0],torch.tensor([])), torch.tensor([])))
+            # else:
+            #     others_ = (others_train, others)
+            #start_time = time.time()
+            #others_train = others[others_id!=sequence_idx]
+            #logger.debug("--- %s seconds --- for get others train" % (time.time() - start_time))
+            #print('before fast adapt train')
+            #print('before fast adapt')
             evaluation_error, evaluation_accuracy = fast_adapt(batch,
                                                                learner,
                                                                adaptation_steps,
@@ -1069,7 +1414,13 @@ def my_main(_config, reid, _run):
                                                                task,
                                                                taskID,
                                                                reid,
-                                                               init_last)
+                                                               init_last,
+                                                               #torch.cat((others[others_id!=sequence_idx], not_used_IDs[:,0,:,:,:].to(device)))
+                                                               #not_used_IDs[:, 0, :, :, :].to(device)
+                                                               not_used_IDs,
+                                                               #others[others_id != sequence_idx]
+                                                               )
+            #print('after fast adapt train')
             evaluation_error.backward()  # compute gradients, populate grad buffers of maml
             meta_train_error += evaluation_error.item()
             meta_train_accuracy += evaluation_accuracy.item()
@@ -1077,25 +1428,31 @@ def my_main(_config, reid, _run):
             losses_meta_train.update(evaluation_error.item())
             acc_meta_train.update(evaluation_accuracy.item())
 
+            del evaluation_error
+
         # update the best value for loss
         if len(validation_set)>0:
             safe_best_loss = losses_meta_val.update_best(losses_meta_val.avg, iteration)
         else:
             safe_best_loss = losses_meta_val.update_best(losses_meta_train.avg, iteration)
 
-        if iteration%100==0:
+        if iteration%10==0:
             # Print some metrics
             print('\n')
             print('Iteration', iteration)
-            print('Meta Train Error', meta_train_error / meta_batch_size)
+            print('Meta Train Loss', meta_train_error / meta_batch_size)
             print('Meta Train Accuracy', meta_train_accuracy / meta_batch_size)
-            print('Meta Valid Error', meta_valid_error / meta_batch_size)
+            print('Meta Valid Loss', meta_valid_error / meta_batch_size)
             print('Meta Valid Accuracy', meta_valid_accuracy / meta_batch_size)
+            print('Meta Valid Accuracy with zeros class', meta_valid_accuracy_before / meta_batch_size)
+            print('Meta Valid Accuracy just zeros class', meta_valid_accuracy_just_zero / meta_batch_size)
             print('\n')
-            print('Mean Meta Train Error', losses_meta_train.avg)
+            print('Mean Meta Train Loss', losses_meta_train.avg)
             print('Mean Meta Train Accuracy', acc_meta_train.avg)
-            print('Mean Meta Val Error', losses_meta_val.avg)
+            print('Mean Meta Val Loss', losses_meta_val.avg)
             print('Mean Meta Val Accuracy', acc_meta_val.avg)
+            print('Mean Meta Val Accuracy with zeros class', acc_zero_meta_val.avg)
+            print('Mean Meta Val Accuracy just zeros class', acc_just_zero_meta_val.avg)
 
             if reid['ML']['learn_LR'] and reid['ML']['global_LR']:
                 for p in model.lrs:
@@ -1107,25 +1464,28 @@ def my_main(_config, reid, _run):
             # print('sampled tasks from train {}'.format(sampled_train))
             # print('sampled tasks from val {}'.format(sampled_val))
 
-        if iteration%safe_every==0 or safe_best_loss==1:
-            model_s = '{}_reID_Network.pth'.format(iteration)
-            if safe_best_loss:
-                model_s = 'best_reID_Network.pth'
-                # if reid['ML']['learn_LR']:
-                #     for p in model.lrs:
-                #         print('LR: {}'.format(p.item()))
+        #if iteration>30000 and (iteration%safe_every==0 or safe_best_loss==1) and (iteration%100==0):
+        if iteration>500 and (iteration%safe_every==0 or safe_best_loss==1):
+            if iteration%10==0:
+                model_s = '{}_reID_Network.pth'.format(iteration)
+                if safe_best_loss:
+                    model_s = 'best_reID_Network.pth'
+                    # if reid['ML']['learn_LR']:
+                    #     for p in model.lrs:
+                    #         print('LR: {}'.format(p.item()))
 
-            #print('safe state dict {}'.format(model_s))
-            model_name = osp.join(output_dir, model_s)
-            #torch.save(model.state_dict(), model_name)
+                #print('safe state dict {}'.format(model_s))
+                model_name = osp.join(output_dir, model_s)
+                #torch.save(model.state_dict(), model_name)
 
-            state_dict_to_safe = remove_last(model.state_dict(), model.module.num_output)
-            save_checkpoint({
-                'epoch': iteration,
-                'state_dict': state_dict_to_safe,
-                'best_acc': (acc_meta_train.avg, acc_meta_val.avg),
-                'optimizer': opt.state_dict(),
-            }, filename=model_name)
+                state_dict_to_safe = remove_last(model.state_dict(), model.module.num_output)
+                save_checkpoint({
+                    'epoch': iteration,
+                    'state_dict': state_dict_to_safe,
+                    'best_acc': (acc_meta_train.avg, acc_meta_val.avg),
+                    #'optimizer': opt.state_dict(),
+                    'optimizer': None,
+                }, filename=model_name)
 
         if reid['solver']["plot_training_curves"] and (iteration%100==0 or iteration==1):
             if reid['ML']['learn_LR'] and reid['ML']['global_LR'] :
@@ -1139,8 +1499,8 @@ def my_main(_config, reid, _run):
             plotter.plot(epoch=iteration, loss=losses_meta_val.avg, acc=acc_meta_val.avg, split_name='val_task_val_set MEAN')
             #plotter.plot(epoch=iteration, loss=meta_valid_error_before/meta_batch_size, acc=meta_valid_accuracy_before/meta_batch_size, split_name='val_task_val_set_before')
         # Average the accumulated gradients and optimize
-        diff_params = [p for p in model.parameters() if p.requires_grad]
-        for p in diff_params:
+        #diff_params = [p for p in model.parameters() if p.requires_grad]
+        for p in [p for p in model.parameters() if p.requires_grad]:
             if p.grad is not None:
                 p.grad.data.mul_(1.0 / meta_batch_size)
 
