@@ -5,25 +5,31 @@ from collections import defaultdict
 from torchvision.ops.boxes import box_iou
 import itertools
 from operator import itemgetter
-
+import logging
+import time
 
 import random
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
+logger = logging.getLogger('main.live_dataset')
 class IndividualDataset(torch.utils.data.Dataset):
     def __init__(self, id, keep_frames, data_augmentation, flip_p):
         self.id = id
-        self.features = torch.tensor([]).to(device)
-        self.boxes = torch.tensor([]).to(device)
-        self.scores = torch.tensor([]).to(device)
-        self.area = torch.tensor([]).to(device)
+        #self.features = torch.tensor([]).to(device)
+        self.features = torch.tensor([])
+        #self.boxes = torch.tensor([]).to(device)
+        self.boxes = torch.tensor([])
+        #self.scores = torch.tensor([]).to(device)
+        self.scores = torch.tensor([])
+        #self.area = torch.tensor([]).to(device)
+        self.area = torch.tensor([])
         self.keep_frames = keep_frames
         self.num_frames_keep = 0
         self.num_frames = 0
         self.pos_unique_indices = None
         self.data_augmentation = data_augmentation
-        self.frame = torch.tensor([]).to(device)
+        #self.frame = torch.tensor([]).to(device)
+        self.frame = torch.tensor([])
         self.flip_p = flip_p
 
     def append_samples(self, training_set_dict, frame=0, area=0):
@@ -32,9 +38,12 @@ class IndividualDataset(torch.utils.data.Dataset):
         self.num_frames_keep += 1
         self.features = torch.cat((self.features, training_set_dict['features']))
         self.boxes = torch.cat((self.boxes, training_set_dict['boxes']))
-        self.scores = torch.cat((self.scores, torch.tensor([0]).float().to(device)))
-        self.frame = torch.cat((self.frame, (torch.ones(1)*frame).to(device)))
-        self.area = torch.cat((self.area, (torch.ones(1) * area).to(device)))
+        # self.scores = torch.cat((self.scores, torch.tensor([0]).float().to(device)))
+        # self.frame = torch.cat((self.frame, (torch.ones(1)*frame).to(device)))
+        # self.area = torch.cat((self.area, (torch.ones(1) * area).to(device)))
+        self.scores = torch.cat((self.scores, torch.tensor([0]).float()))
+        self.frame = torch.cat((self.frame, (torch.ones(1)*frame)))
+        self.area = torch.cat((self.area, (torch.ones(1) * area)))
         if self.num_frames > self.keep_frames:
             self.remove_samples()
             self.num_frames_keep = self.keep_frames
@@ -62,16 +71,23 @@ class IndividualDataset(torch.utils.data.Dataset):
             ## flip FM to augment
             features = self.features[idx, :, :, :].flip(-1)
             features = torch.cat((self.features[idx, :, :, :], features))
-            return {'features': features, 'scores': torch.cat((self.scores[idx], self.scores[idx])),
-                    'frame_id': torch.cat((self.frame[idx], self.frame[idx]))}
+            scores = torch.cat((self.scores[idx], self.scores[idx]))
+            frame_id = torch.cat((self.frame[idx], self.frame[idx]))
+
         else:
-            return {'features': self.features[idx, :, :, :], 'scores': (self.scores[idx]),
-                    'frame_id': self.frame[idx]}
+            features = self.features[idx, :, :, :]
+            scores = self.scores[idx]
+            frame_id =  self.frame[idx]
+
+        return {'features': features.to(device), 'scores': scores.to(device) ,
+                    'frame_id': frame_id.to(device)}
 
 
 class InactiveDataset(torch.utils.data.Dataset):
     def __init__(self, data_augmentation=0, others_db=None, others_class=False, im_index=0,
-                 ids_in_others=0, val_set_random_from_middle=False, exclude_from_others=[], results=None, flip_p=0.5):
+                 ids_in_others=0, val_set_random_from_middle=False, exclude_from_others=[], results=None, flip_p=0.5,
+                 fill_up=False, fill_up_to=10, flexible=False, upsampling=False, weightedLoss=False, samples_per_ID=1,
+                 train_others=True):
         self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
         self.features = torch.tensor([]).to(device)
@@ -79,7 +95,18 @@ class InactiveDataset(torch.utils.data.Dataset):
         self.min_occ = 0
         #self.killed_this_step = killed_this_step
         self.data_augmentation = data_augmentation
-        self.others_db = others_db
+        # if type(others_db) is tuple:
+        #     self.others_db = others_db[0]
+        #     self.others_db_area = others_db[1]
+        # else:
+        #     self.others_db = others_db
+        #     self.others_db_area = None
+        if type(others_db) is tuple:
+            self.others_db = others_db[0]
+            #self.others_db_loaded = others_db[1][0]
+            self.others_db_loaded = {}
+            #self.others_db_loaded_id = others_db[1][1]
+            self.others_db_area = None
         self.others_class = others_class
         self.im_index = im_index
         self.ids_in_others = ids_in_others
@@ -87,14 +114,24 @@ class InactiveDataset(torch.utils.data.Dataset):
         self.exclude_from_others = exclude_from_others
         #self.results = results
         self.frame = torch.tensor([]).to(device)
+        self.loaded_others = True  # take number of sampes per ID in others, otherwise take all
         self.flip_p = flip_p
+        self.fill_up = fill_up
+        self.fill_up_to = fill_up_to
+        self.flexible = flexible
+        self.ratio = torch.tensor([]).to(device)
+        self.upsampling = upsampling
+        self.weightedLoss = weightedLoss
+        self.samples_per_ID = samples_per_ID
+        self.train_others = train_others
 
     def __len__(self):
         return self.scores.size()[0]
 
     def __getitem__(self, idx):
         #return {'features': self.features[idx, :, :, :], 'boxes': self.boxes[idx, :], 'scores': self.scores[idx]}
-        return {'features': self.features[idx, :, :, :], 'scores': self.scores[idx], 'frame_id': self.frame[idx]}
+        #return {'features': self.features[idx, :, :, :], 'scores': self.scores[idx], 'frame_id': self.frame[idx]}
+        return {'features': self.features[idx, :, :, :], 'scores': self.scores[idx]}
 
     def balance(self, i, occ):
         if type(i) is list:
@@ -116,6 +153,42 @@ class InactiveDataset(torch.utils.data.Dataset):
             fID = torch.cat((fID, fID[duplicate]))
             return i, fID
 
+    def update_others(self, inactive_tracks):
+        train_others_features = torch.tensor([]).to(device)
+        train_others_frames_id = torch.tensor([]).to(device)
+
+        inactive_ids = [t.id for t in inactive_tracks]
+        sorted_others_db_k = [t[0] for t in self.others_db.items()]
+        random.shuffle(sorted_others_db_k)
+        sorted_others_db_k = [k for k in sorted_others_db_k if k not in inactive_ids]
+        train_idx_others = sorted_others_db_k
+        #train_num_others = [len(self.others_db[t]) for t in sorted_others_db_k]
+        for i, idx in enumerate(train_idx_others):
+            N = self.samples_per_ID
+            s = torch.randint(len(self.others_db[idx]), (1, N))
+            for j in range(s.shape[1]):
+                train_others_features = torch.cat(
+                    (train_others_features, self.others_db[idx][s[:, j]][1].unsqueeze(0).to(device)))
+                frames_id = torch.cat((self.others_db[idx][s[:, j]][2].unsqueeze(0).to(device),
+                                       (torch.ones(1) * idx).to(device)))
+                train_others_frames_id = torch.cat((train_others_frames_id, frames_id.unsqueeze(0)))
+        if self.flip_p > 0.0:
+            ## flip FM to augment
+            features = train_others_features.flip(-1)
+            train_others_features = torch.cat((train_others_features, features))
+            train_others_frames_id = torch.cat((train_others_frames_id, train_others_frames_id))
+
+            self.features = self.features[self.ratio[0].long() * 2:, :, :, :]  # times 2 because of flip
+        else:
+            self.features = self.features[self.ratio[0].long():, :, :, :]  #
+
+        #self.scores = torch.zeros(train_others_features.shape[0]).to(device)
+        # first cut old others, than concat new ones
+
+        self.features = torch.cat((train_others_features, self.features))
+        #self.frame = torch.cat((self.frame, train_other_fId))
+        return self
+
     def get_others(self, inactive_tracks, val=False):
         # FIRST idea get more others because of flip
         # if self.flip_p > 0.0:
@@ -130,19 +203,70 @@ class InactiveDataset(torch.utils.data.Dataset):
         val_others_frames_id = torch.tensor([]).to(device)
         train_others_features = torch.tensor([]).to(device)
         train_others_frames_id = torch.tensor([]).to(device)
+        fill_others_features = torch.tensor([]).to(device)
+        fill_others_id = torch.tensor([]).to(device)
+        #fill_others_frames_id = torch.tensor([]).to(device)
+
+        # how many IDs from others
+
+        if self.fill_up and len(self.others_db)>=self.fill_up_to: # make sure to have at least 4 IDs for others if 9 used for fil
+            fill_up = self.fill_up_to-len(inactive_tracks) if self.fill_up_to-len(inactive_tracks)>0 else 0
+            logger.debug('fill up {}'.format(fill_up))
+        else:
+            fill_up=0
 
         inactive_ids = [t.id for t in inactive_tracks]
-        #sorted_others_db = sorted(self.others_db.items(), key=itemgetter(1), reverse=True)
-        #sorted_others_db_k = [t[0] for t in sorted_others_db]
-        sorted_others_db_k = [t[0] for t in sorted(self.others_db.items(), key=itemgetter(1), reverse=True)]
-        sorted_others_db_k = [k for k in sorted_others_db_k if k not in inactive_ids]
+
+        # sort others according to area
+        # if self.others_db_area==None:
+        #     sorted_others_db_k = [t[0] for t in sorted(self.others_db.items(), key=itemgetter(1), reverse=True)]
+        # else:
+        #     sorted_others_db_k = [t[0] for t in sorted(self.others_db_area.items(), key=itemgetter(1), reverse=True)]
+
+        if self.flexible:  # test with flexible "fill-up"
+            flex_num_fill = 0
+            fill_IDs = list(self.others_db.keys())
+            fill_IDs = [k for k in fill_IDs if k not in inactive_ids]
+            #logger.debug("exclude from others {}".format(self.exclude_from_others))
+            #fill_IDs = [k for k in fill_IDs if k not in self.exclude_from_others]
+            num_frames = [len(self.others_db[t]) for t in fill_IDs]
+            ids_start = len(inactive_tracks) + 1 if self.others_class else len(
+                inactive_tracks)  # 0 is others, than num inactive, than fill up
+            for i, f in enumerate(fill_IDs):
+                if num_frames[i]>=max_occ:
+                    idx = torch.randint(num_frames[i], (1,max_occ))
+                    for j in range(idx.shape[1]):
+                        fill_others_features = torch.cat((fill_others_features, self.others_db[f][idx[:,j]][1].unsqueeze(0).to(device)))
+                        fill_others_id = torch.cat(
+                            (fill_others_id, (ids_start + flex_num_fill) * torch.ones(1).to(device).unsqueeze(0)))
+                    flex_num_fill += 1
+            logger.info('flexible fill up with {} Ids having {} samples each'.format(flex_num_fill, max_occ))
+            self.flex_num_fill = flex_num_fill
+            if self.flip_p > 0.0:
+                features = fill_others_features.flip(-1)
+                fill_others_features = torch.cat((fill_others_features, features))
+                fill_others_id = fill_others_id.repeat_interleave(2)
+            return train_others_features, val_others_features, train_others_frames_id, val_others_frames_id, fill_others_features, fill_others_id
+
+
+        sorted_others_db_k = [t[0] for t in self.others_db.items()]  # don't sort when loaded
+        #random.shuffle(sorted_others_db_k)
+        fill_IDs = sorted_others_db_k[:fill_up] # use these IDs to fill up to 10 nodes
+
+        sorted_others_db_k = [k for k in sorted_others_db_k if k not in (inactive_ids or fill_IDs)]
+
+        # comnbination of online and loaded
+        sorted_others_db_k_loaded = list(self.others_db_loaded.keys())
+        #sorted_others_db_k_loaded = self.others_db_loaded_id.squeeze(0)
+
+        #others_db_k = list(self.others_db.keys())
         others_db_k = list(self.others_db.keys())
-        others_db_k = [k for k in others_db_k if k not in inactive_ids]
+        others_db_k = [k for k in others_db_k if k not in (inactive_ids or fill_IDs)]
         #others_db_k = [k for k in others_db_k if k not in self.exclude_from_others]
         #print("excluding: {}".format(self.exclude_from_others))
         num_tracks = len(others_db_k)
         ids = self.ids_in_others
-        if num_tracks >= 2:
+        if (num_tracks >= 2) or self.fill_up:
 
             #num_frames = [t[0].shape[0] for t in list(self.others_db.values())]
             #num_frames_pp = [(t, num_frames[t]) for t in others_db_k]
@@ -227,14 +351,14 @@ class InactiveDataset(torch.utils.data.Dataset):
                             break
 
                     # flip others too
-                    if self.flip_p > 0.0:
-                        ## flip FM to augment
-                        features = train_others_features.flip(-1)
-                        train_others_features = torch.cat((train_others_features, features))
-                        features = val_others_features.flip(-1)
-                        val_others_features = torch.cat((val_others_features, features))
-                        train_others_frames_id = torch.cat((train_others_frames_id, train_others_frames_id))
-                        val_others_frames_id = torch.cat((val_others_frames_id, val_others_frames_id))
+                    # if self.flip_p > 0.0:
+                    #     ## flip FM to augment
+                    #     features = train_others_features.flip(-1)
+                    #     train_others_features = torch.cat((train_others_features, features))
+                    #     features = val_others_features.flip(-1)
+                    #     val_others_features = torch.cat((val_others_features, features))
+                    #     train_others_frames_id = torch.cat((train_others_frames_id, train_others_frames_id))
+                    #     val_others_frames_id = torch.cat((val_others_frames_id, val_others_frames_id))
 
 
                     return train_others_features, val_others_features, train_others_frames_id, val_others_frames_id
@@ -249,36 +373,109 @@ class InactiveDataset(torch.utils.data.Dataset):
                 #         train_others = train_others[:ids]
                 # train_idx_others, train_num_others = zip(*train_others)
                 # train_num_others = list(train_num_others)
+                ids_start = len(inactive_tracks)+1 if self.others_class else len(inactive_tracks) # 0 is others, than num inactive, than fill up
+                for i, f in enumerate(fill_IDs):
+                    frames = len(self.others_db[f])
+                    idx = torch.randint(frames, (1,max_occ))
+                    for j in range(idx.shape[1]):
+                        fill_others_features = torch.cat((fill_others_features, self.others_db[f][idx[:,j]][1].unsqueeze(0).to(device)))
+                        fill_others_id = torch.cat((fill_others_id, (ids_start+i)*torch.ones(1).to(device).unsqueeze(0)))
 
-                train_idx_others = sorted_others_db_k
-                train_num_others = [len(self.others_db[t]) for t in sorted_others_db_k]
+                if self.others_class:
+                    train_idx_others = sorted_others_db_k
+                    train_num_others = [len(self.others_db[t]) for t in sorted_others_db_k]
 
-                c = 0
-                for i, idx in enumerate(itertools.cycle(train_idx_others)):
-                    i = i - len(train_idx_others) * c
-                    if i >= len(train_idx_others):
-                        c += 1
-                        i = 0
-                    if train_num_others[i] > 0:
-                        train_others_features = torch.cat(
-                            (train_others_features, self.others_db[idx][c][1].unsqueeze(0)))
-                        frames_id = torch.cat((self.others_db[idx][c][2].unsqueeze(0),
-                                               (torch.ones(1) * idx).to(device)))
-                        train_others_frames_id = torch.cat((train_others_frames_id, frames_id.unsqueeze(0)))
-                        train_num_others[i] -= 1
-                    if train_others_features.shape[0] >= (max_occ*(self.data_augmentation+1)) or sum(train_num_others) == 0:
-                        break
+                    # if db others is sorted according to area and also each ID has to highest area at idx 0
+                    # c = 0
+                    # for i, idx in enumerate(itertools.cycle(train_idx_others)):
+                    #     i = i - len(train_idx_others) * c
+                    #     if i >= len(train_idx_others):
+                    #         c += 1
+                    #         i = 0
+                    #     if train_num_others[i] > 0:
+                    #         train_others_features = torch.cat(
+                    #             (train_others_features, self.others_db[idx][c][1].unsqueeze(0).to(device)))
+                    #         frames_id = torch.cat((self.others_db[idx][c][2].unsqueeze(0).to(device),
+                    #                                (torch.ones(1) * idx).to(device)))
+                    #         train_others_frames_id = torch.cat((train_others_frames_id, frames_id.unsqueeze(0)))
+                    #         train_num_others[i] -= 1
+                    #     if train_others_features.shape[0] >= (max_occ*(self.data_augmentation+1)) or sum(train_num_others) == 0:
+                    #         break
+
+
+                    for i, idx in enumerate(train_idx_others):
+                        # random sample from others DBs according to max occurance of inactive
+                        # TODO remove False
+                        #if not self.upsampling and not self.weightedLoss and False:
+                        if not self.upsampling and not self.weightedLoss and True:
+                            j = random.randint(0,len(self.others_db[idx])-1)
+                            if train_num_others[i] > 0:
+                                train_others_features = torch.cat(
+                                    (train_others_features, self.others_db[idx][j][1].unsqueeze(0).to(device)))
+                                frames_id = torch.cat((self.others_db[idx][j][2].unsqueeze(0).to(device),
+                                                       (torch.ones(1) * idx).to(device)))
+                                train_others_frames_id = torch.cat((train_others_frames_id, frames_id.unsqueeze(0)))
+                                train_num_others[i] -= 1
+                            if train_others_features.shape[0] >= (max_occ * (self.data_augmentation + 1)) or sum(
+                                    train_num_others) == 0:
+                                break
+                        elif self.loaded_others == True:
+                            # take N samples of all IDs
+                            N=self.samples_per_ID
+                            if len(self.others_db[idx]) >= N:
+                                s = random.sample(range(len(self.others_db[idx])), N)
+                            else:
+                                s = torch.randint(len(self.others_db[idx]), (1, N)).squeeze()
+                            for j in range(len(s)):
+                                train_others_features = torch.cat(
+                                    (train_others_features, self.others_db[idx][s[j]][1].unsqueeze(0).to(device)))
+                                # frames_id = torch.cat((self.others_db[idx][s[j]][2].unsqueeze(0).to(device),
+                                #                        (torch.ones(1) * idx).to(device)))
+                                # train_others_frames_id = torch.cat((train_others_frames_id, frames_id.unsqueeze(0)))
+
+                        else:
+                            # take all samples of all IDs
+                           for j in range(len(self.others_db[idx])):
+                               train_others_features = torch.cat(
+                                   (train_others_features, self.others_db[idx][j][1].unsqueeze(0).to(device)))
+                               # frames_id = torch.cat((self.others_db[idx][j][2].unsqueeze(0).to(device),
+                               #                        (torch.ones(1) * idx).to(device)))
+                               # train_others_frames_id = torch.cat((train_others_frames_id, frames_id.unsqueeze(0)))
+
+                    # combination online and loaded
+                    for i, idx in enumerate(sorted_others_db_k_loaded):
+                        # take N samples of all IDs
+                        N = self.samples_per_ID
+                        if len(self.others_db_loaded[idx]) >= N:
+                            s = random.sample(range(len(self.others_db_loaded[idx])), N)
+                        else:
+                            s = torch.randint(len(self.others_db_loaded[idx]), (1, N)).squeeze()
+                        #for j in range(len(s)):
+
+                        train_others_features = torch.cat((train_others_features, self.others_db_loaded[idx][s].to(device)))
+                            #frames_id = torch.cat((self.others_db_loaded[idx][s[j]][2].unsqueeze(0).to(device),
+                            # frames_id = torch.cat((torch.zeros([]).unsqueeze(0).to(device),
+                            #                        (torch.ones(1) * idx).to(device)))
+                            # train_others_frames_id = torch.cat((train_others_frames_id, frames_id.unsqueeze(0)))
+
+                    if self.weightedLoss:
+                            #self.ratio = max_occ/train_others_features.shape[0]
+                            self.ratio = torch.cat((self.ratio, torch.ones(1).to(device)*train_others_features.shape[0]))
 
                     # flip others too
-                if self.flip_p > 0.0:
+                #if self.flip_p > 0.0:
                     ## flip FM to augment
-                    features = train_others_features.flip(-1)
-                    train_others_features = torch.cat((train_others_features, features))
-                    features = val_others_features.flip(-1)
-                    val_others_features = torch.cat((val_others_features, features))
-                    train_others_frames_id = torch.cat((train_others_frames_id, train_others_frames_id))
-                    val_others_frames_id = torch.cat((val_others_frames_id, val_others_frames_id))
-                return train_others_features, val_others_features, train_others_frames_id, val_others_frames_id
+                    #features = train_others_features.flip(-1)
+                    #train_others_features = torch.cat((train_others_features, features))
+                    #features = val_others_features.flip(-1)
+                    #val_others_features = torch.cat((val_others_features, features))
+                    #train_others_frames_id = torch.cat((train_others_frames_id, train_others_frames_id))
+                    #val_others_frames_id = torch.cat((val_others_frames_id, val_others_frames_id))
+
+                    #features = fill_others_features.flip(-1)
+                    #fill_others_features = torch.cat((fill_others_features, features))
+                    #fill_others_id = fill_others_id.repeat_interleave(2)
+                return train_others_features, val_others_features, train_others_frames_id, val_others_frames_id, fill_others_features, fill_others_id
 
         else:
             print('\n no others dataset. num tracks: {}'.format(num_tracks))
@@ -412,14 +609,17 @@ class InactiveDataset(torch.utils.data.Dataset):
 
         # get an others class if there is just 1 ID, otherwise training complicated, output node can stay just 1 but
         # at least i have samples for 0 and 1 not just 0
-        if self.others_class or len(inactive_tracks) == 1:
+        #if self.others_class or len(inactive_tracks) == 1: not necessary anymore with fillup
+        if self.others_class:
             get_others = True
         else:
             get_others = False
 
-        if get_others:
+        if (get_others or self.fill_up or self.flexible) and self.train_others:
             # get others dataset with label 0
-            train_others_features, val_others_features, train_other_fId, val_others_fId = self.get_others(inactive_tracks, val)
+            start_time = time.time()
+            train_others_features, val_others_features, train_other_fId, val_others_fId, fill_features, fill_id = self.get_others(inactive_tracks, val)
+            logger.info("\n--- %s seconds --- for loading others" % (time.time() - start_time))
             if train_others_features.shape[0] < (self.max_occ*(self.data_augmentation+1)) and train_others_features.shape[0] > 0:
                 train_others_features, train_other_fId = self.balance((train_others_features, train_other_fId), self.max_occ*(self.data_augmentation+1))
                 if train_others_features.shape[0] == 0:
@@ -429,19 +629,35 @@ class InactiveDataset(torch.utils.data.Dataset):
             self.features = torch.cat((self.features, train_others_features))
             self.frame = torch.cat((self.frame, train_other_fId))
 
+            self.scores = torch.cat((self.scores, fill_id))
+            self.features = torch.cat((self.features, fill_features))
+            self.frame = torch.cat((self.frame, -1*torch.ones((fill_id.shape[0],2)).to(device)))
+
         else:
             train_others_features = torch.tensor([]).to(device)
             val_others_features = torch.tensor([]).to(device)
             val_others_fId = torch.tensor([]).to(device)
+            self.ratio = torch.cat((self.ratio, torch.ones(1).to(device)))
 
         for i, t in enumerate(inactive_tracks):
+            # if len(fill_id)>0:
+            #     c = int((fill_id[-1]+1).item())
+            # else:
+            #     c = i+1 if get_others else i
             c = i+1 if get_others else i
             # balance dataset, same number of examples for each class
             #max_occ = max(self.max_occ, int(train_others_features.shape[0]/(self.data_augmentation+1)))
-            if len(t.training_set.pos_unique_indices) < self.max_occ:
-                t.training_set.pos_unique_indices = self.balance(t.training_set.pos_unique_indices, self.max_occ)
-            pos_unique_indices = self.expand_indices_augmentation(t.training_set.pos_unique_indices)
+
+            # deactivated 09/10 because try balancing in loss for each inactive
+            if not self.weightedLoss:
+                if len(t.training_set.pos_unique_indices) < self.max_occ:
+                    t.training_set.pos_unique_indices = self.balance(t.training_set.pos_unique_indices, self.max_occ)
+            #self.ratio = torch.cat((self.ratio, torch.ones(1).to(device)*len(t.training_set.pos_unique_indices)))
+            #pos_unique_indices = self.expand_indices_augmentation(t.training_set.pos_unique_indices)  # if data augmentation is used
+            pos_unique_indices = t.training_set.pos_unique_indices  # if no data augmentation is used
             r = t.training_set[pos_unique_indices]
+            if self.weightedLoss:
+                self.ratio = torch.cat((self.ratio, torch.ones(1).to(device) * r['scores'].shape[0]))
             self.scores = torch.cat((self.scores, torch.ones(len(r['scores'])).to(device) * (c)))
             self.features = torch.cat((self.features, r['features']))
             self.frame = torch.cat((self.frame, torch.cat((r['frame_id'].unsqueeze(1),

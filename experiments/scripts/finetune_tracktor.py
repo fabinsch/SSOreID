@@ -27,6 +27,7 @@ from tracktor.reid.resnet import resnet50
 from tracktor.utils import interpolate, plot_sequence, get_mot_accum, evaluate_mot_accums
 import pickle
 from time import sleep
+import h5py
 
 ex = Experiment()
 
@@ -47,7 +48,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 @ex.automain
 def main(tracktor, reid, _config, _log, _run):
     sacred.commands.print_config(_run)
-
+    _log.setLevel(tracktor['loggerLevel']) # 5 is personal debug, 10 is debug, 20 info
     # set all seeds
     torch.manual_seed(tracktor['seed'])
     torch.cuda.manual_seed(tracktor['seed'])
@@ -66,9 +67,88 @@ def main(tracktor, reid, _config, _log, _run):
     ##########################
     # Initialize the modules #
     ##########################
-    print('always others class DBs built')
+    dataset = Datasets(tracktor['dataset'])
+
+    def calculate_area(pos):
+        w = pos[2] - pos[0]
+        h = pos[3] - pos[1]
+        return w*h
+
+    db_others=None
+    db_others_loaded=None
+    load_others=tracktor['tracker']['finetuning']['load_others']
+    fill_up=tracktor['tracker']['finetuning']['fill_up']
+    if load_others:# or fill_up:
+        # load db for others, without area and frame
+        start_time_load = time.time()
+        #database = 'db_train_2'
+        database = 'db_train_mot_db'
+        db_others_seq = tracktor['tracker']['finetuning']['sequence_others']
+        with h5py.File('./data/ML_dataset/{}.h5'.format(database), 'r') as hf:
+            datasets = list(hf.keys())
+            #datasets = [d for d in datasets if d != reid['dataloader']['validation_sequence']]
+            db_others = {}
+            #db_others = torch.tensor([])
+            #db_others_id = torch.tensor([])
+            db_others_area = {}
+            for set in datasets:
+                if db_others_seq =='ALL':
+                    if set != dataset._data._data[0]._seq_name:
+                        off = [t for t in sorted(db_others.keys(), reverse=True)][0] if len(db_others)>0 else 0
+                        seq = hf.get(set)
+                        box, data, label = seq.items()
+                        for i, l in enumerate(label[1]):
+                            l += off
+                            #db_others = torch.cat((db_others, torch.tensor(data[1][i])))
+                            #db_others_id = torch.cat((db_others_id, torch.tensor(l).float().unsqueeze(0)))
+
+                            if l not in db_others.keys():
+                                #db_others[l] = [(torch.zeros([]), torch.tensor(data[1][i]), torch.zeros([]))]
+                                db_others[l] = torch.tensor(data[1][i]).unsqueeze(0)
+                                #db_others_area[l] = [calculate_area(torch.tensor(box[1][i]))]
+                                #print([(calculate_area(torch.tensor(box[1][i]).to(device)), torch.zeros([]).to(device))])
+                            else:
+                                #db_others[l].append((torch.zeros([]), torch.tensor(data[1][i]), torch.zeros([])))
+                                db_others[l] = torch.cat((db_others[l], torch.tensor(data[1][i]).unsqueeze(0)))
+                                #db_others_area[l].append(calculate_area(torch.tensor(box[1][i])))
+                                #print([(calculate_area(torch.tensor(box[1][i]).to(device)), torch.zeros([]).to(device))])
+
+                        _log.info('loaded {} in {} s'.format(set, time.time()-start_time_load))
+                    else:
+                        _log.info('do not take {}'.format(set))
+
+                elif set == db_others_seq:
+                    seq = hf.get(set)
+                    box, data, label = seq.items()
+                    for i, l in enumerate(tqdm(label[1])):
+                        if l not in db_others.keys():
+                            #b_others[l] = [(torch.zeros([]), torch.tensor(data[1][i]), torch.zeros([]))]
+                            db_others[l] = torch.tensor(data[1][i]).unsqueeze(0)
+                            #db_others_area[l] = [calculate_area(torch.tensor(box[1][i]))]
+                            #print([(calculate_area(torch.tensor(box[1][i]).to(device)), torch.zeros([]).to(device))])
+                        else:
+                            #db_others[l].append((torch.zeros([]), torch.tensor(data[1][i]), torch.zeros([])))
+                            db_others[l] = torch.cat((db_others[l], torch.tensor(data[1][i]).unsqueeze(0)))
+                            #db_others_area[l].append(calculate_area(torch.tensor(box[1][i])))
+                            #print([(calculate_area(torch.tensor(box[1][i]).to(device)), torch.zeros([]).to(device))])
+
+                    #db_others = torch.cat((db_others,  torch.tensor(data[1])))
+                    #db_others_id = torch.cat((db_others_id, torch.tensor(label[1]).float().unsqueeze(0)))
+                    _log.info('loaded {} in {} s'.format(set, time.time()-start_time_load))
+
+                    # for id in db_others.values():
+                    #     for frame in id:
+                    #         print(frame[0].item())
+                    #         if len(frame[0].shape)>0:
+                    #             print('problem')
+
+    #print('always others class DBs built')
+            print('always others class DBs loaded from {}, in total {} IDs in DB'.format(db_others_seq, len(db_others)))
+            db_others_loaded = (db_others, db_others_area)
+            #db_others_loaded = (db_others, db_others_id)
     # object detection
     _log.info("Initializing object detector.")
+    _log.debug("Initializing object detector.")
 
     reid_network = None
 
@@ -82,21 +162,25 @@ def main(tracktor, reid, _config, _log, _run):
     time_total = 0
     num_frames = 0
     mot_accums = []
-    dataset = Datasets(tracktor['dataset'])
+    #dataset = Datasets(tracktor['dataset'])
 
     def load_w(weights):
         try:
             a = torch.load(weights)
             print('load succesfull')
+            #split = weights.split("/")
+            #save = split[0]+'/'+split[1]+'/'+split[2]+'/'+split[3]+'/'+'best_reID_Network_copy.pth'
+            #torch.save(a, save)
             return a
         except:
-            sleep(10)
+            sleep(2)
             print('load again')
             return load_w(weights)
 
     if tracktor['tracker']['finetuning']['for_reid']:
         if tracktor['reid_ML']:
-           a = load_w(tracktor['reid_weights'])
+           #a = load_w(tracktor['reid_weights'])
+           a = torch.load(tracktor['reid_weights'])
 
     for seq in dataset:
 
@@ -109,7 +193,7 @@ def main(tracktor, reid, _config, _log, _run):
         if 'oracle' in tracktor:
             tracker = OracleTracker(obj_detect, reid_network, tracktor['tracker'], tracktor['oracle'])
         else:
-            tracker = Tracker(obj_detect, reid_network, tracktor['tracker'], seq._dets+'_'+seq._seq_name, a, tracktor['reid_ML'], tracktor['LR_ML'])
+            tracker = Tracker(obj_detect, reid_network, tracktor['tracker'], seq._dets+'_'+seq._seq_name, a, tracktor['reid_ML'], tracktor['LR_ML'], db=db_others_loaded)
 
         start = time.time()
 
