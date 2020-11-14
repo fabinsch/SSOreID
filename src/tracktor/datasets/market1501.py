@@ -162,7 +162,7 @@ class Market1501_ML(Dataset):
 				 transform, normalize_mean=None, normalize_std=None, build_dataset=False, validation_sequence=None):
 
 		self.data_dir = osp.join(cfg.DATA_DIR, 'Market-1501-v15.09.15')
-		self.seq_name = seq_name
+		self.seq_name = seq_name  # gt_box
 
 		self.P = P
 		self.K = K
@@ -278,9 +278,9 @@ class Market1501_ML(Dataset):
 						#pers.append(self.build_crop(v[i]['im_path']))
 						pers.append((k, self.enocde(v[i]['im_path']).cpu()))
 				#res.append(np.array(pers))
-			# if k==1149:
-			# 	print("remove the break")
-			# 	break
+			if k==190:
+				print("remove the break")
+				break
 
 		if self.seq_name:
 			print("[*] Loaded {} persons from sequence {}.".format(len(pers), self.seq_name))

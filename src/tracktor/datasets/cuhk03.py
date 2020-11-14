@@ -290,7 +290,7 @@ class CUHK03_ML(Dataset):
 			"""Matlab reverses the order of column / row."""
 			return mat[ref][:].T
 
-		for campid, camp_ref in enumerate(mat[self.seq_name][0]):
+		for campid, camp_ref in enumerate(mat[self.seq_name][0]):  # seq_name = labeled
 			camp = _deref(camp_ref)  # returns the camera pair
 			num_pids = camp.shape[0]  # gets number of identities
 			for pid in range(num_pids):
@@ -352,8 +352,8 @@ class CUHK03_ML(Dataset):
 					for i in range(l):
 						pers.append((k, self.enocde(v[i]['im']).cpu()))
 				#res.append(np.array(pers))
-			# if k == 10:
-			# 	break
+			if k == 50:
+				break
 
 		if self.seq_name:
 			print("[*] Loaded {} persons from sequence {}.".format(len(pers), self.seq_name))

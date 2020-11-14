@@ -120,8 +120,8 @@ class MOT_ML(MOT17_Sequence):
 				tracks[k] = [{'id':k, 'im_path':im_path, 'gt':v, 'feat': roi_pool_per_track[i].cpu()}]
 
 			## for debug just to the first N pictures
-			# if j > 10:
-			# 	break
+			if j > 10:
+				break
 
 		# sample max_per_person images and filter out tracks smaller than 4 samples / K samples
 		#outdir = get_output_dir("siamese_test")

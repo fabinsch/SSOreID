@@ -51,7 +51,7 @@ class MarCUHMOT_ML(Dataset):
 
 		print("[*] Loading CUHK03")
 		start_time = time.time()
-		#cuhk = CUHK03_ML('labeled', **dataloader)
+		cuhk = CUHK03_ML('labeled', **dataloader)
 		print("--- %s seconds --- for Cuhk03" % (time.time() - start_time))
 
 
@@ -62,12 +62,13 @@ class MarCUHMOT_ML(Dataset):
 
 
 		#self.dataset = ConcatDataset([market, cuhk, mot])
-		name = 'marchumot_ML_pad_filtered6'
-		name = 'mot_db_debug'
+		#name = 'marchumot_ML_pad_filtered6'
+		name = 'mot_db_debug_3DB_test'
+		print('save new dataset as {}'.format(name))
 		if os.path.exists('./data/ML_dataset/db_train_{}.h5'.format(name)):
 			os.remove('./data/ML_dataset/db_train_{}.h5'.format(name))
-		#self.save([market, cuhk, mot], name)
-		self.save(mot, name)
+		self.save([market, cuhk, mot], name)
+		#self.save(mot, name)
 
 	def __len__(self):
 		return len(self.dataset)
@@ -100,9 +101,9 @@ class MarCUHMOT_ML(Dataset):
 					print('keys: {}'.format(hf.keys()))
 
 				# for others db
-				with h5py.File('./data/ML_dataset/db_train_{}.h5'.format(name), 'a') as hf:
-					hf.create_dataset('{}/box'.format(data.name), data=data.box)
-					print('keys: {}'.format(hf.keys()))
+				# with h5py.File('./data/ML_dataset/db_train_{}.h5'.format(name), 'a') as hf:
+				# 	hf.create_dataset('{}/box'.format(data.name), data=data.box)
+				# 	print('keys: {}'.format(hf.keys()))
 
 
 class MarCUH_ML(Dataset):
