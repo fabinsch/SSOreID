@@ -165,18 +165,7 @@ class VisdomLinePlotter_ML(object):
 
     def plot(self, epoch, loss, acc, split_name, info=None, LR=-100):
         epoch -= 1
-        if split_name=='train_task_val_set':
-            name = split_name
-        elif split_name =='val_task_val_set':
-            name = split_name
-        elif split_name =='train_task_val_set MEAN':
-            name = split_name
-        elif split_name =='val_task_val_set MEAN':
-            name = split_name
-        elif split_name =='val_task_val_set_before':
-            name = split_name
-
-        elif split_name=='inner':
+        if split_name=='inner':
             seq, nways, kshots, it, train_task, taskID = info
             if train_task:
                 task='({})train_task'.format(taskID)
@@ -216,15 +205,15 @@ class VisdomLinePlotter_ML(object):
             return
 
         else:
-            print('error, splitname incorrect')
-
-        self.viz.line(
-            X=torch.ones((1, 1)).cpu() * epoch,
-            Y=torch.Tensor([loss]).unsqueeze(0).cpu(),
-            env=self.env,
-            win=self.loss_window,
-            name=name,
-            update='append')
+            name = split_name
+        if loss>0:
+            self.viz.line(
+                X=torch.ones((1, 1)).cpu() * epoch,
+                Y=torch.Tensor([loss]).unsqueeze(0).cpu(),
+                env=self.env,
+                win=self.loss_window,
+                name=name,
+                update='append')
         self.viz.line(
             X=torch.ones((1, 1)).cpu() * epoch,
             Y=torch.Tensor([acc]).unsqueeze(0).cpu(),
