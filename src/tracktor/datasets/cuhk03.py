@@ -341,22 +341,25 @@ class CUHK03_ML(Dataset):
 		# outdir = get_output_dir("siamese_test")
 		res = []
 		pers = []
+		num_ids = 0
 		for k, v in tqdm(tracks.items()):
 			l = len(v)
 			if l >= self.K:
-
+				num_ids += 1
 				if l > self.max_per_person:
 					for i in np.random.choice(l, self.max_per_person, replace=False):
 						pers.append((k, self.enocde(v[i]['im']).cpu()))
+						#pers.append((k, 0))
 				else:
 					for i in range(l):
 						pers.append((k, self.enocde(v[i]['im']).cpu()))
+						#pers.append((k, 0))
 				#res.append(np.array(pers))
-			if k == 50:
-				break
+			# if k == 50:
+			# 	break
 
 		if self.seq_name:
-			print("[*] Loaded {} persons from sequence {}.".format(len(pers), self.seq_name))
+			print(f"[*] Loaded {len(pers)} samples from {num_ids} persons from sequence {self.seq_name}.")
 
 		#self.data = res
 		if len(pers)>1:

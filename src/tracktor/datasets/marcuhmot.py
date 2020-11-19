@@ -44,10 +44,10 @@ class MarCUHMOT_ML(Dataset):
 
 		print("[*] Loading Market1501")
 		start_time = time.time()
-		#market = Market1501_ML('gt_bbox', **dataloader)
+		market = Market1501_ML('gt_bbox', **dataloader)
 		print("--- %s seconds --- for Market1501" % (time.time() - start_time))
 		#self.save(market, 'market_test')
-
+		exit()
 
 		print("[*] Loading CUHK03")
 		start_time = time.time()
