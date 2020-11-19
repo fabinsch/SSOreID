@@ -31,6 +31,7 @@ from learn2learn.data.transforms import NWays, KShots, LoadData
 from learn2learn.utils import clone_module, clone_parameters
 import h5py
 import datetime
+from torchviz import make_dot
 
 #from tracktor.transforms import FusedNWaysKShots
 
@@ -77,7 +78,10 @@ def meta_sgd_update(model, lrs=None, grads=None):
                 p.grad = g
                 p._lr = lr
         else:
-            for p, lr, g in zip(model.parameters(), lrs, grads):
+            model_parameters = [p for name, p in model.named_parameters() if p.requires_grad and 'lrs' not in name]
+            #model_parameters = [p for name, p in model.named_parameters() if p.requires_grad]
+            #for p, lr, g in zip(model.parameters(), lrs, grads):
+            for p, lr, g in zip(model_parameters, lrs, grads):
                 p.grad = g
                 p._lr = lr
 
@@ -147,15 +151,21 @@ class MAML(l2l.algorithms.MAML):
 
 
 class MetaSGD(l2l.algorithms.MetaSGD):
-    def __init__(self, model, lr=1.0, first_order=False, allow_unused=None, allow_nograd=False, lrs=None, global_LR=False):
+    def __init__(self, model, lr=1.0, first_order=False, allow_unused=None, allow_nograd=False, lrs=None, lrs_inner=None,
+                 global_LR=False, others_neuron_b=None, others_neuron_w=None, template_neuron_b=None,
+                 template_neuron_w=None):
         super(l2l.algorithms.MetaSGD, self).__init__()
         self.module = model
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.module.global_LR = global_LR
         # LR per layer
         # if lrs is None:
         #     lrs = [torch.ones(1).to(device) * lr for p in model.parameters()]
         #     lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs])
+
+        self.others_neuron_weight = others_neuron_w
+        self.others_neuron_bias = others_neuron_b
+        self.template_neuron_weight = template_neuron_w
+        self.template_neuron_bias = template_neuron_b
 
         if global_LR:
             # one global LR
@@ -164,11 +174,24 @@ class MetaSGD(l2l.algorithms.MetaSGD):
             self.lrs = lrs[0]
         else:
             if lrs is None:
-                lrs = [torch.ones_like(p) * lr for p in model.parameters()]
-                print('quick fix to exclude LRs for additional layer')
-                lrs = lrs[:-2]  # quick fix to exclude LRs for additional layer
+                # add LRs for template (outer model)
+                lrs = [torch.ones_like(p) * lr for name, p in self.named_parameters()
+                       if 'last' not in name and 'head' not in name]
+                #print('quick fix to exclude LRs for additional last_N layer')
+                #lrs = lrs[:-2]  # quick fix to exclude LRs for additional last_N layer
                 lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs])
-            self.lrs = lrs
+                self.lrs = lrs
+
+                # add LRs for inner model
+                lrs = [torch.ones_like(p) * lr for name, p in self.module.named_parameters()]
+                lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs])
+                self.module.lrs = lrs
+
+            else:
+                lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs])
+                self.lrs = lrs
+                lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs_inner])
+                self.module.lrs = lrs
 
         self.first_order = first_order
         self.allow_nograd = allow_nograd
@@ -190,10 +213,15 @@ class MetaSGD(l2l.algorithms.MetaSGD):
             allow_nograd = self.allow_nograd
         return MetaSGD(clone_module(self.module),
                        lrs=clone_parameters(self.lrs),
+                       lrs_inner=clone_parameters(self.module.lrs),
                        first_order=first_order,
                        allow_unused=allow_unused,
                        allow_nograd=allow_nograd,
-                       global_LR=self.module.global_LR)
+                       global_LR=self.module.global_LR,
+                       others_neuron_b=self.others_neuron_bias.clone(),
+                       others_neuron_w=self.others_neuron_weight.clone(),
+                       template_neuron_b=self.template_neuron_bias.clone(),
+                       template_neuron_w=self.others_neuron_weight.clone())
 
     def adapt(self, loss, first_order=None, allow_nograd=False):
         """
@@ -205,7 +233,9 @@ class MetaSGD(l2l.algorithms.MetaSGD):
             first_order = self.first_order
 
         second_order = not first_order
-        diff_params = [p for p in self.module.parameters() if p.requires_grad]
+        #diff_params = [p for p in self.module.parameters() if p.requires_grad]
+        diff_params = [p for name, p in self.module.named_parameters() if p.requires_grad and 'lrs' not in name]
+        #diff_params = [p for name, p in self.module.named_parameters() if p.requires_grad]
         gradients = grad(loss,
                          diff_params,
                          retain_graph=second_order,
@@ -223,7 +253,7 @@ class MetaSGD(l2l.algorithms.MetaSGD):
         #         gradient = None
         #     gradients.append(gradient)
 
-        self.module = meta_sgd_update(self.module, self.lrs, gradients)
+        self.module = meta_sgd_update(self.module, self.module.lrs, gradients)
 
     def init_last(self, ways, train=False):
         if self.module.global_LR:
@@ -241,77 +271,32 @@ class MetaSGD(l2l.algorithms.MetaSGD):
                             p.data = repeated_bias
                     break
         else:
-            #last = ways-1 if train else ways
-            last = ways  # always others neuron + 4 times duplicated template neuron
-            last_n = 'last_{}'.format(last)
-            additional = ways-1
-            repeated_bias = self.predictor.bias.clone().repeat(additional)
-            #repeated_bias_lr = self.lrs[5].clone().repeat(additional)
-            repeated_bias_lr = self.lrs[7].clone().repeat(additional)
-            repeated_weights = self.predictor.weight.clone().repeat(additional, 1)
-            #repeated_weights_lr = self.lrs[4].clone().repeat(additional, 1)
-            repeated_weights_lr = self.lrs[6].clone().repeat(additional, 1)
+            # LR per Parameter
+            last = ways + 1  # always others neuron + ways times duplicated template neuron
+            last_n = f"last_{last}"
 
-            repeated_weights = torch.cat((self.module.others_neuron_weight, repeated_weights))
-            repeated_bias = torch.cat((self.module.others_neuron_bias, repeated_bias))
+            # repeat template neuron and LRs
+            repeated_bias = self.template_neuron_bias.repeat(ways)
+            repeated_weights = self.template_neuron_weight.repeat(ways, 1)
+            repeated_weights_lr = self.lrs[2].repeat(ways, 1)
+            repeated_bias_lr = self.lrs[3].repeat(ways)
+
+            repeated_weights = torch.cat((self.others_neuron_weight, repeated_weights))
+            repeated_bias = torch.cat((self.others_neuron_bias, repeated_bias))
             repeated_weights_lr = torch.cat((self.lrs[0], repeated_weights_lr))
             repeated_bias_lr = torch.cat((self.lrs[1], repeated_bias_lr))
             for name, layer in self.module.named_modules():
                 if name == last_n:
                     for param_key in layer._parameters:
-                        p = layer._parameters[param_key]
-                        #p.requires_grad = True
-                        if param_key=='weight':
-                            p.data = repeated_weights
-                            self.lrs.append(repeated_weights_lr)
-                        elif param_key=='bias':
-                            p.data = repeated_bias
-                            self.lrs.append(repeated_bias_lr)
-                    # layer.bias.requires_grad = True
-                    # layer.weight.requires_grad = True
-                    # layer.bias.data = repeated_bias
-                    # layer.weight.data = repeated_weights
+                        if param_key == 'weight':
+                            layer._parameters[param_key] = repeated_weights
+                            #self.lrs.append(repeated_weights_lr)
+                            self.module.lrs._parameters['4'] = repeated_weights_lr
+                        elif param_key == 'bias':
+                            layer._parameters[param_key] = repeated_bias
+                            #self.lrs.append(repeated_bias_lr)
+                            self.module.lrs._parameters['5'] = repeated_bias_lr
                     break
-
-    def last_layers_freeze(self):
-        last_layers = ['last_{}'.format(n-1) for n in self.num_output]
-        # for name, layer in self.module.named_modules():
-        #     if name in last_layers:
-        #         for param in layer.parameters():
-        #             param.requires_grad = False
-                #layer.bias.requires_grad = False
-                #layer.weight.requires_grad = False
-
-    # def init_last(self, ways):
-    #     last_n = 'last_{}'.format(ways-1)
-    #     repeated_bias = self.module.predictor.bias.repeat(ways - 1)
-    #     repeated_weights = self.module.predictor.weight.clone().repeat(ways - 1, 1)
-    #     for name, layer in self.module.named_modules():
-    #         if name == last_n:
-    #             layer.bias.data = repeated_bias
-    #             layer.weight.data = repeated_weights
-    #     #self.module.last.bias.data = torch.ones(4).to(device)
-    #     # last = self.additional_layer[ways].to(device)
-    #     # cm = clone_module(self.module)
-    #     # cm.add_module('last', torch.nn.Linear(1024, ways-2).to(device))
-    #     # self.module = cm
-    #     #self.last.weight.requires_grad = False
-    #     #self.last.bias.requires_grad = False
-    #
-    #     # weight = self.predictor.weight
-    #     # weight_repeated = weight.repeat(ways, 1)
-    #     # bias = self.predictor.bias
-    #     # bias_repeated = bias.repeat(ways)
-    #     #
-    #     #repeated_bias = self.predictor.bias.clone().repeat(ways-1)
-    #     #repeated_weights = self.predictor.weight.clone().repeat(ways-1, 1)
-    #     #with torch.no_grad():
-    #     #self.last.weight = torch.nn.Parameter(repeated_weights)
-    #     #self.last.bias = torch.nn.Parameter(repeated_bias)
-    #
-    #     #self.last.weight.data.fill_(self.predictor.weight.repeat(ways-1, 1))
-    #     #self.last.bias.data.fill_(self.predictor.bias.repeat(ways-1))
-    #     return self
 
 class ML_dataset(Dataset):
     def __init__(self, fm, id, flip_p=-1):
@@ -348,83 +333,35 @@ class reID_Model(torch.nn.Module):
     def __init__(self, head, predictor, n_list):
         super(reID_Model, self).__init__()
         self.head = head
-        self.predictor = predictor.cls_score
-        #self.last = torch.nn.Linear(1024, 4).to(device)
-        # just get 1 template neuron as output and additional last X (to be filled with template)
-        self.others_neuron_weight = torch.nn.Parameter(self.predictor.weight[1, :].unsqueeze(0))
-        self.others_neuron_bias = torch.nn.Parameter(self.predictor.bias[1].unsqueeze(0))
-        self.predictor.weight = torch.nn.Parameter(self.predictor.weight[0,:].unsqueeze(0))
-        self.predictor.bias = torch.nn.Parameter(self.predictor.bias[0].unsqueeze(0))
-
-
         for n in n_list:
-            #self.add_module('last_{}'.format(n - 1), torch.nn.Linear(1024, n - 1).to(device)) ## before having others neuron
             n += 1
-            self.add_module('last_{}'.format(n - 1), torch.nn.Linear(1024, n - 1).to(device))
+            self.add_module(f"last_{n}", torch.nn.Linear(1024, n).to(device))
 
         self.num_output = n_list
-        # self.additional_layer = {}
-        # if len(n)>0:
-        #     for i in n:
-        #         if i>2:
-        #             self.additional_layer[i] = torch.nn.Linear(1024, i - 2)
-        #         else:
-        #             self.additional_layer[i] = None
-        # else:
-        #     self.additional_layer = None
 
     def forward(self, x, nways, train):
-        #nways += 0 if train else 1
-        nways += 1
-
         feat = self.head(x)
-        x = self.predictor(feat)
-        # if self.additional_layer != None and nways>2:
-        #     self.additional_layer[nways].to(device)
-        #     add = self.additional_layer[nways](feat)
-        #     x = torch.cat((x, add), dim=1)
+        last_n = f"last_{nways + 1}"
 
-        if nways>1:
-            last_n = 'last_{}'.format(nways - 1)
-            for name, layer in self.named_modules():
-                if name == last_n:
-                    add = layer(feat)
-                    break
-            x = torch.cat((add, x), dim=1)
-        # else:
-
-        return x
-    # def init_last(self, ways):
-    #     last_n = 'last_{}'.format(ways-1)
-    #     repeated_bias = self.predictor.bias.repeat(ways - 1)
-    #     repeated_weights = self.predictor.weight.clone().repeat(ways - 1, 1)
-    #     for name, layer in self.named_modules():
-    #         if name == last_n:
-    #             layer.bias.requires_grad = True
-    #             layer.weight.requires_grad = True
-    #             layer.bias.data = repeated_bias
-    #             layer.weight.data = repeated_weights
-
-    def last_layers_freeze(self):
-        last_layers = ['last_{}'.format(n-1) for n in self.num_output]
+        # because of variable last name
         for name, layer in self.named_modules():
-            if name in last_layers:
-                layer.bias.requires_grad = False
-                layer.weight.requires_grad = False
+            if name == last_n:
+                x = layer(feat)
+        return x
+
 
 def remove_last(state_dict, num_output):
     r = dict(state_dict)
     for n in num_output:
-        n += 1
-        key_weight = 'module.last_{}.weight'.format(n-1)
-        key_bias = 'module.last_{}.bias'.format(n-1)
+        key_weight = f"module.last_{n+1}.weight"
+        key_bias = f"module.last_{n+1}.bias"
         del r[key_weight]
         del r[key_bias]
     return r
 
 
 def forward_pass_for_classifier_training(learner, features, scores, nways, eval=False, return_scores=False, ratio=[], train=False, t=-1):
-    ratio = torch.sqrt(ratio)
+    #ratio = torch.sqrt(ratio)
     if eval:
         learner.eval()
     if type(features) is tuple:
@@ -489,6 +426,8 @@ def forward_pass_for_classifier_training(learner, features, scores, nways, eval=
 
 def accuracy(predictions, targets, iter=-1, train=False, seq=-1, num_others_own=-1):
     predictions = predictions.argmax(dim=1).view(targets.shape)
+    #if not train:
+        #print(predictions)
     compare = (predictions == targets)
 
     non_zero_target = (targets != 0)
@@ -537,7 +476,6 @@ def accuracy(predictions, targets, iter=-1, train=False, seq=-1, num_others_own=
     return (valid_accuracy_without_zero, valid_accuracy_with_zero, valid_accuracy_just_zero, valid_accuracy_others_own)
 
 
-
 class AverageMeter(object):
     """Computes and stores the average and current value"""
     def __init__(self, name, fmt=':f'):
@@ -581,9 +519,9 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_tas
     flip_p = reid['ML']['flip_p']
 
     data, labels = batch
-    data, labels = data, labels.to(device) + 1  # because 0 is for others class
+    data, labels = data, labels.to(device) + 1  # because 0 is for others class, transfer data to gpu
     ratio = torch.ones(ways + 1).to(device) * shots
-    n = 1 # consider flip in indices
+    n = 1  # consider flip in indices
     if flip_p > 0.0:
         n = 2
         # get flipped feature maps, in combination with getitem method
@@ -611,34 +549,34 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_tas
     adaptation_data, adaptation_labels = data[adaptation_indices], labels[adaptation_indices]
     evaluation_data, evaluation_labels = data[evaluation_indices], labels[evaluation_indices]
 
-    # ## plot loss and acc of val task before optimizing
-    if train_task == True and iteration % 20 == 0 and False:
+
+
+    # init last layer with the same weights
+    if init_last:
+        learner.init_last(ways)
+
+    # plot loss and acc of val task before optimizing
+    if train_task and iteration % 100 == 0 and True:
         predictions, _ = forward_pass_for_classifier_training(learner, adaptation_data,
-                                                                              adaptation_labels, ways, ratio=ratio,
-                                                                              train=True,return_scores=True)
-        #train_accuracy = accuracy(train_predictions, adaptation_labels)
+                                                              adaptation_labels, ways, ratio=ratio,
+                                                              train=True, return_scores=True)
+        # train_accuracy = accuracy(train_predictions, adaptation_labels)
         predictions = predictions.argmax(dim=1).view(adaptation_labels.shape)
         t, counter = np.unique(predictions.cpu().numpy(), return_counts=True)
-        print(f"[{seq}] check performance on train task train set BEFORE adaptation")
+        print(f"[{seq}] check performance on train task train set BEFORE adaptation nach init")
         for i, c in enumerate(t):
             print(f"class {c} predicted {counter[i]} times")
-        # val_predictions, val_error = forward_pass_for_classifier_training(learner, evaluation_data,
-        #                                                                      evaluation_labels, return_scores=True)
-        # valid_accuracy = accuracy(val_predictions, evaluation_labels)
-        #plotter.plot(epoch=step, loss=train_error, acc=train_accuracy, split_name='inner', info=info)
-        #plotter.plot(epoch=step, loss=val_error, acc=val_accuracy, split_name='inner', info=info)
-        #print('train error {}')
 
-    shuffle = True
+    #shuffle = True
     #start_time = time.time()
-    if shuffle == True:
-        idx = torch.randperm(adaptation_labels.nelement())
-        adaptation_labels = adaptation_labels[idx]
-        adaptation_data = adaptation_data[idx]
-
-        idx = torch.randperm(evaluation_labels.nelement())
-        evaluation_labels = evaluation_labels[idx]
-        evaluation_data = evaluation_data[idx]
+    # if shuffle:
+    #     idx = torch.randperm(adaptation_labels.nelement())
+    #     adaptation_labels = adaptation_labels[idx]
+    #     adaptation_data = adaptation_data[idx]
+    #
+    #     idx = torch.randperm(evaluation_labels.nelement())
+    #     evaluation_labels = evaluation_labels[idx]
+    #     evaluation_data = evaluation_data[idx]
         #print("--- %s seconds --- [fa] shuffle " % (time.time() - start_time))
 
     # get loss and acc of val set before optimizing
@@ -647,22 +585,36 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_tas
     #                                                                          evaluation_labels, ways, return_scores=True)
     #     valid_accuracy_before = accuracy(predictions_before, evaluation_labels)
 
-    # init last layer with the same weights
-    if init_last == True:
-        learner.init_last(ways)
+
     # Adapt the model
+    #start_time = time.time()
     for step in range(adaptation_steps):
         plot_inner = False
-        if (plotter != None) and (iteration % 10 == 0) and task == 0 and plot_inner == True:
+        use_others_inner_loop = False
+        if (plotter != None) and (iteration % 10 == 0) and task == 0 and plot_inner:
             train_predictions, train_loss = forward_pass_for_classifier_training(learner, adaptation_data, adaptation_labels, ways, return_scores=True, ratio=ratio, train=True)
             train_accuracy = accuracy(train_predictions, adaptation_labels)
             #print(train_accuracy)
             #plotter.plot(epoch=step, loss=train_error, acc=train_accuracy, split_name='inner', info=info)
+        elif use_others_inner_loop:
+            num_others = len(others) + len(others_own) if len(others) > 1 else len(others_own)
+            ID_others = 0
+            ratio[ID_others] = num_others
+            train_loss = forward_pass_for_classifier_training(learner, (adaptation_data, others_own, others),
+                                                              torch.cat((adaptation_labels, torch.ones(num_others).long().to(device) * ID_others)),
+                                                              ways, return_scores=False, ratio=ratio, train=False)
         else:
-            train_loss = forward_pass_for_classifier_training(learner, adaptation_data, adaptation_labels, ways, ratio=ratio, train=True)
+            train_predictions, train_loss = forward_pass_for_classifier_training(learner, adaptation_data,
+                                                                                 adaptation_labels, ways, ratio=ratio, train=True, return_scores=True)
+            #train_accuracy = accuracy(train_predictions, adaptation_labels)
+        #graph = make_dot(train_loss, params=dict(learner.named_parameters()))
+        #graph.format = 'png'
+        #graph.render('graph2')
         learner.adapt(train_loss)  # Takes a gradient step on the loss and updates the cloned parameters in place
+        train_loss = torch.zeros(1)
 
-    if train_task == True and iteration % 20 == 0 and False:
+    #print(f"{time.time() - start_time:.5f} for inner loop {seq}")
+    if train_task and iteration % 100 == 0 and True:
         predictions, _ = forward_pass_for_classifier_training(learner, adaptation_data,
                                                                               adaptation_labels, ways, ratio=ratio,
                                                                               train=True,return_scores=True)
@@ -673,111 +625,19 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_tas
         for i, c in enumerate(t):
             print(f"class {c} predicted {counter[i]} times")
 
-    train_loss = torch.zeros(1)
 
-    # get others for validation set and adapt learner
-    # evaluate on all others
+
     ID_others = 0
     if len(others) > 1 or len(others_own) > 1:
         #start_time = time.time()
         num_others = len(others) + len(others_own) if len(others) > 1 else len(others_own)
-        #if iteration > 150:
         ratio[ID_others] = num_others
         predictions, validation_loss = forward_pass_for_classifier_training(learner,  (evaluation_data, others_own, others), torch.cat((evaluation_labels,torch.ones(num_others).long().to(device) * ID_others)), ways,
                                                                  return_scores=True, ratio=ratio, train=False)
-        #start_time = time.time()
-        #others = torch.cat((others_own, others))
-        #others = torch.cat((evaluation_data, others))
-        #t = time.time()-start_time
-        #print('time for cat {}'.format(t))
-        #predictions, validation_error = forward_pass_for_classifier_training(learner,  others, torch.cat((evaluation_labels,torch.ones(num_others).long().to(device) * ID_others)), ways,
-         #                                                       return_scores=True, ratio=ratio, train=False, t=t)
-        '''
-        num_others = len(others)
-        total_num_samples += num_others
-        start_time = time.time()
-        ratio[ID_others] = num_others
-        test = torch.cat((others, evaluation_data))
-        #start_time_forward = time.time()
-        predictions, validation_error_others = forward_pass_for_classifier_training(learner, others, torch.ones(num_others).long().to(device) * ID_others, ways,
-                                                                return_scores=True, ratio=ratio, train=False)
-        #print("--- %s seconds --- [fa] just forward pass others" % (time.time() - start_time_forward))
-        predictions = predictions.argmax(dim=1)
-        correct_others = (predictions == (torch.ones(num_others).to(device).long() * ID_others)).sum().float()
-        accuracy_others = correct_others / num_others
-        if iteration % 10 == 0 and not train_task:
-            #print("--- %s seconds --- [fa] to process others " % (time.time() - start_time))
-            print('{}/{} others from other sequences missed'.format(int(num_others - correct_others), num_others))
-        
-        #random.shuffle(others_own)
-        #others_own = others_own[:ways*shots*2]
-        #num_others = int(others[0].size(0))
-        #others = torch.cat((others_own, others.to(device))) if len(others)>1 else others_own
-        #others = torch.cat((others_own, others[torch.arange(len(others))])) if len(others)>1 else others_own
 
-        #del others_own
-        #num_others = int(others.size(0))
-        #evaluation_data_others, evaluation_labels_others = others[0].to(device), others[1].to(device) * ID_others
-
-        #evaluation_data_others, evaluation_labels_others = others.to(device), torch.ones(num_others).long().to(device) * ID_others
-
-
-        #ID_others = random.randrange(ways)
-        #replace = (labels == ID_others)
-        #labels = labels + replace * (ways - ID_others)
-
-        #adaptation_indices_others = np.zeros(others[0].size(0), dtype=bool)
-
-        # Separate others into adaptation/evalutation sets
-        # if flip_p > 0.0:
-        # if False:
-        #     num_others = int(others[0].size(0) / 4)  # flip and eval+adapt
-        #     adaptation_indices_others[np.arange(0, others[0].size(0), 4)] = True
-        #     adaptation_indices_others[np.arange(1, others[0].size(0), 4)] = True
-        # else:
-        #     num_others = int(others[0].size(0) / 2)
-        #     adaptation_indices_others[np.arange(0, others[0].size(0), 2)] = True
-        # evaluation_indices_others = torch.from_numpy(~adaptation_indices_others)
-        # adaptation_indices_others = torch.from_numpy(adaptation_indices_others)
-        #
-        # adaptation_data_others, adaptation_labels_others = others[0][adaptation_indices_others], others[1][
-        #     adaptation_indices_others] * ID_others
-        # evaluation_data_others, evaluation_labels_others = others[0][evaluation_indices_others], others[1][
-        #     evaluation_indices_others] * ID_others
-
-        # adaptation_data = torch.cat((adaptation_data, adaptation_data_others))
-        # adaptation_labels = torch.cat((adaptation_labels, adaptation_labels_others))
-    num_others = len(others_own)
-    #start_time = time.time()
-    others_own = torch.cat((evaluation_data, others_own))
-    evaluation_labels = torch.cat((evaluation_labels, torch.ones(num_others).long().to(device) * ID_others))
-    #print("--- %s seconds --- [fa] cat others own seq " % (time.time() - start_time))
-    #logger.debug("--- %s seconds --- for construct others and switch to gpu" % (time.time() - start_time))
-    ratio[ID_others] = num_others
-    #ratio = torch.cat((ratio, torch.ones(1).to(device)*num_others))
-    total_num_samples += len(evaluation_labels)
-    # if init_last==True:
-    #     learner.init_last(ways, train=False)
-    # Evaluate the adapted model
-    #start_time = time.time()
-    predictions, validation_error = forward_pass_for_classifier_training(learner, others_own, evaluation_labels, ways, return_scores=True, ratio=ratio, train=False)
-    #print("--- %s seconds --- [fa] just forward pass task+own " % (time.time() - start_time))
-    validation_error = validation_error + validation_error_others if validation_error_others > 0 else validation_error
-    validation_error /= total_num_samples
-    # debug val task val set
-    # if train_task==False and iteration%10==0:
-    #     predictions_debug = predictions.argmax(dim=1).view(evaluation_labels.shape)
-    #     print(predictions_debug)
-    #     print(evaluation_labels)
-    #     print(predictions_debug == evaluation_labels)
-        
-    '''
-        # here accuracy of task and others from own sequence
-        # (valid_accuracy_without_zero, valid_accuracy_with_zero, valid_accuracy_just_zero) in case of val task
         valid_accuracy = accuracy(predictions,
                                   torch.cat((evaluation_labels, torch.ones(num_others).long().to(device) * ID_others)),
                                   iteration, train_task, seq, others_own.shape[0])
-        # print(valid_accuracy)
     else:
         predictions, validation_loss = forward_pass_for_classifier_training(learner,  evaluation_data, evaluation_labels, ways,
                                                                  return_scores=True, ratio=ratio, train=False, t=0.0)
@@ -1061,11 +921,11 @@ def my_main(_config, reid, _run):
             datasets = [d for d in datasets if d != reid['dataloader']['validation_sequence']]
             #datasets = [d for d in datasets if d not in ['MOT17-02', 'MOT17-04', 'MOT17-05', 'MOT17-09', 'MOT17-10', 'MOT17-11', 'MOT17-13']]
             datasets = [d for d in datasets if d not in ['cuhk03', 'market1501']]
-            #datasets = [d for d in datasets if d == 'MOT17-09']
+            #datasets = [d for d in datasets if d == 'MOT17-02']
 
             for i,d in enumerate(datasets):
                 i_to_dataset[i] = d
-            print('Train with {} and use {} as validation set'.format(datasets, reid['dataloader']['validation_sequence']))
+            print(f"Train with {datasets} and use {reid['dataloader']['validation_sequence']} as validation set")
 
             others_FM = []
             others_ID = []
@@ -1091,14 +951,14 @@ def my_main(_config, reid, _run):
                 others_num.append((c, c+num))
                 others_seq_ID.append(torch.ones(num)*i)
                 c += num
-                print('loaded {} as seq id {} with {} samples'.format(set, i, num))
+                print(f"loaded {set} as seq id {i} with {num} samples")
 
             # print(
             #     'OVERALL: {} unique IDs, and {} BBs in total, av. {} BB/ID  '.format(ids_total, bb_total, (bb_total / ids_total)))
             others_FM = torch.cat(others_FM).to(device)  # contains all feature maps except val sequence
             others_ID = torch.cat(others_ID)
             others_seq_ID = torch.cat(others_seq_ID)
-            print('Overall {} samples in others'.format(others_FM.shape[0]))
+            print(f"Overall {others_FM.shape[0]} samples in others")
 
 
             if reid['dataloader']['validation_sequence'] != 'None':
@@ -1192,7 +1052,6 @@ def my_main(_config, reid, _run):
     # Initialize the modules #
     ##########################
     print("[*] Building CNN")
-    print('remap on my own because of others own')
 
     obj_detect = FRCNN_FPN(num_classes=2).to(device)
     obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
@@ -1202,32 +1061,34 @@ def my_main(_config, reid, _run):
 
     reID_network.train()
     reID_network.cuda()
-    #reID_network.last_layers_freeze()
 
-    # for n in nways_list:
-    #     if n>2:
-    #         for p in reID_network.additional_layer[n].parameters():
-    #             p.requires_grad = False
     lr = float(reid['solver']['LR_init'])
     if reid['ML']['maml']:
         model = MAML(reID_network, lr=1e-3, first_order=True, allow_nograd=True)
         #opt = torch.optim.Adam(model.parameters(), lr=1e-4)
         opt = torch.optim.Adam([
-            {'params':model.module.head.parameters()},
-            {'params':model.module.predictor.parameters()}
+            {'params': model.module.head.parameters()},
+            {'params': model.module.predictor.parameters()}
         ], lr=lr)
     if reid['ML']['learn_LR']:
-        model = MetaSGD(reID_network, lr=1e-3, first_order=True, allow_nograd=True, global_LR=reid['ML']['global_LR'])
-        #opt = torch.optim.Adam(model.parameters(), lr=1e-4)
+        #predictor = obj_detect.roi_heads.box_predictor.cls_score
+        predictor = torch.nn.Linear(in_features=1024, out_features=2).to(device)
+        model = MetaSGD(reID_network, lr=1e-3, first_order=True, allow_nograd=True, global_LR=reid['ML']['global_LR'],
+                        others_neuron_b=torch.nn.Parameter(predictor.bias[1].unsqueeze(0)),
+                        others_neuron_w=torch.nn.Parameter(predictor.weight[1, :].unsqueeze(0)),
+                        template_neuron_b=torch.nn.Parameter(predictor.bias[0].unsqueeze(0)),
+                        template_neuron_w=torch.nn.Parameter(predictor.weight[0, :].unsqueeze(0)))
+
         lr_lr = float(reid['solver']['LR_LR'])
         opt = torch.optim.Adam([
-            {'params':model.module.head.parameters()},
-            {'params':model.module.predictor.parameters()},
-            {'params':model.lrs, 'lr': lr_lr}
+            {'params': model.module.head.parameters()},
+            {'params': model.template_neuron_bias},
+            {'params': model.template_neuron_weight},
+            {'params': model.others_neuron_bias},
+            {'params': model.others_neuron_weight},
+            {'params': model.lrs, 'lr': lr_lr}, # the template + others LR
+            {'params': model.module.lrs[:4], 'lr': lr_lr} # LRs for the head
         ], lr=lr)
-        #model.last_layers_freeze()
-    # for p in model.parameters():
-    #     a = p.numel
 
 
     if reid['solver']['continue_training']:
@@ -1242,6 +1103,7 @@ def my_main(_config, reid, _run):
                   .format(reid['solver']['checkpoint'], checkpoint['epoch']))
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
+
     # for p in model.parameters():
     #     a = p.numel
     # opt = torch.optim.Adam(model.parameters(), lr=4e-3)
@@ -1253,7 +1115,7 @@ def my_main(_config, reid, _run):
     # Begin training #
     ##################
     print("[*] Training ...")
-    print('use sqrt of ratio!')
+    #print('use sqrt of ratio!')
     clamping_LR = True
     if clamping_LR:
         print('clamp LR < 0')
@@ -1287,30 +1149,31 @@ def my_main(_config, reid, _run):
     #logger.debug("--- %s seconds --- for get others" % (time.time() - start_time))
     #others_val = (others_val, others)
 
-    if reid['ML']['market_others']:
-        others = get_others(meta_datasets, -1, reid['ML']['num_others'], use_market=True)
-        ## split others in train and val, shuffle first
-        idx = torch.randperm(others[1].nelement())
-        others = (others[0][idx], others[1][idx])
-        total_num_others = others[1].nelement()
-        output, inv_idx, counts = torch.unique(others[1], return_inverse=True, return_counts=True)
-        num_val_id = int(output.nelement() * 0.3)
-        num_samples = 0
-        others_ = torch.tensor([]).to(device)
-        for i in range(num_val_id):
-            num_samples += counts[i]
-            others_ = torch.cat((others_, (others[0][(others[1] == output[i])]).float()))
-        others_val = (others_, torch.ones(others_.shape[0]).long().to(device))
-        others_ = torch.tensor([]).to(device)
-        for i in range(num_val_id, output.nelement()):
-            others_ = torch.cat((others_, (others[0][(others[1] == output[i])]).float()))
-        others = (others_, torch.ones(others_.shape[0]).long().to(device))
-        print('work with {} train samples and {} val samples for others'.format(total_num_others-num_samples, num_samples))
+    # just use market for others
+    # if reid['ML']['market_others']:
+    #     others = get_others(meta_datasets, -1, reid['ML']['num_others'], use_market=True)
+    #     ## split others in train and val, shuffle first
+    #     idx = torch.randperm(others[1].nelement())
+    #     others = (others[0][idx], others[1][idx])
+    #     total_num_others = others[1].nelement()
+    #     output, inv_idx, counts = torch.unique(others[1], return_inverse=True, return_counts=True)
+    #     num_val_id = int(output.nelement() * 0.3)
+    #     num_samples = 0
+    #     others_ = torch.tensor([]).to(device)
+    #     for i in range(num_val_id):
+    #         num_samples += counts[i]
+    #         others_ = torch.cat((others_, (others[0][(others[1] == output[i])]).float()))
+    #     others_val = (others_, torch.ones(others_.shape[0]).long().to(device))
+    #     others_ = torch.tensor([]).to(device)
+    #     for i in range(num_val_id, output.nelement()):
+    #         others_ = torch.cat((others_, (others[0][(others[1] == output[i])]).float()))
+    #     others = (others_, torch.ones(others_.shape[0]).long().to(device))
+    #     print('work with {} train samples and {} val samples for others'.format(total_num_others-num_samples, num_samples))
 
-    plotter=None
+    plotter = None
     if reid['solver']["plot_training_curves"]:
         now = datetime.datetime.now()
-        run_name = now.strftime("%Y-%m-%d_%H:%M")
+        run_name = now.strftime("%Y-%m-%d_%H:%M_") + reid['name']
         plotter = VisdomLinePlotter_ML(env=run_name, offline=reid['solver']['plot_offline'],
                                        info=(nways_list, kshots_list, meta_batch_size, num_tasks,
                                              num_tasks_val, reid['dataloader']['validation_sequence'],
@@ -1319,7 +1182,27 @@ def my_main(_config, reid, _run):
     # safe model 10 times
     safe_every = int(_config['reid']['solver']['iterations'] / 10)
     init_last = reid['ML']['init_last']
-    for iteration in range(1,_config['reid']['solver']['iterations']+1):
+
+    for iteration in range(1, _config['reid']['solver']['iterations']+1):
+        # debug
+        #if iteration % 50 or True:
+        if False:
+            print(f"others neuron bias {model.others_neuron_bias.item()}")
+            print(f"others neuron weight mean {model.others_neuron_weight.mean().item()}")
+            print(f"others neuron weightLR mean {model.lrs[0].mean().item()}")
+            print(f"others neuron biasLR mean {model.lrs[1].item()}")
+
+            print(f"template neuron bias {model.template_neuron_bias.item()}")
+            print(f"template neuron weight mean {model.template_neuron_weight.mean().item()}")
+            print(f"template neuron weightLR mean {model.lrs[2].mean().item()}")
+            print(f"template neuron biasLR mean {model.lrs[3].item()}")
+
+            print(f"head neuron bias {model.module.head.fc7.bias.mean().item()}")
+            print(f"head neuron weight mean {model.module.head.fc7.weight.mean().item()}")
+            print(f"head neuron weightLR mean {model.module.lrs[2].mean().item()}")
+            print(f"head neuron biasLR mean {model.module.lrs[3].mean().item()}")
+
+
         start_time_iteration = time.time()
         opt.zero_grad()
 
@@ -1372,7 +1255,7 @@ def my_main(_config, reid, _run):
             #     sampled_val[(nways, kshots)] = 1
             # else:
             #     sampled_val[(nways, kshots)] += 1
-
+            start_time = time.time()
             evaluation_loss, evaluation_accuracy = fast_adapt(batch,
                                                               learner,
                                                               adaptation_steps,
@@ -1388,9 +1271,9 @@ def my_main(_config, reid, _run):
                                                               reid,
                                                               init_last,
                                                               others_val,
-                                                              #others_FM
+                                                              others_FM
                                                               )
-
+            #print(f"{time.time() - start_time:.5f} for fast adapt val")
             evaluation_accuracy, evaluation_accuracy_all, evaluation_accuracy_just_zero, evaluation_accuracy_others_own = evaluation_accuracy
 
             meta_valid_loss += evaluation_loss.item()
@@ -1408,7 +1291,7 @@ def my_main(_config, reid, _run):
         for task in range(meta_batch_size):
             # Compute meta-training loss
             #start_time=time.time()
-            learner = model.clone()  #back-propagating losses on the cloned module will populate the buffers of the original module
+            learner = model.clone()  # back-propagating losses on the cloned module will populate the buffers of the original module
             batch, nways, kshots, sequence, taskID = sample_task(meta_datasets, nways_list, kshots_list, i_to_dataset,
                                                                  reid['ML']['sample_from_all'], num_tasks=num_tasks,
                                                                  sample_uniform_DB=sample_db)
@@ -1447,7 +1330,7 @@ def my_main(_config, reid, _run):
                 sampled_train[sequence][(nways, kshots)] = 1
             else:
                 sampled_train[sequence][(nways, kshots)] += 1
-
+            start_time = time.time()
             evaluation_loss, evaluation_accuracy = fast_adapt(batch,
                                                                learner,
                                                                adaptation_steps,
@@ -1463,11 +1346,15 @@ def my_main(_config, reid, _run):
                                                                reid,
                                                                init_last,
                                                                others_val,
-                                                               #others_FM[others_seq_ID!=sequence_idx],
+                                                               others_FM[others_seq_ID != sequence_idx],
                                                                seq=sequence
                                                                )
 
+            #graph = make_dot(evaluation_loss, params=dict(learner.named_parameters()))
+            #graph.format = 'png'
+            #graph.render('graph3')
             evaluation_loss.backward()  # compute gradients, populate grad buffers of maml
+            #print(f"{time.time() - start_time:.5f} for fast adapt train + backward")
 
             evaluation_accuracy, evaluation_accuracy_all, evaluation_accuracy_just_zero, evaluation_accuracy_others_own = evaluation_accuracy
 
@@ -1529,7 +1416,7 @@ def my_main(_config, reid, _run):
                     print('LR: {}'.format(p.item()))
 
         #if iteration>30000 and (iteration%safe_every==0 or safe_best_loss==1) and (iteration%100==0):
-        if iteration > 500 and (iteration%safe_every == 0 or safe_best_loss == 1):
+        if iteration > 1000 and (iteration%safe_every == 0 or safe_best_loss == 1):
             if iteration % 10 == 0:
                 model_s = '{}_reID_Network.pth'.format(iteration)
                 if safe_best_loss:
@@ -1582,10 +1469,14 @@ def my_main(_config, reid, _run):
         if clamping_LR:
             #print('hier clamping')
             for i, lr in enumerate(model.lrs):
-                if (lr < 0).sum().item() > 0 :
+                if (lr < 0).sum().item() > 0:
                     lr_mask = (lr > 0)
-                    #print('in lrs {} sind {} < 0'.format(i, anzahl_false))
                     model.lrs[i] = torch.nn.Parameter(lr*lr_mask)
+
+            for i, lr in enumerate(model.module.lrs):
+                if (lr < 0).sum().item() > 0:
+                    lr_mask = (lr > 0)
+                    model.module.lrs[i] = torch.nn.Parameter(lr*lr_mask)
         #print('OVERALL: 1 iteration in {}'.format(time.time()-start_time_iteration))
 
         if iteration % 100 == 0:
