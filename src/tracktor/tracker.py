@@ -106,7 +106,7 @@ class Tracker:
                 a = reID_weights
 
                 # when changed to checkpoint that safes optimizer, but some older ones are still working without this if
-                if len(a)==4:
+                if len(a) == 4:
                     logger.info('loaded init after {} epochs'.format(a['epoch']))
                     a = a['state_dict']
 
@@ -125,7 +125,7 @@ class Tracker:
                     self.others_neuron_weight = a['module.others_neuron_weight']
 
 
-                if len(self.bbox_predictor_weights['cls_score.bias'])>1 and self.init_last_same==True:
+                if len(self.bbox_predictor_weights['cls_score.bias']) > 1 and self.init_last_same==True:
                     self.bbox_predictor_weights['cls_score.bias'] = self.bbox_predictor_weights['cls_score.bias'][0]
                     self.bbox_predictor_weights['cls_score.weight'] = self.bbox_predictor_weights['cls_score.weight'][0,:].unsqueeze(0)
 
@@ -134,7 +134,7 @@ class Tracker:
                     # fc6, fc6, cls_score
                     self.lrs = []
 
-                    if len(a)==7:
+                    if len(a) == 7:
                         self.lrs.append(a['lrs'].item())
                         logger.info('LR is {}'.format(a['lrs'].item()))
                         self.LR_per_parameter = False
@@ -1112,19 +1112,23 @@ class Tracker:
                 self.box_head_classification.train()
             return pred_scores.detach()
             #return pred_scores[:, 1:].squeeze(dim=1).detach()
-        if self.box_predictor_classification.cls_score.out_features==1:
+        if self.box_predictor_classification.cls_score.out_features == 1:
             criterion = torch.nn.BCEWithLogitsLoss()
             loss = criterion(class_logits.squeeze(1), scores)
         else:
-            if len(ratio)>0:
-                w = torch.ones(int(torch.max(scores).item())+1).to(device)
+            if len(ratio) > 0:
+                num_tracks = int(torch.max(scores).item())
+                w = torch.ones(num_tracks + 1).to(device)
                 #w[0] = w[0]*ratio  # downweight 0 class
                 #w[1:] = w[1:]*(1/ratio)  # upweight inactive
-                w = w*(1/ratio)
+                w = w * (1 / ratio)
+                if not self.finetuning_config['train_others']:
+                # give zero class average weight of all others classes if no train data
+                    w[0] = (w[1:].sum() / num_tracks)
                 loss = F.cross_entropy(class_logits, scores.long(), weight=w)
             else:
                 loss = F.cross_entropy(class_logits, scores.long())
-            if True and ep>=0:
+            if True and ep >= 0:
                 m = torch.nn.LogSoftmax()
                 n = torch.nn.Softmax()
                 logscores_each = m(class_logits)
@@ -1181,7 +1185,7 @@ class Tracker:
         if eval:
             self.box_predictor_classification.train()
             self.box_head_classification.train()
-        if ep>=0:
+        if ep >= 0:
             return loss, loss_others, loss_inactives, max_sample_loss_others
         else:
             return loss
@@ -1226,7 +1230,8 @@ class Tracker:
                                             upsampling=self.finetuning_config['upsampling'],
                                             weightedLoss=self.finetuning_config['weightedLoss'],
                                             samples_per_ID=self.finetuning_config['samples_per_ID'],
-                                            train_others=self.finetuning_config['train_others'])
+                                            train_others=self.finetuning_config['train_others'],
+                                            load_others=self.finetuning_config['load_others'])
         self.box_head_classification = box_head_classification
         self.box_predictor_classification = box_predictor_classification
 

@@ -87,7 +87,7 @@ class InactiveDataset(torch.utils.data.Dataset):
     def __init__(self, data_augmentation=0, others_db=None, others_class=False, im_index=0,
                  ids_in_others=0, val_set_random_from_middle=False, exclude_from_others=[], results=None, flip_p=0.5,
                  fill_up=False, fill_up_to=10, flexible=False, upsampling=False, weightedLoss=False, samples_per_ID=1,
-                 train_others=True):
+                 train_others=True, load_others=False):
         self.boxes = torch.tensor([]).to(device)
         self.scores = torch.tensor([]).to(device)
         self.features = torch.tensor([]).to(device)
@@ -114,7 +114,7 @@ class InactiveDataset(torch.utils.data.Dataset):
         self.exclude_from_others = exclude_from_others
         #self.results = results
         self.frame = torch.tensor([]).to(device)
-        self.loaded_others = True  # take number of sampes per ID in others, otherwise take all
+        self.loaded_others = load_others  # take number of sampes per ID in others, otherwise take all
         self.flip_p = flip_p
         self.fill_up = fill_up
         self.fill_up_to = fill_up_to
@@ -408,7 +408,7 @@ class InactiveDataset(torch.utils.data.Dataset):
                         # TODO remove False
                         #if not self.upsampling and not self.weightedLoss and False:
                         if not self.upsampling and not self.weightedLoss and True:
-                            j = random.randint(0,len(self.others_db[idx])-1)
+                            j = random.randint(0, len(self.others_db[idx])-1)
                             if train_num_others[i] > 0:
                                 train_others_features = torch.cat(
                                     (train_others_features, self.others_db[idx][j][1].unsqueeze(0).to(device)))
@@ -419,9 +419,9 @@ class InactiveDataset(torch.utils.data.Dataset):
                             if train_others_features.shape[0] >= (max_occ * (self.data_augmentation + 1)) or sum(
                                     train_num_others) == 0:
                                 break
-                        elif self.loaded_others == True:
+                        elif self.loaded_others:
                             # take N samples of all IDs
-                            N=self.samples_per_ID
+                            N = self.samples_per_ID
                             if len(self.others_db[idx]) >= N:
                                 s = random.sample(range(len(self.others_db[idx])), N)
                             else:
