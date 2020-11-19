@@ -176,22 +176,23 @@ class MetaSGD(l2l.algorithms.MetaSGD):
             if lrs is None:
                 # add LRs for template (outer model)
                 lrs = [torch.ones_like(p) * lr for name, p in self.named_parameters()
-                       if 'last' not in name and 'head' not in name]
-                #print('quick fix to exclude LRs for additional last_N layer')
-                #lrs = lrs[:-2]  # quick fix to exclude LRs for additional last_N layer
+                       #if 'last' not in name and 'head' not in name]
+                       if 'module' not in name
+                       ]
+
                 lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs])
                 self.lrs = lrs
 
                 # add LRs for inner model
-                lrs = [torch.ones_like(p) * lr for name, p in self.module.named_parameters()]
-                lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs])
-                self.module.lrs = lrs
+                #lrs = [torch.ones_like(p) * lr for name, p in self.module.named_parameters()]
+                #lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs])
+                #self.module.lrs = lrs
 
             else:
-                lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs])
+                #lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs])
                 self.lrs = lrs
-                lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs_inner])
-                self.module.lrs = lrs
+                #lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs_inner])
+                #self.module.lrs._parameters = lrs_inner
 
         self.first_order = first_order
         self.allow_nograd = allow_nograd
@@ -330,14 +331,19 @@ class ML_dataset(Dataset):
 
 
 class reID_Model(torch.nn.Module):
-    def __init__(self, head, predictor, n_list):
+    def __init__(self, head, predictor, n_list, lr=1e-3):
         super(reID_Model, self).__init__()
         self.head = head
         for n in n_list:
             n += 1
             self.add_module(f"last_{n}", torch.nn.Linear(1024, n).to(device))
 
+        if lr > 0:
+            lrs = [torch.ones_like(p) * lr for p in self.parameters()]
+            lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs])
+        self.lrs = lrs
         self.num_output = n_list
+
 
     def forward(self, x, nways, train):
         feat = self.head(x)
@@ -921,7 +927,7 @@ def my_main(_config, reid, _run):
             datasets = [d for d in datasets if d != reid['dataloader']['validation_sequence']]
             #datasets = [d for d in datasets if d not in ['MOT17-02', 'MOT17-04', 'MOT17-05', 'MOT17-09', 'MOT17-10', 'MOT17-11', 'MOT17-13']]
             datasets = [d for d in datasets if d not in ['cuhk03', 'market1501']]
-            #datasets = [d for d in datasets if d == 'MOT17-02']
+            datasets = [d for d in datasets if d == 'MOT17-05']
 
             for i,d in enumerate(datasets):
                 i_to_dataset[i] = d
@@ -1109,8 +1115,6 @@ def my_main(_config, reid, _run):
     # opt = torch.optim.Adam(model.parameters(), lr=4e-3)
     # print(sum(p.numel() for p in box_head.parameters() if p.requires_grad))
 
-
-
     ##################
     # Begin training #
     ##################
@@ -1138,37 +1142,6 @@ def my_main(_config, reid, _run):
     else:
         sample_db = False
         print(f"WORK without market und cuhk")
-    # get others for market and cuhk
-    #start_time = time.time()
-    #others, others_id, others_val  = get_others(meta_datasets, -1, reid['ML']['num_others'], use_market=True)
-
-    #others, others_id  = get_others(meta_datasets, -1, reid['ML']['num_others'], True, i_to_dataset)
-    #others = l2l.data.UnionMetaDataset(meta_datasets)
-    #start_time = time.time()
-    #others_val = get_others(meta_datasets, -1, reid['ML']['num_others'], use_market=False)
-    #logger.debug("--- %s seconds --- for get others" % (time.time() - start_time))
-    #others_val = (others_val, others)
-
-    # just use market for others
-    # if reid['ML']['market_others']:
-    #     others = get_others(meta_datasets, -1, reid['ML']['num_others'], use_market=True)
-    #     ## split others in train and val, shuffle first
-    #     idx = torch.randperm(others[1].nelement())
-    #     others = (others[0][idx], others[1][idx])
-    #     total_num_others = others[1].nelement()
-    #     output, inv_idx, counts = torch.unique(others[1], return_inverse=True, return_counts=True)
-    #     num_val_id = int(output.nelement() * 0.3)
-    #     num_samples = 0
-    #     others_ = torch.tensor([]).to(device)
-    #     for i in range(num_val_id):
-    #         num_samples += counts[i]
-    #         others_ = torch.cat((others_, (others[0][(others[1] == output[i])]).float()))
-    #     others_val = (others_, torch.ones(others_.shape[0]).long().to(device))
-    #     others_ = torch.tensor([]).to(device)
-    #     for i in range(num_val_id, output.nelement()):
-    #         others_ = torch.cat((others_, (others[0][(others[1] == output[i])]).float()))
-    #     others = (others_, torch.ones(others_.shape[0]).long().to(device))
-    #     print('work with {} train samples and {} val samples for others'.format(total_num_others-num_samples, num_samples))
 
     plotter = None
     if reid['solver']["plot_training_curves"]:
@@ -1185,20 +1158,21 @@ def my_main(_config, reid, _run):
 
     for iteration in range(1, _config['reid']['solver']['iterations']+1):
         # debug
-        #if iteration % 50 or True:
+        #if iteration % 10 or True:
         if False:
-            print(f"others neuron bias {model.others_neuron_bias.item()}")
-            print(f"others neuron weight mean {model.others_neuron_weight.mean().item()}")
+            #print(f"others neuron bias {model.others_neuron_bias.item()}")
+            #print(f"others neuron weight mean {model.others_neuron_weight.mean().item()}")
+            print(f"Iteration {iteration} BEFORE val task")
             print(f"others neuron weightLR mean {model.lrs[0].mean().item()}")
             print(f"others neuron biasLR mean {model.lrs[1].item()}")
 
-            print(f"template neuron bias {model.template_neuron_bias.item()}")
-            print(f"template neuron weight mean {model.template_neuron_weight.mean().item()}")
+            #print(f"template neuron bias {model.template_neuron_bias.item()}")
+            #print(f"template neuron weight mean {model.template_neuron_weight.mean().item()}")
             print(f"template neuron weightLR mean {model.lrs[2].mean().item()}")
             print(f"template neuron biasLR mean {model.lrs[3].item()}")
 
-            print(f"head neuron bias {model.module.head.fc7.bias.mean().item()}")
-            print(f"head neuron weight mean {model.module.head.fc7.weight.mean().item()}")
+            #print(f"head neuron bias {model.module.head.fc7.bias.mean().item()}")
+            #print(f"head neuron weight mean {model.module.head.fc7.weight.mean().item()}")
             print(f"head neuron weightLR mean {model.module.lrs[2].mean().item()}")
             print(f"head neuron biasLR mean {model.module.lrs[3].mean().item()}")
 
@@ -1289,6 +1263,23 @@ def my_main(_config, reid, _run):
             acc_others_own_meta_val.update(evaluation_accuracy_others_own.item())  # others from OWN sequence
 
         for task in range(meta_batch_size):
+            #if iteration % 10 or True:
+            if False:
+                # print(f"others neuron bias {model.others_neuron_bias.item()}")
+                # print(f"others neuron weight mean {model.others_neuron_weight.mean().item()}")
+                print(f"Iteration {iteration} , task {task} After val task")
+                print(f"others neuron weightLR mean {model.lrs[0].mean().item()}")
+                print(f"others neuron biasLR mean {model.lrs[1].item()}")
+
+                # print(f"template neuron bias {model.template_neuron_bias.item()}")
+                # print(f"template neuron weight mean {model.template_neuron_weight.mean().item()}")
+                print(f"template neuron weightLR mean {model.lrs[2].mean().item()}")
+                print(f"template neuron biasLR mean {model.lrs[3].item()}")
+
+                # print(f"head neuron bias {model.module.head.fc7.bias.mean().item()}")
+                # print(f"head neuron weight mean {model.module.head.fc7.weight.mean().item()}")
+                print(f"head neuron weightLR mean {model.module.lrs[2].mean().item()}")
+                print(f"head neuron biasLR mean {model.module.lrs[3].mean().item()}")
             # Compute meta-training loss
             #start_time=time.time()
             learner = model.clone()  # back-propagating losses on the cloned module will populate the buffers of the original module
@@ -1410,6 +1401,21 @@ def my_main(_config, reid, _run):
             print(f"{'Mean Val Accuracy task+others':<50} {acc_all_meta_val.avg:.6f}")
             print(f"{'Mean Val Accuracy just others':<50} {acc_just_zero_meta_val.avg:.6f}")
             print(f"{'Mean Val Accuracy others own sequence':<50} {acc_others_own_meta_val.avg:.6f}")
+
+            print(f"\nothers neuron bias {model.others_neuron_bias.item()}")
+            print(f"others neuron weight mean {model.others_neuron_weight.mean().item()}")
+            print(f"others neuron weightLR mean {model.lrs[0].mean().item()}")
+            print(f"others neuron biasLR mean {model.lrs[1].item()}")
+
+            print(f"\ntemplate neuron bias {model.template_neuron_bias.item()}")
+            print(f"template neuron weight mean {model.template_neuron_weight.mean().item()}")
+            print(f"template neuron weightLR mean {model.lrs[2].mean().item()}")
+            print(f"template neuron biasLR mean {model.lrs[3].item()}")
+
+            print(f"\nhead neuron bias {model.module.head.fc7.bias.mean().item()}")
+            print(f"head neuron weight mean {model.module.head.fc7.weight.mean().item()}")
+            print(f"head neuron weightLR mean {model.module.lrs[2].mean().item()}")
+            print(f"head neuron biasLR mean {model.module.lrs[3].mean().item()}")
 
             if reid['ML']['learn_LR'] and reid['ML']['global_LR']:
                 for p in model.lrs:
