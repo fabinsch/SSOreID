@@ -4,7 +4,6 @@ import os.path as osp
 import os
 import numpy as np
 import yaml
-import cv2
 import sys
 import time
 import random
@@ -14,23 +13,17 @@ import torch
 import torch.nn
 from torch.autograd import grad
 from torch.nn import functional as F
-from torch.utils.data import DataLoader, Dataset, RandomSampler
-from collections import namedtuple
+
 
 from tracktor.config import get_output_dir, get_tb_dir
-from tracktor.reid.solver import Solver
-from tracktor.datasets.factory import Datasets
-from tracktor.reid.resnet import resnet50
 from tracktor.frcnn_fpn import FRCNN_FPN
-from tracktor.visualization import VisdomLinePlotter_ML
 import random
-from tracktor.utils import HDF5Dataset
+from tracktor.utils_ML import load_dataset, get_ML_settings, get_plotter, save_checkpoint, AverageMeter
 
 import learn2learn as l2l
 from learn2learn.data.transforms import NWays, KShots, LoadData
 from learn2learn.utils import clone_module, clone_parameters
-import h5py
-import datetime
+
 from torchviz import make_dot
 
 #from tracktor.transforms import FusedNWaysKShots
@@ -41,12 +34,6 @@ ex.add_config('experiments/cfgs/ML_reid.yaml')
 #     device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 # else:
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-
-def save_checkpoint(state, filename='checkpoint.pth.tar'):
-    torch.save(state, filename)
-    #print('[{}] safe checkpoint {}'.format(state['epoch'], filename))
-
 
 def meta_sgd_update(model, lrs=None, grads=None):
     """
@@ -105,15 +92,17 @@ def meta_sgd_update(model, lrs=None, grads=None):
 
 
 class MAML(l2l.algorithms.MAML):
-    def __init__(self,
-                 model,
-                 lr,
-                 first_order=False,
-                 allow_unused=None,
-                 allow_nograd=False):
+    def __init__(self, model, lr, first_order=False, allow_unused=None, allow_nograd=False,
+                 others_neuron_b=None, others_neuron_w=None, template_neuron_b=None, template_neuron_w=None):
         super(l2l.algorithms.MAML, self).__init__()
         self.module = model
         self.lr = lr
+
+        self.others_neuron_weight = others_neuron_w
+        self.others_neuron_bias = others_neuron_b
+        self.template_neuron_weight = template_neuron_w
+        self.template_neuron_bias = template_neuron_b
+
         self.first_order = first_order
         self.allow_nograd = allow_nograd
         if allow_unused is None:
@@ -132,22 +121,32 @@ class MAML(l2l.algorithms.MAML):
                     lr=self.lr,
                     first_order=first_order,
                     allow_unused=allow_unused,
-                    allow_nograd=allow_nograd)
+                    allow_nograd=allow_nograd,
+                    others_neuron_b=self.others_neuron_bias.clone(),
+                    others_neuron_w=self.others_neuron_weight.clone(),
+                    template_neuron_b=self.template_neuron_bias.clone(),
+                    template_neuron_w=self.template_neuron_weight.clone())
 
 
     def init_last(self, ways):
-        last_n = 'last_{}'.format(ways-1)
-        repeated_bias = self.predictor.bias.clone().repeat(ways - 1)
-        repeated_weights = self.predictor.weight.clone().repeat(ways - 1, 1)
+        last = ways + 1  # always others neuron + ways times duplicated template neuron
+        last_n = f"last_{last}"
+
+        # duplicate template neuron
+        repeated_bias = self.template_neuron_bias.repeat(ways)
+        repeated_weights = self.template_neuron_weight.repeat(ways, 1)
+
+        # add others neuron
+        repeated_weights = torch.cat((self.others_neuron_weight, repeated_weights))
+        repeated_bias = torch.cat((self.others_neuron_bias, repeated_bias))
         for name, layer in self.module.named_modules():
             if name == last_n:
                 for param_key in layer._parameters:
-                    p = layer._parameters[param_key]
-                    #p.requires_grad = True
-                    if param_key=='weight':
-                        p.data = repeated_weights
-                    elif param_key=='bias':
-                        p.data = repeated_bias
+                    if param_key == 'weight':
+                        layer._parameters[param_key] = repeated_weights
+                    elif param_key == 'bias':
+                        layer._parameters[param_key] = repeated_bias
+                break
 
 
 class MetaSGD(l2l.algorithms.MetaSGD):
@@ -222,7 +221,7 @@ class MetaSGD(l2l.algorithms.MetaSGD):
                        others_neuron_b=self.others_neuron_bias.clone(),
                        others_neuron_w=self.others_neuron_weight.clone(),
                        template_neuron_b=self.template_neuron_bias.clone(),
-                       template_neuron_w=self.others_neuron_weight.clone())
+                       template_neuron_w=self.template_neuron_weight.clone())
 
     def adapt(self, loss, first_order=None, allow_nograd=False):
         """
@@ -299,36 +298,6 @@ class MetaSGD(l2l.algorithms.MetaSGD):
                             self.module.lrs._parameters['5'] = repeated_bias_lr
                     break
 
-class ML_dataset(Dataset):
-    def __init__(self, fm, id, flip_p=-1):
-        self.fm = fm
-        self.id = id
-        self.flip_p = flip_p
-
-    def __getitem__(self, item):
-        # First way flip was implemented, either flipped or non flipped sample as output
-        # if random.random() < self.flip_p:
-        #     features = self.data[1][item].flip(-1)
-        # else:
-        #     features = self.data[1][item]
-        # return (features, self.data[0][item].unsqueeze(0))
-
-        # In reID network in tracktor we will always use non flipped and flipped version
-        # do the same here in ML setting
-
-        if self.flip_p>0.0:
-            features = self.fm[1][item].flip(-1).unsqueeze(0)
-            features = torch.cat((self.fm[1][item].unsqueeze(0), features))
-
-            label = self.id[0][item] #.unsqueeze(0)
-            #label = torch.cat((self.data[0][item].unsqueeze(0), label))
-            return (features.to(device), label)
-        else:
-            return (self.fm[item], self.id[item].unsqueeze(0))
-
-    def __len__(self):
-        return len(self.id)
-
 
 class reID_Model(torch.nn.Module):
     def __init__(self, head, predictor, n_list, lr=1e-3):
@@ -340,6 +309,7 @@ class reID_Model(torch.nn.Module):
 
         if lr > 0:
             lrs = [torch.ones_like(p) * lr for p in self.parameters()]
+            lrs = [torch.normal(mean=lr, std=1e-4) for lr in lrs]
             lrs = torch.nn.ParameterList([torch.nn.Parameter(lr) for lr in lrs])
         self.lrs = lrs
         self.num_output = n_list
@@ -373,6 +343,7 @@ def forward_pass_for_classifier_training(learner, features, scores, nways, eval=
     if type(features) is tuple:
         #start_time_over = time.time()
         #start_time = time.time()
+
         # first task IDs, than others own seq
         tasks_others_own = torch.cat((features[0], features[1]))
         #print('time to concat task and others own {}'.format(time.time()-start_time))
@@ -419,7 +390,7 @@ def forward_pass_for_classifier_training(learner, features, scores, nways, eval=
         # w[0] = w[0]*ratio  # downweight 0 class
         # w[1:] = w[1:]*(1/ratio)  # upweight inactive
         w = w * (1 / ratio)
-        w = torch.cat((torch.ones(1).to(device),w)) if train else w
+        w = torch.cat((torch.ones(1).to(device), w)) if train else w
         loss = F.cross_entropy(class_logits, scores.long(), weight=w)
     else:
         loss = F.cross_entropy(class_logits, scores.long())
@@ -482,45 +453,9 @@ def accuracy(predictions, targets, iter=-1, train=False, seq=-1, num_others_own=
     return (valid_accuracy_without_zero, valid_accuracy_with_zero, valid_accuracy_just_zero, valid_accuracy_others_own)
 
 
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-    def __init__(self, name, fmt=':f'):
-        self.name = name
-        self.fmt = fmt
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-        self.best = 1000
-        self.best_it = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-
-    def update_best(self, val, it):
-        save = 0
-        if val < self.best:
-            self.best = val
-            self.best_it = it
-            save = 1
-        return save
-
-
-    def __str__(self):
-        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
-        return fmtstr.format(**self.__dict__)
-
-
 def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_task=True,
                plotter=None, iteration=-1, sequence=None, task=-1, taskID=-1, reid=None,
-               init_last=True, others_own=torch.zeros(1), others=torch.zeros(1), seq=-1):
+               others_own=torch.zeros(1), others=torch.zeros(1), seq=-1, train_others=False):
     #print('fast adapt')
     flip_p = reid['ML']['flip_p']
 
@@ -530,13 +465,6 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_tas
     n = 1  # consider flip in indices
     if flip_p > 0.0:
         n = 2
-        # get flipped feature maps, in combination with getitem method
-        #data = data.view(-1, 256, 7, 7)
-        #labels = labels.repeat_interleave(2)
-        # because of flip
-        #adaptation_indices = adaptation_indices.repeat_interleave(2)
-        #evaluation_indices = evaluation_indices.repeat_interleave(2)
-
         # do all flipping here, put flips at the end
         #start_time = time.time()
         data = torch.cat((data, data.flip(-1)))
@@ -555,86 +483,97 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_tas
     adaptation_data, adaptation_labels = data[adaptation_indices], labels[adaptation_indices]
     evaluation_data, evaluation_labels = data[evaluation_indices], labels[evaluation_indices]
 
-
-
-    # init last layer with the same weights
-    if init_last:
-        learner.init_last(ways)
+    # init last layer with the template weights
+    learner.init_last(ways)
 
     # plot loss and acc of val task before optimizing
-    if train_task and iteration % 100 == 0 and True:
-        predictions, _ = forward_pass_for_classifier_training(learner, adaptation_data,
-                                                              adaptation_labels, ways, ratio=ratio,
-                                                              train=True, return_scores=True)
-        # train_accuracy = accuracy(train_predictions, adaptation_labels)
-        predictions = predictions.argmax(dim=1).view(adaptation_labels.shape)
-        t, counter = np.unique(predictions.cpu().numpy(), return_counts=True)
-        print(f"[{seq}] check performance on train task train set BEFORE adaptation nach init")
-        for i, c in enumerate(t):
-            print(f"class {c} predicted {counter[i]} times")
-
-    #shuffle = True
-    #start_time = time.time()
-    # if shuffle:
-    #     idx = torch.randperm(adaptation_labels.nelement())
-    #     adaptation_labels = adaptation_labels[idx]
-    #     adaptation_data = adaptation_data[idx]
-    #
-    #     idx = torch.randperm(evaluation_labels.nelement())
-    #     evaluation_labels = evaluation_labels[idx]
-    #     evaluation_data = evaluation_data[idx]
-        #print("--- %s seconds --- [fa] shuffle " % (time.time() - start_time))
-
-    # get loss and acc of val set before optimizing
-    # if train_task==False:
-    #     predictions_before, validation_error_before = forward_pass_for_classifier_training(learner, evaluation_data,
-    #                                                                          evaluation_labels, ways, return_scores=True)
-    #     valid_accuracy_before = accuracy(predictions_before, evaluation_labels)
-
+    # if train_task and iteration % 100 == 0 and True:
+    #     predictions, _ = forward_pass_for_classifier_training(learner, adaptation_data,
+    #                                                           adaptation_labels, ways, ratio=ratio,
+    #                                                           train=True, return_scores=True)
+    #     # train_accuracy = accuracy(train_predictions, adaptation_labels)
+    #     predictions = predictions.argmax(dim=1).view(adaptation_labels.shape)
+    #     t, counter = np.unique(predictions.cpu().numpy(), return_counts=True)
+    #     print(f"[{seq}] check performance on train task train set BEFORE adaptation nach init")
+    #     for i, c in enumerate(t):
+    #         print(f"class {c} predicted {counter[i]} times")
 
     # Adapt the model
     #start_time = time.time()
     for step in range(adaptation_steps):
         plot_inner = False
-        use_others_inner_loop = False
+        use_others_inner_loop = train_others
         if (plotter != None) and (iteration % 10 == 0) and task == 0 and plot_inner:
             train_predictions, train_loss = forward_pass_for_classifier_training(learner, adaptation_data, adaptation_labels, ways, return_scores=True, ratio=ratio, train=True)
             train_accuracy = accuracy(train_predictions, adaptation_labels)
             #print(train_accuracy)
             #plotter.plot(epoch=step, loss=train_error, acc=train_accuracy, split_name='inner', info=info)
         elif use_others_inner_loop:
-            num_others = len(others) + len(others_own) if len(others) > 1 else len(others_own)
-            ID_others = 0
-            ratio[ID_others] = num_others
-            train_loss = forward_pass_for_classifier_training(learner, (adaptation_data, others_own, others),
-                                                              torch.cat((adaptation_labels, torch.ones(num_others).long().to(device) * ID_others)),
-                                                              ways, return_scores=False, ratio=ratio, train=False)
+            # use 10 percent in inner loop
+            if len(others_own) > 10:  # das hier nur wegen benutzung mit kleinem test dataset
+                ind = random.sample(range(len(others_own)), int(len(others_own) * 0.1))
+                ind = torch.tensor(ind)
+                others_own_inner = others_own[ind]
+                if len(others) > 1:
+                    ind = random.sample(range(len(others)), int(len(others) * 0.1))
+                    ind = torch.tensor(ind)
+                    others_inner = others[ind]
+                else:
+                    others_inner = torch.zeros(1)
+                num_others = len(others_inner) + len(others_own_inner) if len(others) > 1 else len(others_own_inner)
+                # num_others = len(others) + len(others_own) if len(others) > 1 else len(others_own)
+                ID_others = 0
+                ratio[ID_others] = num_others
+                train_loss = forward_pass_for_classifier_training(learner, (adaptation_data, others_own_inner, others_inner),
+                                                                  torch.cat((adaptation_labels,
+                                                                             torch.ones(num_others).long().to(
+                                                                                 device) * ID_others)),
+                                                                  ways, return_scores=False, ratio=ratio, train=False)
+
+            else:
+                num_others = len(others) + len(others_own) if len(others) > 1 else len(others_own)
+
+                #num_others = len(others) + len(others_own) if len(others) > 1 else len(others_own)
+                ID_others = 0
+                ratio[ID_others] = num_others
+                train_loss = forward_pass_for_classifier_training(learner, (adaptation_data, others_own, others),
+                                                                  torch.cat((adaptation_labels, torch.ones(num_others).long().to(device) * ID_others)),
+                                                                  ways, return_scores=False, ratio=ratio, train=False)
         else:
             train_predictions, train_loss = forward_pass_for_classifier_training(learner, adaptation_data,
                                                                                  adaptation_labels, ways, ratio=ratio, train=True, return_scores=True)
             #train_accuracy = accuracy(train_predictions, adaptation_labels)
-        #graph = make_dot(train_loss, params=dict(learner.named_parameters()))
-        #graph.format = 'png'
-        #graph.render('graph2')
+        # graph = make_dot(train_loss, params=dict(learner.named_parameters()))
+        # graph.format = 'png'
+        # graph.render('graph_fixed_innerLoop_template_lrs_19_11')
         learner.adapt(train_loss)  # Takes a gradient step on the loss and updates the cloned parameters in place
         train_loss = torch.zeros(1)
 
     #print(f"{time.time() - start_time:.5f} for inner loop {seq}")
-    if train_task and iteration % 100 == 0 and True:
-        predictions, _ = forward_pass_for_classifier_training(learner, adaptation_data,
-                                                                              adaptation_labels, ways, ratio=ratio,
-                                                                              train=True,return_scores=True)
-        #train_accuracy = accuracy(train_predictions, adaptation_labels)
-        predictions = predictions.argmax(dim=1).view(adaptation_labels.shape)
-        t, counter = np.unique(predictions.cpu().numpy(), return_counts=True)
-        print(f"[{seq}] check performance on train task train set AFTER adaptation")
-        for i, c in enumerate(t):
-            print(f"class {c} predicted {counter[i]} times")
-
-
+    # if train_task and iteration % 100 == 0 and True:
+    #     predictions, _ = forward_pass_for_classifier_training(learner, adaptation_data,
+    #                                                                           adaptation_labels, ways, ratio=ratio,
+    #                                                                           train=True,return_scores=True)
+    #     #train_accuracy = accuracy(train_predictions, adaptation_labels)
+    #     predictions = predictions.argmax(dim=1).view(adaptation_labels.shape)
+    #     t, counter = np.unique(predictions.cpu().numpy(), return_counts=True)
+    #     print(f"[{seq}] check performance on train task train set AFTER adaptation")
+    #     for i, c in enumerate(t):
+    #         print(f"class {c} predicted {counter[i]} times")
 
     ID_others = 0
-    if len(others) > 1 or len(others_own) > 1:
+    if len(others) > 1 or len(others_own) > 1:  # meta learn others class with others in val set
+
+        # get 10 percent of others own
+        if len(others_own) > 10 and False:
+            ind = random.sample(range(len(others_own)), int(len(others_own) * 0.1))
+            ind = torch.tensor(ind)
+            others_own = others_own[ind]
+            if len(others) > 1:
+                ind = random.sample(range(len(others)), int(len(others) * 0.1))
+                ind = torch.tensor(ind)
+                others = others[ind]
+
         #start_time = time.time()
         num_others = len(others) + len(others_own) if len(others) > 1 else len(others_own)
         ratio[ID_others] = num_others
@@ -645,79 +584,12 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways,  device, train_tas
                                   torch.cat((evaluation_labels, torch.ones(num_others).long().to(device) * ID_others)),
                                   iteration, train_task, seq, others_own.shape[0])
     else:
+        # if not meta learning others class
         predictions, validation_loss = forward_pass_for_classifier_training(learner,  evaluation_data, evaluation_labels, ways,
                                                                  return_scores=True, ratio=ratio, train=False, t=0.0)
         valid_accuracy = accuracy(predictions, evaluation_labels, iteration, train_task)
 
     return validation_loss, valid_accuracy
-
-def statistics(dataset):
-    unique_id, counter = np.unique(dataset[0].numpy(), return_counts=True)
-    num_id = len(unique_id)
-    num_bb = sum(counter)
-    samples_per_id, counter_samples = np.unique(counter, return_counts=True)
-    print('in total {} unique IDs, and {} BBs in total, av. {} BB/ID  '.format(num_id, num_bb, (num_bb/num_id)))
-    #print('in total {} unique IDs, print until 80 samples per ID'.format(num_id))
-    # for i in range(len(counter_samples)):
-    #     if samples_per_id[i]<80:
-    #         print('{} samples per ID: {} times'.format(samples_per_id[i], counter_samples[i]))
-    return num_id, num_bb
-
-# 1. version
-# def sample_task(tasksets, i_to_dataset, sample, val=False):
-#     try:
-#         i = random.choice(range(len(tasksets)))  # sample sequence
-#         seq = i_to_dataset[i]
-#         seq_tasks = tasksets[list(tasksets.keys())[i]]
-#         if sample==False and val==False:
-#             i=1
-#             seq_tasks = tasksets[list(tasksets.keys())[i]]
-#             seq = i_to_dataset[i]
-#         j = random.choice(range(len(seq_tasks)))  # sample task
-#         nways = seq_tasks[j].task_transforms[0].n
-#         kshots = int(seq_tasks[j].task_transforms[0].k / 2)
-#         batch = seq_tasks[j].sample()
-#         return batch, nways, kshots, seq, j
-#     except ValueError:
-#         nways = seq_tasks[j].task_transforms[0].n
-#         kshots = int(seq_tasks[j].task_transforms[0].k / 2)
-#         # if len(tasksets)>1:
-#         #     print('Problem to sample {} ways and {} shots from {}'.format(nways, kshots, i_to_dataset[i]))
-#         # else:
-#         #     print('Problem to sample {} ways and {} shots from validation sequence'.format(nways, kshots))
-#         return sample_task(tasksets, i_to_dataset, sample, val)
-#         # i = random.choice(range(len(tasksets)))
-#         # batch = tasksets[i].sample()
-
-# 2. version max recursion depth
-# def try_to_sample(taskset):
-#     try:
-#         batch = taskset.sample()
-#         return batch
-#     except ValueError:
-#         return try_to_sample(taskset)
-#
-#
-# def sample_task(sets, nways, kshots, i_to_dataset, sample, val=False):
-#     i = random.choice(range(len(sets)))  # sample sequence
-#     seq = i_to_dataset[i]
-#     # if sample == False and val == False:
-#     #     i = 1
-#     #     seq_tasks = tasksets[list(tasksets.keys())[i]]
-#     #     seq = i_to_dataset[i]
-#     n = random.sample(nways, 1)[0]
-#     k = random.sample(kshots, 1)[0]
-#     transform = [l2l.data.transforms.FusedNWaysKShots(sets[i], n=n, k=k * 2),
-#                  l2l.data.transforms.LoadData(sets[i]),
-#                  l2l.data.transforms.RemapLabels(sets[i], shuffle=True)]
-#     taskset = l2l.data.TaskDataset(dataset=sets[i],
-#                                    task_transforms=transform,
-#                                    num_tasks=1000)
-#
-#         # i = random.choice(range(len(tasksets)))
-#         # batch = tasksets[i].sample()
-#     batch = try_to_sample(taskset)
-#     return batch, n, k, seq, i
 
 
 def sample_task(sets, nways, kshots, i_to_dataset, sample, val=False, num_tasks=-1, sample_uniform_DB=False):
@@ -754,140 +626,14 @@ def sample_task(sets, nways, kshots, i_to_dataset, sample, val=False, num_tasks=
     except ValueError:
         return sample_task(sets, nways, kshots, i_to_dataset, sample, val, num_tasks)
 
-def get_others(sets, i, num_others, use_market, i_to_dataset):
-    ## new
-    #others_FM = torch.tensor([])
-    others_FM = []
-    others_FM_val = torch.tensor([])
-    #others_ID = torch.tensor([])
-    others_ID = []
-    others_ID_in_seq = torch.tensor([])
-
-    others_ID_idx = torch.tensor([])
-    limit=5000
-    for j, s in enumerate(sets):
-        ## include train / val split ID wise
-        # idx = torch.randperm(s.dataset.data[0].nelement())
-        # s = (s.dataset.data[1][idx], s.dataset.data[0][idx])
-        # total_num_others = s[1].nelement()
-        # output, inv_idx, counts = torch.unique(s[1], return_inverse=True, return_counts=True)
-        # num_val_id = int(output.nelement() * 0.3)
-        # num_samples = 0
-        # #others_ = torch.tensor([]).to(device)
-        # for i in range(num_val_id):
-        #     num_samples += counts[i]
-        #     others_FM_val = torch.cat((others_FM_val, (s[0][(s[1] == output[i])]).float()))
-        # #others_val = (others_, torch.ones(others_.shape[0]).long().to(device))
-        # #others_ = torch.tensor([]).to(device)
-        # for i in range(num_val_id, output.nelement()):
-        #     others_FM = torch.cat((others_FM, (s[0][(s[1] == output[i])]).float()))
-        # #others = (others_, torch.ones(others_.shape[0]).long().to(device))
-        # print('work with {} train samples and {} val samples for set {}'.format(total_num_others-num_samples, num_samples, j))
-        # others_ID = torch.cat((others_ID, torch.ones(total_num_others-num_samples) * j))
-
-    # include train / val split easier
-    #     if j == 6 or j==7:
-    #         total_num = s.dataset.data[0][:-2000].nelement()
-    #         val = int(total_num * 0.3)
-    #         others_FM_val = torch.cat((others_FM_val, s.dataset.data[1][:val]))
-    #         others_FM = torch.cat((others_FM, s.dataset.data[1][val:-2000]))
-    #         others_ID = torch.cat((others_ID, torch.ones(s.dataset.data[1][val:-2000].shape[0]) * j))
-    #         print('work with {} train samples and {} val samples for set {}'.format(total_num - val,
-    #                                                                                 val, j))
-    #     else:
-    #         total_num = s.dataset.data[0].nelement()
-    #         val = int(total_num * 0.3)
-    #         others_FM_val = torch.cat((others_FM_val, s.dataset.data[1][:val]))
-    #         others_FM = torch.cat((others_FM, s.dataset.data[1][val:]))
-    #         others_ID = torch.cat((others_ID, torch.ones(s.dataset.data[1][val:].shape[0])*j))
-    #         print('work with {} train samples and {} val samples for set {}'.format(total_num - val,
-    #                                                                                 val, j))
-    #
-    # return (others_FM.to(device), others_ID.to(device), others_FM_val.to(device))
-
-
-        # without train / val split
-        #if j == 6 or j == 7 or s.dataset.data[1].shape[0]>10000:
-        if len(s)>limit:
-            #i = torch.randperm(int(s.dataset.data[1].shape[0] * 0.5))
-            #others_FM = torch.cat((others_FM, s.dataset.data[1][i]))
-            #others_ID = torch.cat((others_ID, torch.ones(int(s.dataset.data[1].shape[0] * 0.5)) * j))
-            # random.shuffle(s.dataset.data[1])
-            # others_FM = torch.cat((others_FM, s.dataset.data[1][:5000]))
-            random.shuffle(s.dataset.fm)
-            others_FM.append(s.dataset.fm[:limit])
-            others_ID.append(torch.ones(limit)*j)
-            print('work with {} samples and for set {}'.format(5000, i_to_dataset[j]))
-        else:
-            # others_FM = torch.cat((others_FM, s.dataset.fm))
-            # others_ID_idx = torch.cat((others_ID_idx, torch.ones(s.dataset.data[1].shape[0])*j))
-            # others_ID = torch.cat((others_ID, s.dataset.data[0].float()))
-            others_FM.append(s.dataset.fm)
-            others_ID.append(torch.ones(len(s.dataset))*j)
-            print('work with {} samples and for set {}'.format(len(s), i_to_dataset[j]))
-        #others_ID_in_seq = torch.cat((others_ID_in_seq, s.dataset.data[0].float()))
-    #return (others_FM.to(device), others_ID, others_ID_in_seq)
-
-    others_FM = torch.cat(others_FM)
-    others_ID = torch.cat(others_ID)
-    print('in total {} others'.format(others_FM.shape[0]))
-    #return (others_FM.to(device), others_ID
-    return others_FM, others_ID
-    #return (others_FM, others_ID)
-
-    ## OLD too long
-    #use_market = True
-    use_cuhk = True
-    if use_market:
-        set = sets[-1]
-        others_FM = set.dataset.data[1]
-        #others_FM = torch.tensor(set.dataset.data[1]).to(device)
-
-        #others_ID = set.dataset.data[0] ## to seperate IDs
-        others_ID = torch.ones(others_FM.shape[0]).long()*7
-        #others_ID = torch.tensor([])
-
-        if use_cuhk:
-            set = sets[-2]
-            others_FM =torch.cat((set.dataset.data[1], others_FM))
-            others_ID = torch.cat((torch.ones(set.dataset.data[1].shape[0]).long()*6, others_ID))
-            #others_ID = torch.tensor([])
-        return (others_FM, others_ID)
-
-    N = num_others
-    others_FM = torch.tensor([])
-    sets = [s for j, s in enumerate(sets) if j != i]  # exclude the set used for N ways
-    if N > 0: # take specific number of samples
-        for _ in range(N):
-            j = random.randint(0,len(sets)-1)
-            k = random.randint(0,len(sets[j])-1)
-            others_FM = torch.cat((others_FM, sets[j].dataset[k][0]))
-            try:
-                others_FM = torch.cat((others_FM, sets[j].dataset[k+1][0]))
-            except:
-                others_FM = torch.cat((others_FM, sets[j].dataset[k-1][0]))
-    else:
-        # -1 take all possible samples from MOT sequences
-        if i >= 6:  # tasks come from either market or cuhk
-            end = -1
-        else:
-            end = -2
-        sets = sets[:end]
-        for s in sets:
-            others_FM = torch.cat((others_FM, s.dataset.data[1]))
-
-    #others_ID = torch.ones(others_FM.shape[0]).long()
-    others_ID = torch.tensor([])
-    return (others_FM, others_ID)
-
-
 @ex.automain
 def my_main(_config, reid, _run):
+    print('both just 10 percent val and train set others own')
     sacred.commands.print_config(_run)
 
+    # statistics over sampled tasks
     sampled_val = {}
     sampled_train = {}
-
     sampled_ids_train = {}
 
     # set all seeds
@@ -901,7 +647,6 @@ def my_main(_config, reid, _run):
 
     output_dir = osp.join(get_output_dir(reid['module_name']), reid['name'])
     tb_dir = osp.join(get_tb_dir(reid['module_name']), reid['name'])
-
     sacred_config = osp.join(output_dir, 'sacred_config.yaml')
 
     if not osp.exists(output_dir):
@@ -914,146 +659,8 @@ def my_main(_config, reid, _run):
     #########################
     print("[*] Initializing Dataloader")
     start_time = time.time()
-
-    if reid['dataloader']['build_dataset']:
-        db_train = Datasets(reid['db_train'], reid['dataloader'])
-        print('Build trainings set, finish ...')
-        sys.exit()
-    else:
-        start_time_load = time.time()
-        i_to_dataset = {}
-        with h5py.File('./data/ML_dataset/{}.h5'.format(reid['ML']['db']), 'r') as hf:
-            datasets = list(hf.keys())
-            datasets = [d for d in datasets if d != reid['dataloader']['validation_sequence']]
-            #datasets = [d for d in datasets if d not in ['MOT17-02', 'MOT17-04', 'MOT17-05', 'MOT17-09', 'MOT17-10', 'MOT17-11', 'MOT17-13']]
-            datasets = [d for d in datasets if d not in ['cuhk03', 'market1501']]
-            datasets = [d for d in datasets if d == 'MOT17-05']
-
-            for i,d in enumerate(datasets):
-                i_to_dataset[i] = d
-            print(f"Train with {datasets} and use {reid['dataloader']['validation_sequence']} as validation set")
-
-            others_FM = []
-            others_ID = []
-            others_num = []
-            others_seq_ID = []
-            c = 0
-            #data = {}
-            bb_total = 0
-            ids_total = 0
-            for i, set in enumerate(datasets):
-                seq = hf.get(set)
-                d, l = seq.items()
-                num = len(l[1])
-                #data[set] = ((torch.tensor(l[1]), torch.tensor(d[1])))
-
-                #ids, bb = statistics(data[set])
-                #ids_total += ids
-                #bb_total += bb
-                # for i in data[set][0]:
-                #     print(i)
-                others_FM.append(torch.tensor(d[1]))
-                others_ID.append(torch.tensor(l[1]))
-                others_num.append((c, c+num))
-                others_seq_ID.append(torch.ones(num)*i)
-                c += num
-                print(f"loaded {set} as seq id {i} with {num} samples")
-
-            # print(
-            #     'OVERALL: {} unique IDs, and {} BBs in total, av. {} BB/ID  '.format(ids_total, bb_total, (bb_total / ids_total)))
-            others_FM = torch.cat(others_FM).to(device)  # contains all feature maps except val sequence
-            others_ID = torch.cat(others_ID)
-            others_seq_ID = torch.cat(others_seq_ID)
-            print(f"Overall {others_FM.shape[0]} samples in others")
-
-
-            if reid['dataloader']['validation_sequence'] != 'None':
-                validation_data = hf.get(reid['dataloader']['validation_sequence'])
-                d, l = validation_data.items()
-                validation_FM = torch.tensor(d[1]).to(device)
-                validation_ID = torch.tensor(l[1])
-                print('loaded validation {}'.format(reid['dataloader']['validation_sequence']))
-                print('Overall {} samples in val sequence'.format(validation_FM.shape[0]))
-                #statistics(validation_data)
-            print(f"--- {(time.time() - start_time_load):.4f} seconds --- for loading hdf5 database")
-
-    start_time_tasks = time.time()
-
-    if reid['ML']['range']:
-        nways_list = list(range(2, reid['ML']['nways']+1))
-        kshots_list = list(range(1, reid['ML']['kshots']+1))
-    else:
-        nways_list = reid['ML']['nways']
-        if type(nways_list) is int:
-            nways_list = [nways_list]
-        kshots_list = reid['ML']['kshots']
-        if type(kshots_list) is int:
-            kshots_list = [kshots_list]
-    num_tasks = reid['ML']['num_tasks']
-    num_tasks_val = reid['ML']['num_tasks_val']
-    adaptation_steps = reid['ML']['adaptation_steps']
-    meta_batch_size = reid['ML']['meta_batch_size']
-
-    if reid['dataloader']['validation_sequence'] != 'None':
-        validation_set = ML_dataset(fm=validation_FM, id=validation_ID)
-        validation_set = [l2l.data.MetaDataset(validation_set)]
-    else:
-        validation_set = []
-
-    # val_transform = []
-    # for i in nways_list:
-    #     for kshots in kshots_list:
-    #         val_transform.append([l2l.data.transforms.FusedNWaysKShots(validation_set, n=i, k=kshots * 2),
-    #                               l2l.data.transforms.LoadData(validation_set),
-    #                               l2l.data.transforms.RemapLabels(validation_set, shuffle=True)
-    #                               ])
-    #
-    # val_taskset = {}
-    # for t in val_transform:
-    #     if 'val' not in val_taskset.keys():
-    #         val_taskset['val']=[l2l.data.TaskDataset(dataset=validation_set,
-    #                                                 task_transforms=t,
-    #                                                 num_tasks=num_tasks_val)]
-    #     else:
-    #         val_taskset['val'].append(l2l.data.TaskDataset(dataset=validation_set,
-    #                                              task_transforms=t,
-    #                                              num_tasks=num_tasks_val))
-
-    # val_taskset = l2l.data.TaskDataset(dataset=validation_set,
-    #                                      task_transforms=val_transform,
-    #                                      num_tasks=num_tasks_val)
-
-    meta_datasets = []
-    for i in others_num:
-        meta_datasets.append(ML_dataset(
-            fm=others_FM[i[0]:i[1]],
-            id=others_ID[i[0]:i[1]],
-        ))
-    #meta_datasets = []
-    #transforms = []
-    #tasksets = []
-    #tasksets = {}
-
-    for i, s in enumerate(meta_datasets):
-        meta_datasets[i] = l2l.data.MetaDataset(s)
-        # for j in nways_list:
-        #     for kshots in kshots_list:
-        #         transform = [l2l.data.transforms.FusedNWaysKShots(meta_datasets, n=j, k=kshots*2),
-        #             l2l.data.transforms.LoadData(meta_datasets),
-        #              l2l.data.transforms.RemapLabels(meta_datasets, shuffle=True)]
-        #         if i not in tasksets.keys():
-        #             tasksets[i] = [l2l.data.TaskDataset(dataset=meta_datasets,
-        #                                              task_transforms=transform,
-        #                                              num_tasks=num_tasks)]
-        #         else:
-        #             tasksets[i].append(l2l.data.TaskDataset(dataset=meta_datasets,
-        #                                              task_transforms=transform,
-        #                                              num_tasks=num_tasks))
-
-    print(f"--- {(time.time() - start_time_tasks):.4f} seconds --- for construction of meta-datasets")
-    print(f"--- {(time.time() - start_time):.4f} seconds --- for loading db and building meta-datasets ")
-    
-
+    meta_datasets, validation_set, i_to_dataset, others_FM = load_dataset(reid)#, exclude=['cuhk03', 'market1501'])
+    nways_list, kshots_list, num_tasks, num_tasks_val, adaptation_steps, meta_batch_size = get_ML_settings(reid)
     ##########################
     # Initialize the modules #
     ##########################
@@ -1096,20 +703,6 @@ def my_main(_config, reid, _run):
             {'params': model.module.lrs[:4], 'lr': lr_lr} # LRs for the head
         ], lr=lr)
 
-
-    if reid['solver']['continue_training']:
-        if os.path.isfile(reid['solver']['checkpoint']):
-            print("=> loading checkpoint '{}'".format(reid['solver']['checkpoint']))
-            checkpoint = torch.load(reid['solver']['checkpoint'])
-            start_epoch = checkpoint['epoch']
-            best_acc = checkpoint['best_acc']
-            model.load_state_dict(checkpoint['state_dict'])
-            opt.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(reid['solver']['checkpoint'], checkpoint['epoch']))
-        else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
-
     # for p in model.parameters():
     #     a = p.numel
     # opt = torch.optim.Adam(model.parameters(), lr=4e-3)
@@ -1137,45 +730,17 @@ def my_main(_config, reid, _run):
     acc_others_own_meta_val = AverageMeter('Acc', ':6.2f')
 
     # how to sample, uniform from the 3 db or uniform over sequences
-    if ('market1501' and 'cuhk03') in datasets:
+    if ('market1501' and 'cuhk03') in i_to_dataset.values():
         sample_db = reid['ML']['db_sample_uniform']
     else:
         sample_db = False
         print(f"WORK without market und cuhk")
 
-    plotter = None
-    if reid['solver']["plot_training_curves"]:
-        now = datetime.datetime.now()
-        run_name = now.strftime("%Y-%m-%d_%H:%M_") + reid['name']
-        plotter = VisdomLinePlotter_ML(env=run_name, offline=reid['solver']['plot_offline'],
-                                       info=(nways_list, kshots_list, meta_batch_size, num_tasks,
-                                             num_tasks_val, reid['dataloader']['validation_sequence'],
-                                             reid['ML']['flip_p']))
-
-    # safe model 10 times
-    safe_every = int(_config['reid']['solver']['iterations'] / 10)
-    init_last = reid['ML']['init_last']
+    info = (nways_list, kshots_list, meta_batch_size, num_tasks, num_tasks_val,
+            reid['dataloader']['validation_sequence'], reid['ML']['flip_p'])
+    plotter = get_plotter(reid, info)
 
     for iteration in range(1, _config['reid']['solver']['iterations']+1):
-        # debug
-        #if iteration % 10 or True:
-        if False:
-            #print(f"others neuron bias {model.others_neuron_bias.item()}")
-            #print(f"others neuron weight mean {model.others_neuron_weight.mean().item()}")
-            print(f"Iteration {iteration} BEFORE val task")
-            print(f"others neuron weightLR mean {model.lrs[0].mean().item()}")
-            print(f"others neuron biasLR mean {model.lrs[1].item()}")
-
-            #print(f"template neuron bias {model.template_neuron_bias.item()}")
-            #print(f"template neuron weight mean {model.template_neuron_weight.mean().item()}")
-            print(f"template neuron weightLR mean {model.lrs[2].mean().item()}")
-            print(f"template neuron biasLR mean {model.lrs[3].item()}")
-
-            #print(f"head neuron bias {model.module.head.fc7.bias.mean().item()}")
-            #print(f"head neuron weight mean {model.module.head.fc7.weight.mean().item()}")
-            print(f"head neuron weightLR mean {model.module.lrs[2].mean().item()}")
-            print(f"head neuron biasLR mean {model.module.lrs[3].mean().item()}")
-
 
         start_time_iteration = time.time()
         opt.zero_grad()
@@ -1243,9 +808,9 @@ def my_main(_config, reid, _run):
                                                               -1,
                                                               taskID,
                                                               reid,
-                                                              init_last,
                                                               others_val,
-                                                              others_FM
+                                                              #others_FM,
+                                                              train_others=reid['ML']['train_others']
                                                               )
             #print(f"{time.time() - start_time:.5f} for fast adapt val")
             evaluation_accuracy, evaluation_accuracy_all, evaluation_accuracy_just_zero, evaluation_accuracy_others_own = evaluation_accuracy
@@ -1335,10 +900,10 @@ def my_main(_config, reid, _run):
                                                                task,
                                                                taskID,
                                                                reid,
-                                                               init_last,
                                                                others_val,
-                                                               others_FM[others_seq_ID != sequence_idx],
-                                                               seq=sequence
+                                                               #others_FM[others_seq_ID != sequence_idx],
+                                                               seq=sequence,
+                                                               train_others=reid['ML']['train_others']
                                                                )
 
             #graph = make_dot(evaluation_loss, params=dict(learner.named_parameters()))
@@ -1455,9 +1020,9 @@ def my_main(_config, reid, _run):
             plotter.plot(epoch=iteration, loss=meta_valid_loss, acc=meta_valid_accuracy, split_name='val_task_val_set')
             plotter.plot(epoch=iteration, loss=loss_meta_val.avg, acc=acc_meta_val.avg, split_name='val_task_val_set MEAN')
             plotter.plot(epoch=iteration, loss=-1, acc=acc_others_own_meta_train.avg, split_name='train_task_val_set_others_own MEAN')
-            plotter.plot(epoch=iteration, loss=-1, acc=acc_all_meta_train.avg, split_name='train_task_val_set_all MEAN')
+            #plotter.plot(epoch=iteration, loss=-1, acc=acc_all_meta_train.avg, split_name='train_task_val_set_all MEAN')
             plotter.plot(epoch=iteration, loss=-1, acc=acc_others_own_meta_val.avg, split_name='val_task_val_set_others_own MEAN')
-            plotter.plot(epoch=iteration, loss=-1, acc=acc_all_meta_val.avg, split_name='val_task_val_set_all MEAN')
+            #plotter.plot(epoch=iteration, loss=-1, acc=acc_all_meta_val.avg, split_name='val_task_val_set_all MEAN')
             #plotter.plot(epoch=iteration, loss=-1, acc=acc_just_zero_meta_train.avg, split_name='train_task_val_set_just_zero MEAN')
             #plotter.plot(epoch=iteration, loss=-1, acc=acc_just_zero_meta_val.avg, split_name='val_task_val_set_just_zero MEAN')
 
@@ -1473,16 +1038,25 @@ def my_main(_config, reid, _run):
         opt.step()
 
         if clamping_LR:
-            #print('hier clamping')
-            for i, lr in enumerate(model.lrs):
+            # clamping all lrs - does not work
+            lrs = [p for name, p in model.named_parameters() if 'lrs' in name]
+            for i, lr in enumerate(lrs):
                 if (lr < 0).sum().item() > 0:
                     lr_mask = (lr > 0)
-                    model.lrs[i] = torch.nn.Parameter(lr*lr_mask)
+                    lr.data = lr * lr_mask
 
-            for i, lr in enumerate(model.module.lrs):
-                if (lr < 0).sum().item() > 0:
-                    lr_mask = (lr > 0)
-                    model.module.lrs[i] = torch.nn.Parameter(lr*lr_mask)
+            # # clamping for template + other
+            # for i, lr in enumerate(model.lrs):
+            #     if (lr < 0).sum().item() > 0:
+            #         lr_mask = (lr > 0)
+            #         model.lrs[i].data = lr * lr_mask
+            # # clamping for head
+            # for i, lr in enumerate(model.module.lrs[:4]):
+            #     if (lr < 0).sum().item() > 0:
+            #         lr_mask = (lr > 0)
+            #         model.module.lrs[i].data = lr * lr_mask
+
+
         #print('OVERALL: 1 iteration in {}'.format(time.time()-start_time_iteration))
 
         if iteration % 100 == 0:
