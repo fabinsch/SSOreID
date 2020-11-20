@@ -105,25 +105,34 @@ class Tracker:
             if ML:
                 a = reID_weights
 
+                fixed = True  # fixed version of template neuron
+
                 # when changed to checkpoint that safes optimizer, but some older ones are still working without this if
                 if len(a) == 4:
                     logger.info('loaded init after {} epochs'.format(a['epoch']))
                     a = a['state_dict']
 
                 self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
-                self.bbox_predictor_weights['cls_score.bias'] = a['module.predictor.bias']
-                self.bbox_predictor_weights['cls_score.weight'] = a['module.predictor.weight']
+                if fixed:
+                    print("fixed version of template")
+                    self.bbox_predictor_weights['cls_score.bias'] = a['template_neuron_bias']
+                    self.bbox_predictor_weights['cls_score.weight'] = a['template_neuron_weight']
+                    if not self.finetuning_config['train_others']:
+                        print('others not trained, load others neuron - otherwise do not load')
+                        self.others_neuron_bias = a['others_neuron_bias']
+                        self.others_neuron_weight = a['others_neuron_weight']
+                else:
+                    self.bbox_predictor_weights['cls_score.bias'] = a['module.predictor.bias']
+                    self.bbox_predictor_weights['cls_score.weight'] = a['module.predictor.weight']
+                    if not self.finetuning_config['train_others']:
+                        self.others_neuron_bias = a['module.others_neuron_bias']
+                        self.others_neuron_weight = a['module.others_neuron_weight']
 
                 self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
                 self.bbox_head_weights['fc6.bias'] = a['module.head.fc6.bias']
                 self.bbox_head_weights['fc6.weight'] = a['module.head.fc6.weight']
                 self.bbox_head_weights['fc7.bias'] = a['module.head.fc7.bias']
                 self.bbox_head_weights['fc7.weight'] = a['module.head.fc7.weight']
-
-                if not self.finetuning_config['train_others']:
-                    self.others_neuron_bias = a['module.others_neuron_bias']
-                    self.others_neuron_weight = a['module.others_neuron_weight']
-
 
                 if len(self.bbox_predictor_weights['cls_score.bias']) > 1 and self.init_last_same==True:
                     self.bbox_predictor_weights['cls_score.bias'] = self.bbox_predictor_weights['cls_score.bias'][0]
@@ -162,18 +171,36 @@ class Tracker:
                                 else:
                                     logger.info('{} bias LR mean is {}'.format(l, a[l].mean()))
                         else:
-                            # get the LR for the others neuron
-                            self.others_neuron_weight_lr = a['lrs.0']
-                            logger.info('{} weight LR mean is {} [others neuron]'.format('lrs.0', a['lrs.0'].mean()))
-                            self.others_neuron_bias_lr = a['lrs.1']
-                            logger.info('{} bias LR mean is {} [others neuron]'.format('lrs.1', a['lrs.1'].mean()))
-                            for i in range(2,8):
-                                l = 'lrs.' + str(i)
-                                self.lrs.append(a[l])
-                                if len(a[l].shape) == 2:
-                                    logger.info('{} weight LR mean is {}'.format(l, a[l].mean()))
-                                else:
-                                    logger.info('{} bias LR mean is {}'.format(l, a[l].mean()))
+                            if fixed:
+                                self.others_neuron_weight_lr = a['lrs.0']
+                                logger.info('{} weight LR mean is {} [others neuron]'.format('lrs.0', a['lrs.0'].mean()))
+                                self.others_neuron_bias_lr = a['lrs.1']
+                                logger.info('{} bias LR mean is {} [others neuron]'.format('lrs.1', a['lrs.1'].mean()))
+                                for i in range(4):
+                                    l = 'module.lrs.' + str(i)
+                                    self.lrs.append(a[l])
+                                    if len(a[l].shape) == 2:
+                                        logger.info('{} weight LR mean is {}'.format(l, a[l].mean()))
+                                    else:
+                                        logger.info('{} bias LR mean is {}'.format(l, a[l].mean()))
+                                # append LR for template neuron
+                                self.lrs.append(a['lrs.2'])
+                                logger.info('{} weight LR mean is {} [template neuron]'.format('lrs.2', a['lrs.2'].mean()))
+                                self.lrs.append(a['lrs.3'])
+                                logger.info('{} bias LR mean is {} [template neuron]'.format('lrs.3', a['lrs.3'].mean()))
+                            else:
+                                # get the LR for the others neuron
+                                self.others_neuron_weight_lr = a['lrs.0']
+                                logger.info('{} weight LR mean is {} [others neuron]'.format('lrs.0', a['lrs.0'].mean()))
+                                self.others_neuron_bias_lr = a['lrs.1']
+                                logger.info('{} bias LR mean is {} [others neuron]'.format('lrs.1', a['lrs.1'].mean()))
+                                for i in range(2,8):
+                                    l = 'lrs.' + str(i)
+                                    self.lrs.append(a[l])
+                                    if len(a[l].shape) == 2:
+                                        logger.info('{} weight LR mean is {}'.format(l, a[l].mean()))
+                                    else:
+                                        logger.info('{} bias LR mean is {}'.format(l, a[l].mean()))
             else:
                 self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
                 self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
@@ -367,22 +394,22 @@ class Tracker:
             if self.init_last_same:
                 with torch.no_grad():
                     if self.finetuning_config['train_others']:
-                        repeated_bias = self.bbox_predictor_weights['cls_score.bias'].clone().repeat(n)
-                        repeated_weight = self.bbox_predictor_weights['cls_score.weight'].clone().repeat(n,1)
+                        repeated_bias = self.bbox_predictor_weights['cls_score.bias'].repeat(n)
+                        repeated_weight = self.bbox_predictor_weights['cls_score.weight'].repeat(n, 1)
 
                         if self.LR_per_parameter:
-                            box_predictor.repeated_bias_lr = self.lrs[5].clone().repeat(n)
-                            box_predictor.repeated_weight_lr = self.lrs[4].clone().repeat(n,1)
+                            box_predictor.repeated_bias_lr = self.lrs[5].repeat(n)
+                            box_predictor.repeated_weight_lr = self.lrs[4].repeat(n, 1)
                     else:
-                        repeated_bias = self.bbox_predictor_weights['cls_score.bias'].clone().repeat(n-1)
+                        repeated_bias = self.bbox_predictor_weights['cls_score.bias'].repeat(n - 1)
                         repeated_bias = torch.cat((self.others_neuron_bias, repeated_bias))
-                        repeated_weight = self.bbox_predictor_weights['cls_score.weight'].clone().repeat(n-1, 1)
+                        repeated_weight = self.bbox_predictor_weights['cls_score.weight'].repeat(n - 1, 1)
                         repeated_weight = torch.cat((self.others_neuron_weight, repeated_weight))
 
                         if self.LR_per_parameter:
-                            box_predictor.repeated_bias_lr = self.lrs[5].clone().repeat(n-1)
+                            box_predictor.repeated_bias_lr = self.lrs[5].repeat(n - 1)
                             box_predictor.repeated_bias_lr = torch.cat((self.others_neuron_bias_lr, box_predictor.repeated_bias_lr))
-                            box_predictor.repeated_weight_lr = self.lrs[4].clone().repeat(n-1,1)
+                            box_predictor.repeated_weight_lr = self.lrs[4].repeat(n - 1,1)
                             box_predictor.repeated_weight_lr = torch.cat((self.others_neuron_weight_lr, box_predictor.repeated_weight_lr))
 
                     box_predictor.cls_score.bias.data = repeated_bias
