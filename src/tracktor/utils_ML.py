@@ -1,6 +1,5 @@
-import time, os
+import time, os, random
 import torch
-import torch.nn
 import h5py
 import learn2learn as l2l
 from torch.utils.data import Dataset
@@ -135,6 +134,48 @@ def load_checkpoint(reid, model, opt):
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(reid['solver']['checkpoint'], checkpoint['epoch']))
 
+def sample_task(sets, nways, kshots, i_to_dataset, sample, val=False, num_tasks=-1, sample_uniform_DB=False):
+    if sample_uniform_DB:
+        # original version
+        if len(sets) > 1:
+            j = random.choice(range(7))  # sample which dataset, 0 MOT, 1,2,3 cuhk, 4,5,6 market to balance IDs
+            if j == 0:
+                i = random.choice(range(6))  # which of the MOT sequence
+            elif j in [1, 2, 3]:
+                i = 6
+            elif j in [4, 5, 6]:
+                i = 7
+        else:
+            i = random.choice(range(len(sets)))  # sample sequence
+
+        # sample equally probable from mot or market
+        # j = random.choice(range(4))  # sample which dataset, 0 MOT 1 market
+        # if j == 0:
+        #     i = random.choice(range(6))  # which of the MOT sequence
+        # elif j in [1, 2, 3]:
+        #     i = 6
+
+    else:
+        i = random.choice(range(len(sets)))  # sample sequence
+
+    seq = (i_to_dataset[i], i)
+    # for debug
+    if not sample and not val:
+        i = 2
+        seq = i_to_dataset[i]
+    n = random.sample(nways, 1)[0]
+    k = random.sample(kshots, 1)[0]
+    transform = [l2l.data.transforms.FusedNWaysKShots(sets[i], n=n, k=k*2),
+                 l2l.data.transforms.LoadData(sets[i]),
+                 l2l.data.transforms.RemapLabels(sets[i], shuffle=True)]
+    taskset = l2l.data.TaskDataset(dataset=sets[i],
+                                   task_transforms=transform,
+                                   num_tasks=num_tasks)
+    try:
+        batch = taskset.sample() # train
+        return batch, n, k, seq, i
+    except ValueError:
+        return sample_task(sets, nways, kshots, i_to_dataset, sample, val, num_tasks)
 
 class ML_dataset(Dataset):
     def __init__(self, fm, id, flip_p=-1):
