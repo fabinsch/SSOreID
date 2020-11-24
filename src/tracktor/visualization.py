@@ -143,21 +143,21 @@ class VisdomLinePlotter_ML(object):
 
         self.loss_window = self.viz.line(X=torch.zeros((1,)).cpu(),
                            Y=torch.zeros((1)).cpu(),
-                           opts=dict(xlabel='Epoch',
+                           opts=dict(xlabel='Iteration',
                                      ylabel='Loss',
                                      env=self.env,
                                      title='Loss val set',
                                      legend=['train_task_val_set']))
         self.accuracy_window = self.viz.line(X=torch.zeros((1,)).cpu(),
                            Y=torch.zeros((1)).cpu(),
-                           opts=dict(xlabel='Epoch',
+                           opts=dict(xlabel='Iteration',
                                      ylabel='Accuracy',
                                      env=self.env,
                                      title='Accuracy val set',
                                      legend=['train_task_val_set']))
         self.LR_window = self.viz.line(X=torch.zeros((1,)).cpu(),
                            Y=torch.zeros((1)).cpu(),
-                           opts=dict(xlabel='Epoch',
+                           opts=dict(xlabel='Iteration',
                                      ylabel='LR',
                                      env=self.env,
                                      title='Globally learned LR',
@@ -171,7 +171,7 @@ class VisdomLinePlotter_ML(object):
                 task='({})train_task'.format(taskID)
             else:
                 task='({})val_task'.format(taskID)
-            if epoch==0:
+            if epoch == 0:
                 self.inner_window_loss = self.viz.line(X=torch.zeros((1,)).cpu(),
                                             Y=torch.Tensor([loss]).unsqueeze(0).cpu(),
                                             opts=dict(xlabel='Epoch',
@@ -179,13 +179,26 @@ class VisdomLinePlotter_ML(object):
                                                       env=self.env,
                                                       title='Loss train set {} [{}]'.format(seq, it),
                                                       legend=['{} {}n_{}k'.format(task, nways, kshots)]))
-                self.inner_window_acc = self.viz.line(X=torch.zeros((1,)).cpu(),
-                                            Y=torch.Tensor([acc]).unsqueeze(0).cpu(),
-                                            opts=dict(xlabel='Epoch',
-                                                      ylabel='Accuracy',
-                                                      env=self.env,
-                                                      title='Accuracy train set {} [{}]'.format(seq, it),
-                                                      legend=['{} {}n_{}k'.format(task, nways, kshots)]))
+                for i, a in enumerate(acc):
+                    if i == 0:
+                        self.inner_window_acc = self.viz.line(X=torch.zeros((1,1)).cpu(),
+                                                    Y=torch.Tensor([a]).unsqueeze(0).cpu(),
+                                                    opts=dict(xlabel='Epoch',
+                                                              ylabel='Accuracy',
+                                                              env=self.env,
+                                                              title='Accuracy train set {} [{}]'.format(seq, it),
+                                                              #legend=['TASK {}n_{}k'.format(task, nways, kshots)]))
+                                                              legend=['TASK']))
+                    if i == 3:
+                        self.viz.line(
+                            X=torch.ones((1, 1)).cpu() * epoch,
+                            Y=torch.Tensor([a]).unsqueeze(0).cpu(),
+                            env=self.env,
+                            win=self.inner_window_acc,
+                            #name='OTHERS {}n_{}k'.format(task, nways, kshots),
+                            name='OTHERS',
+                            update='append')
+
             else:
                 self.viz.line(
                 X=torch.ones((1, 1)).cpu() * epoch,
@@ -195,18 +208,29 @@ class VisdomLinePlotter_ML(object):
                 name='{} {}n_{}k'.format(task, nways, kshots),
                 update='append')
 
-                self.viz.line(
-                X=torch.ones((1, 1)).cpu() * epoch,
-                Y=torch.Tensor([acc]).unsqueeze(0).cpu(),
-                env=self.env,
-                win=self.inner_window_acc,
-                name='{} {}n_{}k'.format(task, nways, kshots),
-                update='append')
+                for i, a in enumerate(acc):
+                    if i == 0:
+                        self.viz.line(
+                            X=torch.ones((1, 1)).cpu() * epoch,
+                            Y=torch.Tensor([a]).unsqueeze(0).cpu(),
+                            env=self.env,
+                            win=self.inner_window_acc,
+                            #name='TASK {}n_{}k'.format(task, nways, kshots),
+                            name='TASK',
+                            update='append')
+                    elif i == 3:
+                        self.viz.line(
+                            X=torch.ones((1, 1)).cpu() * epoch,
+                            Y=torch.Tensor([a]).unsqueeze(0).cpu(),
+                            env=self.env,
+                            win=self.inner_window_acc,
+                            name='OTHERS',
+                            update='append')
             return
 
         else:
             name = split_name
-        if loss>0:
+        if loss > 0:
             self.viz.line(
                 X=torch.ones((1, 1)).cpu() * epoch,
                 Y=torch.Tensor([loss]).unsqueeze(0).cpu(),
