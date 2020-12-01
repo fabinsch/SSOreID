@@ -34,6 +34,8 @@ import logging
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 logger = logging.getLogger('main.tracker')
+
+
 class reID_Model(torch.nn.Module):
     def __init__(self, head, predictor, n):
         super(reID_Model, self).__init__()
@@ -41,9 +43,9 @@ class reID_Model(torch.nn.Module):
         self.predictor = predictor.cls_score
         self.num_output = n
         self.additional_layer = {}
-        if len(n)>0:
+        if len(n) > 0:
             for i in n:
-                if i>2:
+                if i > 2:
                     self.additional_layer[i] = torch.nn.Linear(1024, i - 2)
                 else:
                     self.additional_layer[i] = None
@@ -53,7 +55,7 @@ class reID_Model(torch.nn.Module):
     def forward(self, x, nways):
         feat = self.head(x)
         x = self.predictor(feat)
-        if self.additional_layer != None and nways>2:
+        if self.additional_layer is not None and nways > 2:
             self.additional_layer[nways].to(device)
             add = self.additional_layer[nways](feat)
             x = torch.cat((x, add), dim=1)
@@ -104,7 +106,6 @@ class Tracker:
             #model.load_state_dict(torch.load(reID_weights))
             if ML:
                 a = reID_weights
-
                 fixed = True  # fixed version of template neuron
 
                 # when changed to checkpoint that safes optimizer, but some older ones are still working without this if
@@ -112,13 +113,13 @@ class Tracker:
                     logger.info('loaded init after {} epochs'.format(a['epoch']))
                     a = a['state_dict']
 
-                self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()
+                self.bbox_predictor_weights = self.obj_detect.roi_heads.box_predictor.state_dict()  # predictor is last layer
                 if fixed:
                     print("fixed version of template")
                     self.bbox_predictor_weights['cls_score.bias'] = a['template_neuron_bias']
                     self.bbox_predictor_weights['cls_score.weight'] = a['template_neuron_weight']
-                    if not self.finetuning_config['train_others']:
-                        print('others not trained, load others neuron - otherwise do not load')
+                    if 'others_neuron_weight' in a.keys():
+                        print('load others neuron')
                         self.others_neuron_bias = a['others_neuron_bias']
                         self.others_neuron_weight = a['others_neuron_weight']
                 else:
@@ -128,29 +129,25 @@ class Tracker:
                         self.others_neuron_bias = a['module.others_neuron_bias']
                         self.others_neuron_weight = a['module.others_neuron_weight']
 
-                self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()
+                self.bbox_head_weights = self.obj_detect.roi_heads.box_head.state_dict()  # bbox head are the 2 first layers
                 self.bbox_head_weights['fc6.bias'] = a['module.head.fc6.bias']
                 self.bbox_head_weights['fc6.weight'] = a['module.head.fc6.weight']
                 self.bbox_head_weights['fc7.bias'] = a['module.head.fc7.bias']
                 self.bbox_head_weights['fc7.weight'] = a['module.head.fc7.weight']
-
-                if len(self.bbox_predictor_weights['cls_score.bias']) > 1 and self.init_last_same==True:
-                    self.bbox_predictor_weights['cls_score.bias'] = self.bbox_predictor_weights['cls_score.bias'][0]
-                    self.bbox_predictor_weights['cls_score.weight'] = self.bbox_predictor_weights['cls_score.weight'][0,:].unsqueeze(0)
 
                 if LR:
                     # weight, bias, weight, bias, weight, bias
                     # fc6, fc6, cls_score
                     self.lrs = []
 
-                    if len(a) == 7:
+                    if len(a) == 7:  # global LR
                         self.lrs.append(a['lrs'].item())
                         logger.info('LR is {}'.format(a['lrs'].item()))
                         self.LR_per_parameter = False
                     else:
                         # LR per parameter
                         self.LR_per_parameter = True
-                        if self.finetuning_config['train_others']:
+                        if self.finetuning_config['train_others'] and False:  # TODO problem here when others neuron in meta-learning but still want to train others
                             for i in range(6):
                                 l = 'lrs.'+str(i)
                                 self.lrs.append(a[l])
@@ -210,6 +207,7 @@ class Tracker:
         self.track_num = 0
         self.im_index = 0
         self.results = {}
+
         # either load or use online
         # if db==None:
         #     self.others_db = {}
@@ -225,9 +223,7 @@ class Tracker:
         self.box_predictor_classification = None
         self.training_set = None
         now = datetime.datetime.now()
-        #self.run_name = now.strftime("%Y-%m-%d %H:%M")
         self.run_name = now.strftime("%Y-%m-%d_%H:%M") + '_' + seq
-        #logger.info('run name: {}'.format(self.run_name))
         logger.info('if offline saved in: experiments/logs/{}'.format(self.run_name))
         self.num_reids = 0
         self.checkpoints = {}
@@ -258,7 +254,7 @@ class Tracker:
         self.number_made_predictions = 0
         self.inactive_count_succesfull_reID = []
         self.fill_up_to = self.finetuning_config["fill_up_to"]
-        self.flexible=[]
+        self.flexible = []
 
         ## get statistics
         self.count_nways = {}
@@ -266,8 +262,6 @@ class Tracker:
 
         self.acc_after_train = []
         self.acc_val_after_train = []
-
-        #self.logger.debug('init done')
         logger.debug('init done')
 
     def reset(self, hard=True):
@@ -284,24 +278,6 @@ class Tracker:
     def tracks_to_inactive(self, tracks):
         self.tracks = [t for t in self.tracks if t not in tracks]
         for t in tracks:
-            #t = torch.arange(self.im_index-(t.training_set.features.shape[0]))
-
-            # gt_boxes = torch.cat(list(self.gt.values()), 0).to(device)
-            # inactivetrack_iou_GT = bbox_overlaps(t.pos, gt_boxes).cpu().numpy()
-            # ind = np.where(inactivetrack_iou_GT == np.max(inactivetrack_iou_GT))[1]
-            # if len(ind) > 0:
-            #     ind = ind[0]
-            #     overlap = inactivetrack_iou_GT[0, ind]
-            #     if overlap >= 0.5:
-            #         gt_id = list(self.gt.keys())[ind]
-            #         t.gt_id = gt_id
-            #         self.inactive_tracks_gt_id.append(gt_id)
-            #
-            #         if gt_id not in self.db_gt_inactive.keys():
-            #             self.db_gt_inactive[gt_id] = [t.id]
-            #         else:
-            #             self.db_gt_inactive[gt_id].append(t.id)
-
             if t.frames_since_active > 1:
                 t.pos = t.last_pos[-1]
                 self.inactive_number_changes += 1
@@ -311,7 +287,7 @@ class Tracker:
             else:
                 self.c_just_one_frame_active += 1
                 # remove tracks with just 1 active frame
-                #tracks.remove(t)
+                # tracks.remove(t)
                 t.pos = t.last_pos[-1]
                 self.inactive_number_changes += 1
                 self.killed_this_step.append(t.id)
@@ -338,7 +314,7 @@ class Tracker:
                 augmented_boxes = clip_boxes_to_image(augmented_boxes, image.size()[1:3])
                 boxes = torch.cat((boxes, torch.cat((box.unsqueeze(0), augmented_boxes))))
         else:
-            #boxes = clip_boxes(new_det_pos, image.size()[1:3])
+
             boxes = new_det_pos
 
         # do batched roi pooling
@@ -356,15 +332,16 @@ class Tracker:
                           box_roi_pool=box_roi_pool, keep_frames=self.finetuning_config['keep_frames'],
                           data_augmentation = self.finetuning_config['data_augmentation'], flip_p=self.finetuning_config['flip_p'])
             self.tracks.append(track)
-            if frame==13800:
+            if frame == 13800:
                 # debugging frcnn-09 frame 420 problem person wird falsch erkannt in REID , aber nur einmal
                 # debugging frcnn-09 frame 138 problem person wird fälschlicherweise als ID4
                 track.add_classifier(self.box_predictor_classification, self.box_head_classification)
                 print('\n attached classifier')
+
             if i in self.det_new_track_exclude:
                 self.exclude_from_others.append(track.id)
                 print("exclude newly init track {} from others".format(track.id))
-            #other_pedestrians_bboxes = torch.cat((new_det_pos[:i], new_det_pos[i + 1:], old_tracks))
+
             if torch.sum(iou[i] > self.finetuning_config['train_iou_threshold']) > 1:
                 print('\nSKIP SKIP SKIP beim Adden')
                 self.c_skipped_for_train_iou += 1
@@ -1297,21 +1274,7 @@ class Tracker:
         else:
             print('\ninvalid optimizer')
 
-        #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 2, gamma=finetuning_config['gamma'])
 
-        # debug reduce dataset for ID 22 where occluded
-        # if self.im_index==419:
-        #     for t in self.inactive_tracks:
-        #         eliminate = 6
-        #         print('\n eleminiere die {} letzten von {}'.format(eliminate, t.id))
-        #         t.training_set.pos_unique_indices = t.training_set.pos_unique_indices[:(40-eliminate)]
-        #         t.training_set.num_frames = 40-eliminate
-        # if self.im_index==419:
-        #     t = self.inactive_tracks[0]
-        #     eliminate = 7
-        #     print('\n eleminiere die {} letzten von {}'.format(eliminate,t.id))
-        #     t.training_set.pos_unique_indices = t.training_set.pos_unique_indices[:(40-eliminate)]
-        #     t.training_set.num_frames = 40-eliminate
         start_time = time.time()
         training_set, val_set = self.training_set.get_training_set(self.inactive_tracks, self.tracks, finetuning_config['validate'],
                                                                    finetuning_config['val_split'], finetuning_config['val_set_random'],
@@ -1357,7 +1320,6 @@ class Tracker:
                             lr=float(lr))
         #assert training_set.scores[-1] == len(self.inactive_tracks)
         batch_size = self.finetuning_config['batch_size'] if self.finetuning_config['batch_size'] > 0 else len(training_set)
-        #dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=training_set.batch_size, shuffle=True, drop_last=True)
         dataloader_train = torch.utils.data.DataLoader(training_set, batch_size=batch_size, shuffle=True)
         dataloader_val = torch.utils.data.DataLoader(val_set, batch_size=batch_size) if len(val_set) > 0 else 0
 
@@ -1372,9 +1334,7 @@ class Tracker:
             plotter = VisdomLinePlotter(id=[t.id for t in self.inactive_tracks],
                                         env=self.run_name,
                                         n_samples_train=len(training_set),
-                                        #n_samples_train=training_set.max_occ,
                                         n_samples_val=len(val_set),
-                                        #n_samples_val=training_set.min_occ,
                                         im=self.im_index,
                                         offline=self.finetuning_config['plot_offline'])
 
