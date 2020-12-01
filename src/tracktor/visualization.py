@@ -160,12 +160,19 @@ class VisdomLinePlotter_ML(object):
                            opts=dict(xlabel='Iteration',
                                      ylabel='LR',
                                      env=self.env,
-                                     title='Globally learned LR',
-                                     legend=['LR']))
+                                     title='MEAN learned LR',
+                                     legend=['LR_fc7_w']))
+        self.weight_window = self.viz.line(X=torch.zeros((1,)).cpu(),
+                           Y=torch.zeros((1)).cpu(),
+                           opts=dict(xlabel='Iteration',
+                                     ylabel='Weight',
+                                     env=self.env,
+                                     title='MEAN learned weights',
+                                     legend=['Mean_fc7_w']))
 
     def plot(self, epoch, loss, acc, split_name, info=None, LR=-100):
         epoch -= 1
-        if split_name=='inner':
+        if split_name == 'inner':
             seq, nways, kshots, it, train_task, taskID = info
             if train_task:
                 task='({})train_task'.format(taskID)
@@ -228,6 +235,23 @@ class VisdomLinePlotter_ML(object):
                             update='append')
             return
 
+        elif 'LR' in split_name:
+            self.viz.line(X=torch.ones((1, 1)).cpu() * epoch,
+                                               Y=torch.Tensor([acc]).unsqueeze(0).cpu(),
+                                                env=self.env,
+                                                win=self.LR_window,
+                                                name=split_name,
+                                               update='append')
+            return
+
+        elif 'Mean_' in split_name:
+            self.viz.line(X=torch.ones((1, 1)).cpu() * epoch,
+                                               Y=torch.Tensor([acc]).unsqueeze(0).cpu(),
+                                                env=self.env,
+                                                win=self.weight_window,
+                                                name=split_name,
+                                               update='append')
+            return
         else:
             name = split_name
         if loss > 0:
