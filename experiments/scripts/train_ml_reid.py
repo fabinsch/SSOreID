@@ -25,10 +25,21 @@ from learn2learn.utils import clone_module, clone_parameters
 from torchviz import make_dot
 from collections import Counter
 
+from tracktor.frcnn_fpn import FRCNN_FPN
+from tracktor.datasets.factory import Datasets
+from tracktor.tracker import Tracker
+from torch.utils.data import DataLoader
+from tracktor.utils import interpolate, plot_sequence, get_mot_accum, evaluate_mot_accums
+from tqdm import tqdm
+
 
 ex = Experiment()
 ex.add_config('experiments/cfgs/ML_reid.yaml')
+
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+
+
 
 def meta_sgd_update(model, lrs=None, grads=None):
     """
@@ -522,7 +533,7 @@ class reID_Model(torch.nn.Module):
         super(reID_Model, self).__init__()
         self.head = head
         for n in n_list:
-            #n += 1 # using others neuron
+            n += 1 # using others neuron
             self.add_module(f"last_{n}", torch.nn.Linear(1024, n).to(device))
 
         # deactive to try without templates
@@ -537,8 +548,8 @@ class reID_Model(torch.nn.Module):
 
     def forward(self, x, nways):
         feat = self.head(x)
-        #last_n = f"last_{nways + 1}"  # using others neuron
-        last_n = f"last_{nways}"
+        last_n = f"last_{nways + 1}"  # using others neuron
+        #last_n = f"last_{nways}"
 
         # because of variable last name
         for name, layer in self.named_modules():
@@ -549,20 +560,24 @@ class reID_Model(torch.nn.Module):
 
 def remove_last(state_dict, num_output):
     r = dict(state_dict)
-    for n in num_output:
-        #key_weight = f"module.last_{n+1}.weight"
-        key_weight = f"module.last_{n}.weight"
-        #key_bias = f"module.last_{n+1}.bias"
-        key_bias = f"module.last_{n}.bias"
+    for i, n in enumerate(num_output):
+        key_weight = f"module.last_{n + 1}.weight"
+        #key_weight = f"module.last_{n}.weight"
+        key_bias = f"module.last_{n + 1}.bias"
+        #key_bias = f"module.last_{n}.bias"
+        key_lr_weight = f"module.lrs.{4 + (i * 2)}"
+        key_lr_bias = f"module.lrs.{5 + (i * 2)}"
         del r[key_weight]
         del r[key_bias]
+        del r[key_lr_weight]
+        del r[key_lr_bias]
     return r
 
 
 def forward_pass_for_classifier_training(learner, features, labels, nways, return_scores=False, weights=[]):
     #occ = torch.sqrt(occ)
     #occ = torch.ones(nways + 1).to(device)
-    num_others = len(features[1])
+    #num_others = len(features[1])
     if type(features) is tuple:  # if val set includes others
         # first task, than others own seq
         tasks_others_own = torch.cat((features[0], features[1]))
@@ -595,12 +610,8 @@ def forward_pass_for_classifier_training(learner, features, labels, nways, retur
         #loss = F.cross_entropy(class_logits, labels.long(), weight=w)
         if len(weights) < 1:
             loss = F.cross_entropy(class_logits, labels.long())
-        elif len(weights) == 6:
-            w = torch.ones(int(torch.max(labels).item()) + 1).to(device)
-            w = w * (1 / weights)
-            if weights[0] < 0:
-               w[0] = 0
-            loss = F.cross_entropy(class_logits, labels.long(), weight=w)
+        elif len(weights) == (nways + 1):  # class ratio
+            loss = F.cross_entropy(class_logits, labels.long(), weight=weights)
         else:
             loss = F.cross_entropy(class_logits, labels.long(), reduction='none')
             loss = (loss * weights / weights.sum()).sum()  # needs to be sum at the end not mean!
@@ -637,7 +648,7 @@ def accuracy(predictions, targets, iter=-1, train=False, seq=-1, num_others_own=
 
     correct_others_own = compare[num_non_zero_targets:(num_non_zero_targets+num_others_own)].sum()
     valid_accuracy_others_own = correct_others_own.float() / num_others_own
-    if iter % 500 == 0:
+    if iter % 500 == 0 and False:
         name = 'train '+seq if train else 'val'
 
         num_correct_predictions_zero_targets = compare[targets == 0].sum()
@@ -701,6 +712,7 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways, train_task=True,
                others=torch.zeros(1), seq=-1, train_others=False, set=None):
     #print('fast adapt')
     # get others from own seq
+    train_accuracy = 0
     others_own, others_own_id = set[others_own]
     flip_p = reid['ML']['flip_p']
 
@@ -729,10 +741,6 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways, train_task=True,
     train_data, train_labels = data[train_indices], labels[train_indices]
     val_data, val_labels = data[val_indices], labels[val_indices]
 
-    # weights for task 1/number of neurons * 1/samples per ID
-    #task_weights = torch.ones(len(train_labels)) / occ[1]  # old version
-    task_weights = torch.ones(len(train_labels)) / ((ways + 1) * occ[1])
-
     # init last layer with the template weights
     learner.init_last(ways)
 
@@ -752,8 +760,14 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways, train_task=True,
     #start_time = time.time()
 
     # use 10 percent in inner loop
-    if not reid['ML']['ratio_on']:
+    if reid['ML']['weightening'] == 1:  # weights for task 1/number of neurons * 1/samples per ID
+        task_weights = torch.ones(len(train_labels)) / ((ways + 1) * occ[1])
+    elif reid['ML']['weightening'] == 2:  # weights for task 1/samples per ID
+        task_weights = torch.ones(len(train_labels)) / occ[1]
+    elif reid['ML']['weightening'] == 3:  # no weights
         occ = torch.ones(ways + 1).to(device)
+
+
     if len(others_own) > 10:  # das hier nur wegen benutzung mit kleinem test dataset
         # get 10% of all others from own seq
         indices = random.sample(range(len(others_own)), int(len(others_own) * 0.2))
@@ -761,12 +775,25 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways, train_task=True,
         val_indices = torch.tensor(indices[1::2])
 
         others_own_inner_train = others_own[train_indices]
-        others_own_inner_train_id = others_own_id.squeeze()[train_indices].numpy()
-        counter = Counter(others_own_inner_train_id)
-        num_ids_others = len(counter)
-        others_own_inner_train_occ = [counter[id] for id in others_own_inner_train_id]
-        # weight is 1/number of neurons * 1/number of IDs * 1/samples per ID
-        others_own_inner_train_weight = torch.ones(1) / ((ways + 1) * num_ids_others * torch.tensor(others_own_inner_train_occ))
+
+        if reid['ML']['weightening'] in [1, 2]:
+            # calculate weights for others, train and val the same 10 %
+            others_own_inner_train_id = others_own_id.squeeze()[train_indices].numpy()
+            counter = Counter(others_own_inner_train_id)
+            others_own_inner_train_occ = [counter[id] for id in others_own_inner_train_id]
+            num_ids_others = len(counter)
+            if reid['ML']['weightening'] == 1:  # weight is 1/number of neurons * 1/number of IDs * 1/samples per ID
+                others_own_inner_val_weight = torch.ones(1) / ((ways + 1) * num_ids_others * torch.tensor(others_own_inner_train_occ))
+            elif reid['ML']['weightening'] == 2:
+                others_own_inner_val_weight = torch.ones(1) / (num_ids_others * torch.tensor(others_own_inner_train_occ))
+            weights_val = torch.cat((task_weights, others_own_inner_val_weight)).to(device)
+            if train_others:
+                weights_train = weights_val
+            else:
+                others_own_inner_train_weight = torch.zeros(len(others_own_inner_train_id))
+                weights_train = torch.cat((task_weights, others_own_inner_train_weight)).to(device)
+
+
 
         # do the same for others from all seq if applicable
         if len(others) > 1:
@@ -780,7 +807,6 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways, train_task=True,
         ID_others = 0
         num_others = len(others_inner_train) + len(others_own_inner_train) if len(others) > 1 else len(others_own_inner_train)
 
-        weights = torch.cat((task_weights, others_own_inner_train_weight)).to(device)
 
         # print(f"Occ von others {others_own_inner_train_occ}, occ von task {occ}")
         # print(f"Weights total {weights}")
@@ -788,39 +814,41 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways, train_task=True,
         # exit()
         train_labels = torch.cat((train_labels, torch.ones(num_others).long().to(device) * ID_others))
 
-    if not reid['ML']['train_others']:
-        for i in range(num_others):
-            weights[len(train_data) + i] = 0
+    #train_accuracies = []
+    plot_inner = False
 
-    train_accuracies = []
+    if reid['ML']['weightening'] in [0, 3]:
+        weights_val = torch.ones(1).to(device) / occ
+        weights_val[ID_others] = torch.ones(1).to(device) / num_others
+        if not train_others:
+            weights_train = torch.ones(1).to(device) / occ
+            weights_train[ID_others] = 0
+        else:
+            weights_train = weights_val
+
     for step in range(adaptation_steps):
-        plot_inner = False
-        use_others_inner_loop = train_others
+
         if (plotter is not None) and (iteration % 10 == 0) and task == 0 and plot_inner:
             train_predictions, train_loss = forward_pass_for_classifier_training(learner, train_data, train_labels, ways, return_scores=True, occ=occ)
-            train_accuracy = accuracy(train_predictions, train_labels)
+            #train_accuracy = accuracy(train_predictions, train_labels)
             #print(train_accuracy)
             #plotter.plot(epoch=step, loss=train_error, acc=train_accuracy, split_name='inner', info=info)
 
-        else:  # use_others_inner_loop:
+        else:
             # num_others = len(others) + len(others_own) if len(others) > 1 else len(others_own)
             #occ[ID_others] = num_others if use_others_inner_loop else -1
-            if not use_others_inner_loop:
-                occ[ID_others] = -1
-            else:
-                occ[ID_others] = num_others if reid['ML']['ratio_on'] else 1
             # train_loss = forward_pass_for_classifier_training(learner, (train_data, others_own_inner, others_inner),
             #                                                   torch.cat((train_labels, torch.ones(num_others).long().to(device) * ID_others)),
             #                                                   ways, return_scores=False, occ=occ)
             # test
 
             train_predictions, train_loss = forward_pass_for_classifier_training(learner, (train_data, others_own_inner_train, others_inner_train),
-                                                              #train_labels, ways, return_scores=True, weights=weights)
-                                                              train_labels, ways, return_scores=True, weights=occ)
+                                                              train_labels, ways, return_scores=True, weights=weights_train)
+                                                              #train_labels, ways, return_scores=True, weights=occ)
 
-            train_accuracy = accuracy(train_predictions, train_labels, iteration,
-                                      train_task, seq, others_own_inner_train.shape[0])
-            train_accuracies.append(train_accuracy)
+            #train_accuracy = accuracy(train_predictions, train_labels, iteration,
+                                      #train_task, seq, others_own_inner_train.shape[0])
+            #train_accuracies.append(train_accuracy)
 
             #plot_inner_iteration = [1, 10, 50, 100, 500, 1000, 3e3, 5e3, 10e3, 20e3, 50e3]
             #if train_task and (iteration in plot_inner_iteration) and task == 0:
@@ -885,9 +913,7 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways, train_task=True,
     #     for i, c in enumerate(t):
     #         print(f"class {c} predicted {counter[i]} times")
 
-    ID_others = 0
-    weights = torch.cat((task_weights, others_own_inner_train_weight)).to(device)
-
+    # weights = torch.cat((task_weights, others_own_inner_train_weight)).to(device)
     if len(others) > 1 or len(others_own) > 1:  # meta learn others class with others in val set
 
         # get 10 percent of others own
@@ -897,21 +923,19 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways, train_task=True,
             if len(others) > 1:
                 others = others[ind_others_val]
         # #start_time = time.time()
-        num_others = len(others) + len(others_own) if len(others) > 1 else len(others_own)
 
-        occ[ID_others] = num_others
-        if not reid['ML']['ratio_on']:
-        #occ[ID_others] = -1
-            occ = torch.ones(ways + 1).to(device)
+        # num_others = len(others) + len(others_own) if len(others) > 1 else len(others_own)
+        # occ[ID_others] = num_others
+
         val_labels = torch.cat((val_labels, torch.ones(num_others).long().to(device) * ID_others))
 
-        others_in_outer = True
-        if not others_in_outer:
-            for i in range(num_others):
-                weights[len(train_data)+i] = 0
+        # others_in_outer = True
+        # if not others_in_outer:
+        #     for i in range(num_others):
+        #         weights[len(train_data)+i] = 0
         predictions, validation_loss = forward_pass_for_classifier_training(learner,  (val_data, others_own, others),
-                                                                            #val_labels, ways, return_scores=True, weights=weights)
-                                                                            val_labels, ways, return_scores=True, weights=occ)
+                                                                            val_labels, ways, return_scores=True, weights=weights_val)
+                                                                            #val_labels, ways, return_scores=True, weights=occ)
 
         valid_accuracy = accuracy(predictions, val_labels, iteration, train_task, seq, others_own.shape[0])
 
@@ -931,16 +955,21 @@ def fast_adapt(batch, learner, adaptation_steps, shots, ways, train_task=True,
         # if not meta learning others class
         predictions, validation_loss = forward_pass_for_classifier_training(learner,  val_data, val_labels, ways,
                                                                  return_scores=True, occ=occ)
-        valid_accuracy = accuracy(predictions, val_labels, iteration, train_task)
+        #valid_accuracy = accuracy(predictions, val_labels, iteration, train_task)
 
-    return validation_loss, valid_accuracy, train_accuracies
+    return validation_loss  #, valid_accuracy, #train_accuracies
 
 
 @ex.automain
-def my_main(_config, reid, _run):
+def my_main(tracktor, reid, _config, _log, _run):
     print('both just 10 percent val and train set others own')
-    print('NO OTHERS neuron, change in reid model init und forward pass, remove last beim speichern')
+    print('NOT SAVING ANY MODEL')
+    #print('NO OTHERS neuron, change in reid model init und forward pass, remove last beim speichern')
     #print('no val set others, occ -1')
+
+    idf1_trainOthers = []
+    idf1_NotrainOthers = []
+
     sacred.commands.print_config(_run)
 
     # statistics over sampled tasks
@@ -968,14 +997,14 @@ def my_main(_config, reid, _run):
     # Initialize dataloader #
     #########################
     print("[*] Initializing Dataloader")
-    print('turn samples gleich von DB ON wenn market und cuhk auch dabei')
     start_time = time.time()
-    meta_datasets, validation_set, i_to_dataset, others_FM = load_dataset(reid, exclude=['cuhk03', 'market1501'])  #, only='MOT17-13')
+    meta_datasets, validation_set, i_to_dataset, others_FM = load_dataset(reid)  #, exclude=['cuhk03', 'market1501'])  #, only='MOT17-13')
     nways_list, kshots_list, num_tasks, num_tasks_val, adaptation_steps, meta_batch_size = get_ML_settings(reid)
     ##########################
     # Initialize the modules #
     ##########################
     print("[*] Building CNN")
+    #print('safe model every 2.5k')
 
     obj_detect = FRCNN_FPN(num_classes=2).to(device)
     obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
@@ -996,27 +1025,10 @@ def my_main(_config, reid, _run):
         ], lr=lr)
     if reid['ML']['learn_LR']:
         #predictor = obj_detect.roi_heads.box_predictor.cls_score
-        # predictor = torch.nn.Linear(in_features=1024, out_features=2).to(device)
-        # model = MetaSGD(reID_network, lr=1e-3, first_order=True, allow_nograd=True, global_LR=reid['ML']['global_LR'],
-        #                 others_neuron_b=torch.nn.Parameter(predictor.bias[1].unsqueeze(0)),
-        #                 others_neuron_w=torch.nn.Parameter(predictor.weight[1, :].unsqueeze(0)),
-        #                 template_neuron_b=torch.nn.Parameter(predictor.bias[0].unsqueeze(0)),
-        #                 template_neuron_w=torch.nn.Parameter(predictor.weight[0, :].unsqueeze(0)))
-        #
-        # lr_lr = float(reid['solver']['LR_LR'])
-        # opt = torch.optim.Adam([
-        #     {'params': model.module.head.parameters()},
-        #     {'params': model.template_neuron_bias},
-        #     {'params': model.template_neuron_weight},
-        #     {'params': model.others_neuron_bias},
-        #     {'params': model.others_neuron_weight},
-        #     {'params': model.lrs, 'lr': lr_lr},  # the template + others LR
-        #     {'params': model.module.lrs[:4], 'lr': lr_lr}  # LRs for the head
-        # ], lr=lr)
-
-        # no other neuron
-        predictor = torch.nn.Linear(in_features=1024, out_features=1).to(device)
-        model = MetaSGD_noOthers(reID_network, lr=1e-3, first_order=True, allow_nograd=True, global_LR=reid['ML']['global_LR'],
+        predictor = torch.nn.Linear(in_features=1024, out_features=2).to(device)
+        model = MetaSGD(reID_network, lr=1e-3, first_order=True, allow_nograd=True, global_LR=reid['ML']['global_LR'],
+                        others_neuron_b=torch.nn.Parameter(predictor.bias[1].unsqueeze(0)),
+                        others_neuron_w=torch.nn.Parameter(predictor.weight[1, :].unsqueeze(0)),
                         template_neuron_b=torch.nn.Parameter(predictor.bias[0].unsqueeze(0)),
                         template_neuron_w=torch.nn.Parameter(predictor.weight[0, :].unsqueeze(0)))
 
@@ -1025,9 +1037,26 @@ def my_main(_config, reid, _run):
             {'params': model.module.head.parameters()},
             {'params': model.template_neuron_bias},
             {'params': model.template_neuron_weight},
+            {'params': model.others_neuron_bias},
+            {'params': model.others_neuron_weight},
             {'params': model.lrs, 'lr': lr_lr},  # the template + others LR
             {'params': model.module.lrs[:4], 'lr': lr_lr}  # LRs for the head
         ], lr=lr)
+
+        # no other neuron
+        # predictor = torch.nn.Linear(in_features=1024, out_features=1).to(device)
+        # model = MetaSGD_noOthers(reID_network, lr=1e-3, first_order=True, allow_nograd=True, global_LR=reid['ML']['global_LR'],
+        #                 template_neuron_b=torch.nn.Parameter(predictor.bias[0].unsqueeze(0)),
+        #                 template_neuron_w=torch.nn.Parameter(predictor.weight[0, :].unsqueeze(0)))
+        #
+        # lr_lr = float(reid['solver']['LR_LR'])
+        # opt = torch.optim.Adam([
+        #     {'params': model.module.head.parameters()},
+        #     {'params': model.template_neuron_bias},
+        #     {'params': model.template_neuron_weight},
+        #     {'params': model.lrs, 'lr': lr_lr},  # the template + others LR
+        #     {'params': model.module.lrs[:4], 'lr': lr_lr}  # LRs for the head
+        # ], lr=lr)
 
         # no template neuron
         # model = MetaSGD_noTemplate(reID_network, lr=1e-3, first_order=True, allow_nograd=True,
@@ -1052,44 +1081,44 @@ def my_main(_config, reid, _run):
     if clamping_LR:
         print('clamp LR < 0')
 
-    loss_meta_train = AverageMeter('Loss', ':.4e')
-    loss_meta_val = AverageMeter('Loss', ':.4e')
-    acc_meta_train = AverageMeter('Acc', ':6.2f')
-    acc_just_zero_meta_train = AverageMeter('Acc', ':6.2f')
-    acc_all_meta_train = AverageMeter('Acc', ':6.2f')
-    acc_others_own_meta_train = AverageMeter('Acc', ':6.2f')
-
-    acc_meta_val = AverageMeter('Acc', ':6.2f')
-    acc_just_zero_meta_val = AverageMeter('Acc', ':6.2f')
-    acc_all_meta_val = AverageMeter('Acc', ':6.2f')
-    acc_others_own_meta_val = AverageMeter('Acc', ':6.2f')
-
-    acc_train_task_train_set_acc_task = AverageMeter('Acc', ':6.2f')
-    acc_train_task_train_set_acc_others = AverageMeter('Acc', ':6.2f')
+    # loss_meta_train = AverageMeter('Loss', ':.4e')
+    # loss_meta_val = AverageMeter('Loss', ':.4e')
+    # acc_meta_train = AverageMeter('Acc', ':6.2f')
+    # acc_just_zero_meta_train = AverageMeter('Acc', ':6.2f')
+    # acc_all_meta_train = AverageMeter('Acc', ':6.2f')
+    # acc_others_own_meta_train = AverageMeter('Acc', ':6.2f')
+    #
+    # acc_meta_val = AverageMeter('Acc', ':6.2f')
+    # acc_just_zero_meta_val = AverageMeter('Acc', ':6.2f')
+    # acc_all_meta_val = AverageMeter('Acc', ':6.2f')
+    # acc_others_own_meta_val = AverageMeter('Acc', ':6.2f')
+    #
+    # acc_train_task_train_set_acc_task = AverageMeter('Acc', ':6.2f')
+    # acc_train_task_train_set_acc_others = AverageMeter('Acc', ':6.2f')
 
     # for LRs
-    LR_fc7_w = AverageMeter('Acc', ':6.2f')
-    LR_fc7_b = AverageMeter('Acc', ':6.2f')
-    LR_fc6_w = AverageMeter('Acc', ':6.2f')
-    LR_fc6_b = AverageMeter('Acc', ':6.2f')
-    #LR_last_w = AverageMeter('Acc', ':6.2f')
-    #LR_last_b = AverageMeter('Acc', ':6.2f')
-    #LR_others_w = AverageMeter('Acc', ':6.2f')
-    #LR_others_b = AverageMeter('Acc', ':6.2f')
-    LR_template_w = AverageMeter('Acc', ':6.2f')
-    LR_template_b = AverageMeter('Acc', ':6.2f')
+    # LR_fc7_w = AverageMeter('Acc', ':6.2f')
+    # LR_fc7_b = AverageMeter('Acc', ':6.2f')
+    # LR_fc6_w = AverageMeter('Acc', ':6.2f')
+    # LR_fc6_b = AverageMeter('Acc', ':6.2f')
+    # #LR_last_w = AverageMeter('Acc', ':6.2f')
+    # #LR_last_b = AverageMeter('Acc', ':6.2f')
+    # LR_others_w = AverageMeter('Acc', ':6.2f')
+    # LR_others_b = AverageMeter('Acc', ':6.2f')
+    # LR_template_w = AverageMeter('Acc', ':6.2f')
+    # LR_template_b = AverageMeter('Acc', ':6.2f')
 
     # for weights
-    Mean_fc7_w = AverageMeter('Acc', ':6.2f')
-    Mean_fc7_b = AverageMeter('Acc', ':6.2f')
-    Mean_fc6_w = AverageMeter('Acc', ':6.2f')
-    Mean_fc6_b = AverageMeter('Acc', ':6.2f')
-    #Mean_last_w = AverageMeter('Acc', ':6.2f')
-    #Mean_last_b = AverageMeter('Acc', ':6.2f')
-    #Mean_others_w = AverageMeter('Acc', ':6.2f')
-    #Mean_others_b = AverageMeter('Acc', ':6.2f')
-    Mean_template_w = AverageMeter('Acc', ':6.2f')
-    Mean_template_b = AverageMeter('Acc', ':6.2f')
+    # Mean_fc7_w = AverageMeter('Acc', ':6.2f')
+    # Mean_fc7_b = AverageMeter('Acc', ':6.2f')
+    # Mean_fc6_w = AverageMeter('Acc', ':6.2f')
+    # Mean_fc6_b = AverageMeter('Acc', ':6.2f')
+    # #Mean_last_w = AverageMeter('Acc', ':6.2f')
+    # #Mean_last_b = AverageMeter('Acc', ':6.2f')
+    # Mean_others_w = AverageMeter('Acc', ':6.2f')
+    # Mean_others_b = AverageMeter('Acc', ':6.2f')
+    # Mean_template_w = AverageMeter('Acc', ':6.2f')
+    # Mean_template_b = AverageMeter('Acc', ':6.2f')
 
     # how to sample, uniform from the 3 db or uniform over sequences
     if ('market1501' and 'cuhk03') in i_to_dataset.values():
@@ -1134,7 +1163,7 @@ def my_main(_config, reid, _run):
         # 1 validation task per meta batch size train tasks
         # Compute meta-validation loss - validation sequence
         # here no backward in outer loop, just inner
-        if len(validation_set) > 0:
+        if len(validation_set) > 0 and False:
             learner = model.clone()
             batch, nways, kshots, _, taskID = sample_task(validation_set, nways_list, kshots_list, i_to_dataset,
                                                           reid['ML']['sample_from_all'], val=True,
@@ -1174,23 +1203,7 @@ def my_main(_config, reid, _run):
             #     sampled_val[(nways, kshots)] += 1
 
 
-            # evaluation_loss, evaluation_accuracy, _ = fast_adapt(batch=batch,
-            #                                                      learner=learner,
-            #                                                      adaptation_steps=adaptation_steps,
-            #                                                      shots=kshots,
-            #                                                      ways=nways,
-            #                                                      train_task=False,
-            #                                                      plotter=plotter,
-            #                                                      iteration=iteration,
-            #                                                      task=-1,
-            #                                                      taskID=taskID,
-            #                                                      reid=reid,
-            #                                                      others_own=others_own_idx,
-            #                                                      #samples_per_id_others_own=samples_per_id_others_own,
-            #                                                      #others=#others_FM,
-            #                                                      train_others=reid['ML']['train_others'],
-            #                                                      set=validation_set[0])
-            evaluation_loss, evaluation_accuracy, _ = fast_adapt_noOthers(batch=batch,
+            evaluation_loss, evaluation_accuracy, _ = fast_adapt(batch=batch,
                                                                  learner=learner,
                                                                  adaptation_steps=adaptation_steps,
                                                                  shots=kshots,
@@ -1201,21 +1214,38 @@ def my_main(_config, reid, _run):
                                                                  task=-1,
                                                                  taskID=taskID,
                                                                  reid=reid,
-                                                                 )
+                                                                 others_own=others_own_idx,
+                                                                 #samples_per_id_others_own=samples_per_id_others_own,
+                                                                 #others=#others_FM,
+                                                                 train_others=reid['ML']['train_others'],
+                                                                 set=validation_set[0])
 
-            evaluation_accuracy, evaluation_accuracy_all, evaluation_accuracy_just_zero, evaluation_accuracy_others_own = evaluation_accuracy
+            # evaluation_loss, evaluation_accuracy, _ = fast_adapt_noOthers(batch=batch,
+            #                                                      learner=learner,
+            #                                                      adaptation_steps=adaptation_steps,
+            #                                                      shots=kshots,
+            #                                                      ways=nways,
+            #                                                      train_task=False,
+            #                                                      plotter=plotter,
+            #                                                      iteration=iteration,
+            #                                                      task=-1,
+            #                                                      taskID=taskID,
+            #                                                      reid=reid,
+            #                                                      )
 
-            meta_valid_loss += evaluation_loss.item()
-            meta_valid_accuracy += evaluation_accuracy.item()  # accuracy without zero class
-            meta_valid_accuracy_all += evaluation_accuracy_all.item()  # accuracy with zeros class
-            meta_valid_accuracy_just_zero += evaluation_accuracy_just_zero.item()  # track acc just zero class
-            meta_valid_accuracy_others_own += evaluation_accuracy_others_own.item()  # track acc just zero class
-
-            loss_meta_val.update(evaluation_loss.item())
-            acc_meta_val.update(evaluation_accuracy.item())
-            acc_just_zero_meta_val.update(evaluation_accuracy_just_zero.item())  # others from own sequence
-            acc_all_meta_val.update(evaluation_accuracy_all.item())  # others from others sequences
-            acc_others_own_meta_val.update(evaluation_accuracy_others_own.item())  # others from OWN sequence
+            # evaluation_accuracy, evaluation_accuracy_all, evaluation_accuracy_just_zero, evaluation_accuracy_others_own = evaluation_accuracy
+            #
+            # meta_valid_loss += evaluation_loss.item()
+            # meta_valid_accuracy += evaluation_accuracy.item()  # accuracy without zero class
+            # meta_valid_accuracy_all += evaluation_accuracy_all.item()  # accuracy with zeros class
+            # meta_valid_accuracy_just_zero += evaluation_accuracy_just_zero.item()  # track acc just zero class
+            # meta_valid_accuracy_others_own += evaluation_accuracy_others_own.item()  # track acc just zero class
+            #
+            # loss_meta_val.update(evaluation_loss.item())
+            # acc_meta_val.update(evaluation_accuracy.item())
+            # acc_just_zero_meta_val.update(evaluation_accuracy_just_zero.item())  # others from own sequence
+            # acc_all_meta_val.update(evaluation_accuracy_all.item())  # others from others sequences
+            # acc_others_own_meta_val.update(evaluation_accuracy_others_own.item())  # others from OWN sequence
 
 
         for task in range(meta_batch_size):
@@ -1253,34 +1283,18 @@ def my_main(_config, reid, _run):
             #     print('{} ind for others from seq {}'.format(len(others_val_idx), sequence))
             #     #print(others_val_idx)
             #     print('len von others ohne seq {}'.format(others_FM[others_seq_ID!=sequence_idx].shape[0]))
-
-            if sequence not in sampled_train.keys():
-                sampled_train[sequence] = {}
-
-            if (nways, kshots) not in sampled_train[sequence].keys():
-                sampled_train[sequence][(nways, kshots)] = 1
-            else:
-                sampled_train[sequence][(nways, kshots)] += 1
+            #
+            # if sequence not in sampled_train.keys():
+            #     sampled_train[sequence] = {}
+            #
+            # if (nways, kshots) not in sampled_train[sequence].keys():
+            #     sampled_train[sequence][(nways, kshots)] = 1
+            # else:
+            #     sampled_train[sequence][(nways, kshots)] += 1
             start_time = time.time()
 
-            # evaluation_loss, evaluation_accuracy, train_accuracies = fast_adapt(batch=batch,
-            #                                                                     learner=learner,
-            #                                                                     adaptation_steps=adaptation_steps,
-            #                                                                     shots=kshots,
-            #                                                                     ways=nways,
-            #                                                                     train_task=True,
-            #                                                                     plotter=plotter,
-            #                                                                     iteration=iteration,
-            #                                                                     task=task,
-            #                                                                     taskID=taskID,
-            #                                                                     reid=reid,
-            #                                                                     others_own=others_own_idx,
-            #                                                                     #others=others_FM[others_seq_ID != sequence_idx],
-            #                                                                     seq=sequence,
-            #                                                                     train_others=reid['ML']['train_others'],
-            #                                                                     set=meta_datasets[sequence_idx])
-
-            evaluation_loss, evaluation_accuracy, train_accuracies = fast_adapt_noOthers(batch=batch,
+            #evaluation_loss, evaluation_accuracy, train_accuracies = fast_adapt(batch=batch,
+            evaluation_loss = fast_adapt(batch=batch,
                                                                                 learner=learner,
                                                                                 adaptation_steps=adaptation_steps,
                                                                                 shots=kshots,
@@ -1291,7 +1305,24 @@ def my_main(_config, reid, _run):
                                                                                 task=task,
                                                                                 taskID=taskID,
                                                                                 reid=reid,
-                                                                                seq=sequence)
+                                                                                others_own=others_own_idx,
+                                                                                #others=others_FM[others_seq_ID != sequence_idx],
+                                                                                seq=sequence,
+                                                                                train_others=reid['ML']['train_others'],
+                                                                                set=meta_datasets[sequence_idx])
+
+            # evaluation_loss, evaluation_accuracy, train_accuracies = fast_adapt_noOthers(batch=batch,
+            #                                                                     learner=learner,
+            #                                                                     adaptation_steps=adaptation_steps,
+            #                                                                     shots=kshots,
+            #                                                                     ways=nways,
+            #                                                                     train_task=True,
+            #                                                                     plotter=plotter,
+            #                                                                     iteration=iteration,
+            #                                                                     task=task,
+            #                                                                     taskID=taskID,
+            #                                                                     reid=reid,
+            #                                                                     seq=sequence)
 
             #graph = make_dot(evaluation_loss, params=dict(learner.named_parameters()))
             #graph.format = 'png'
@@ -1316,26 +1347,26 @@ def my_main(_config, reid, _run):
 
             # using the template neurons
             # LR
-            LR_fc7_w.update(model.module.lrs[0].mean().item())
-            LR_fc7_b.update(model.module.lrs[1].mean().item())
-            LR_fc6_w.update(model.module.lrs[2].mean().item())
-            LR_fc6_b.update(model.module.lrs[3].mean().item())
-            #LR_others_w.update(model.lrs[0].mean().item())  # others neuron
-            #LR_others_b.update(model.lrs[1].mean().item())  # others neuron
-            #LR_template_w.update(model.lrs[2].mean().item())  # template neuron
-            #LR_template_b.update(model.lrs[3].mean().item())  # template neuron
-            LR_template_w.update(model.lrs[0].mean().item())  # template neuron
-            LR_template_b.update(model.lrs[1].mean().item())  # template neuron
+            # LR_fc7_w.update(model.module.lrs[0].mean().item())
+            # LR_fc7_b.update(model.module.lrs[1].mean().item())
+            # LR_fc6_w.update(model.module.lrs[2].mean().item())
+            # LR_fc6_b.update(model.module.lrs[3].mean().item())
+            # LR_others_w.update(model.lrs[0].mean().item())  # others neuron
+            # LR_others_b.update(model.lrs[1].mean().item())  # others neuron
+            # LR_template_w.update(model.lrs[2].mean().item())  # template neuron
+            # LR_template_b.update(model.lrs[3].mean().item())  # template neuron
+            # # LR_template_w.update(model.lrs[0].mean().item())  # template neuron
+            # # LR_template_b.update(model.lrs[1].mean().item())  # template neuron
 
-            # weights
-            Mean_fc7_w.update(model.module.head.fc7.weight.mean())
-            Mean_fc7_b.update(model.module.head.fc7.bias.mean())
-            Mean_fc6_w.update(model.module.head.fc6.weight.mean())
-            Mean_fc6_b.update(model.module.head.fc6.bias.mean())
-           # Mean_others_w.update(model.others_neuron_weight.mean())
-            #Mean_others_b.update(model.others_neuron_bias.mean())
-            Mean_template_w.update(model.template_neuron_weight.mean())
-            Mean_template_b.update(model.template_neuron_bias.mean())
+            # # weights
+            # Mean_fc7_w.update(model.module.head.fc7.weight.mean())
+            # Mean_fc7_b.update(model.module.head.fc7.bias.mean())
+            # Mean_fc6_w.update(model.module.head.fc6.weight.mean())
+            # Mean_fc6_b.update(model.module.head.fc6.bias.mean())
+            # Mean_others_w.update(model.others_neuron_weight.mean())
+            # Mean_others_b.update(model.others_neuron_bias.mean())
+            # Mean_template_w.update(model.template_neuron_weight.mean())
+            # Mean_template_b.update(model.template_neuron_bias.mean())
 
 
             evaluation_loss.backward()  # compute gradients, populate grad buffers of maml
@@ -1354,40 +1385,42 @@ def my_main(_config, reid, _run):
                     if ('module' or 'lrs') not in name:
                         print(f"MEAN {name:<30} {p.mean().item()}")
 
-            for i, ta in enumerate(train_accuracies):
-                train_task_train_set_acc_task[i] += ta[0].item()
-                train_task_train_set_acc_others[i] += ta[3].item()
-
-            acc_train_task_train_set_acc_task.update(ta[0].item())
-            train_task_train_set_acc_task_last += ta[0].item()
-            acc_train_task_train_set_acc_others.update(ta[3].item())
-            train_task_train_set_acc_others_last += ta[3].item()
-
-            evaluation_accuracy, evaluation_accuracy_all, evaluation_accuracy_just_zero, evaluation_accuracy_others_own = evaluation_accuracy
-
-            meta_train_loss += evaluation_loss.item()
-            meta_train_accuracy += evaluation_accuracy.item()
-            meta_train_accuracy_all += evaluation_accuracy_all.item()  # accuracy with zeros class
-            meta_train_accuracy_just_zero += evaluation_accuracy_just_zero.item()  # track acc just zero class
-            meta_train_accuracy_others_own += evaluation_accuracy_others_own.item()  # track acc others OWN
-
-            loss_meta_train.update(evaluation_loss.item())
-            acc_meta_train.update(evaluation_accuracy.item())
-            acc_just_zero_meta_train.update(evaluation_accuracy_just_zero.item())  # others from own sequence
-            acc_all_meta_train.update(evaluation_accuracy_all.item())  # others from others sequences
-            acc_others_own_meta_train.update(evaluation_accuracy_others_own.item())  # others from OWN sequence
+            # for i, ta in enumerate(train_accuracies):
+            #     train_task_train_set_acc_task[i] += ta[0].item()
+            #     train_task_train_set_acc_others[i] += ta[3].item()
+            #
+            # acc_train_task_train_set_acc_task.update(ta[0].item())
+            # train_task_train_set_acc_task_last += ta[0].item()
+            # acc_train_task_train_set_acc_others.update(ta[3].item())
+            # train_task_train_set_acc_others_last += ta[3].item()
+            #
+            # evaluation_accuracy, evaluation_accuracy_all, evaluation_accuracy_just_zero, evaluation_accuracy_others_own = evaluation_accuracy
+            #
+            # meta_train_loss += evaluation_loss.item()
+            # meta_train_accuracy += evaluation_accuracy.item()
+            # meta_train_accuracy_all += evaluation_accuracy_all.item()  # accuracy with zeros class
+            # meta_train_accuracy_just_zero += evaluation_accuracy_just_zero.item()  # track acc just zero class
+            # meta_train_accuracy_others_own += evaluation_accuracy_others_own.item()  # track acc others OWN
+            #
+            # loss_meta_train.update(evaluation_loss.item())
+            # acc_meta_train.update(evaluation_accuracy.item())
+            # acc_just_zero_meta_train.update(evaluation_accuracy_just_zero.item())  # others from own sequence
+            # acc_all_meta_train.update(evaluation_accuracy_all.item())  # others from others sequences
+            # acc_others_own_meta_train.update(evaluation_accuracy_others_own.item())  # others from OWN sequence
 
             #evaluation_loss = torch.zeros(1)
 
         # update the best value for loss
-        if len(validation_set) > 0:
-            safe_best_loss = loss_meta_val.update_best(loss_meta_val.avg, iteration)
-        else:
-            safe_best_loss = loss_meta_val.update_best(loss_meta_train.avg, iteration)
+        # if len(validation_set) > 0:
+        #     safe_best_loss = loss_meta_val.update_best(loss_meta_val.avg, iteration)
+        # else:
+        #     safe_best_loss = loss_meta_val.update_best(loss_meta_train.avg, iteration)
 
-        if iteration % 100 == 0:
+        if iteration % 1000 == 0 and False:
             # Print some metrics
             print(f"\nIteration {iteration} ,average over meta batch size {meta_batch_size}")
+            print(f"IDF1 scores train others in tracktor {idf1_trainOthers}")
+            print(f"IDF1 scores NO train others in tracktor {idf1_NotrainOthers}")
             print(f"{'Train Loss':<50} {meta_train_loss / meta_batch_size:.8f}")
             print(f"{'Train Accuracy task':<50} {meta_train_accuracy / meta_batch_size:.6f}")
             print(f"{'Train Accuracy task+others':<50} {meta_train_accuracy_all / meta_batch_size:.6f}")
@@ -1423,30 +1456,8 @@ def my_main(_config, reid, _run):
                 for p in model.lrs:
                     print('LR: {}'.format(p.item()))
 
-        if iteration > 1000 and safe_best_loss == 1:
-            if iteration % 10 == 0:
-                model_s = '{}_reID_Network.pth'.format(iteration)
-                if safe_best_loss:
-                    model_s = 'best_reID_Network.pth'
-                    # if reid['ML']['learn_LR']:
-                    #     for p in model.lrs:
-                    #         print('LR: {}'.format(p.item()))
-
-                #print('safe state dict {}'.format(model_s))
-                model_name = osp.join(output_dir, model_s)
-                #torch.save(model.state_dict(), model_name)
-
-                state_dict_to_safe = remove_last(model.state_dict(), model.module.num_output)
-                save_checkpoint({
-                    'epoch': iteration,
-                    'state_dict': state_dict_to_safe,
-                    'best_acc': (acc_meta_train.avg, acc_meta_val.avg),
-                    #'optimizer': opt.state_dict(),
-                    'optimizer': None,
-                }, filename=model_name)
-
         #if reid['solver']["plot_training_curves"] and (iteration % 100 == 0 or iteration == 1 or iteration <= 100):
-        if reid['solver']["plot_training_curves"] and (iteration % 100 == 0 or iteration == 1):
+        if reid['solver']["plot_training_curves"] and (iteration % 100 == 0 or iteration == 1) and False:
             if reid['ML']['learn_LR'] and reid['ML']['global_LR']:
                 plotter.plot(epoch=iteration, loss=meta_train_loss/meta_batch_size,
                              acc=meta_train_accuracy/meta_batch_size, split_name='train_task_val_set', LR=model.lrs[0])
@@ -1489,8 +1500,8 @@ def my_main(_config, reid, _run):
             plotter.plot(epoch=iteration, loss=-1, acc=LR_fc7_b.val, split_name='LR_fc7_b')
             plotter.plot(epoch=iteration, loss=-1, acc=LR_fc6_w.val, split_name='LR_fc6_w')
             plotter.plot(epoch=iteration, loss=-1, acc=LR_fc6_b.val, split_name='LR_fc6_b')
-            #plotter.plot(epoch=iteration, loss=-1, acc=LR_others_w.val, split_name='LR_others_w')
-            #plotter.plot(epoch=iteration, loss=-1, acc=LR_others_b.val, split_name='LR_others_b')
+            plotter.plot(epoch=iteration, loss=-1, acc=LR_others_w.val, split_name='LR_others_w')
+            plotter.plot(epoch=iteration, loss=-1, acc=LR_others_b.val, split_name='LR_others_b')
             plotter.plot(epoch=iteration, loss=-1, acc=LR_template_w.val, split_name='LR_template_w')
             plotter.plot(epoch=iteration, loss=-1, acc=LR_template_b.val, split_name='LR_template_b')
 
@@ -1498,8 +1509,8 @@ def my_main(_config, reid, _run):
             plotter.plot(epoch=iteration, loss=-1, acc=Mean_fc7_b.val, split_name='Mean_fc7_b')
             plotter.plot(epoch=iteration, loss=-1, acc=Mean_fc6_w.val, split_name='Mean_fc6_w')
             plotter.plot(epoch=iteration, loss=-1, acc=Mean_fc6_b.val, split_name='Mean_fc6_b')
-            #plotter.plot(epoch=iteration, loss=-1, acc=Mean_others_w.val, split_name='Mean_others_w')
-            #plotter.plot(epoch=iteration, loss=-1, acc=Mean_others_b.val, split_name='Mean_others_b')
+            plotter.plot(epoch=iteration, loss=-1, acc=Mean_others_w.val, split_name='Mean_others_w')
+            plotter.plot(epoch=iteration, loss=-1, acc=Mean_others_b.val, split_name='Mean_others_b')
             plotter.plot(epoch=iteration, loss=-1, acc=Mean_template_w.val, split_name='Mean_template_w')
             plotter.plot(epoch=iteration, loss=-1, acc=Mean_template_b.val, split_name='Mean_template_b')
 
@@ -1532,9 +1543,140 @@ def my_main(_config, reid, _run):
             #         model.module.lrs[i].data = lr * lr_mask
 
 
-        #print('OVERALL: 1 iteration in {}'.format(time.time()-start_time_iteration))
+        # when working with val set
+        # if iteration > 1000 and safe_best_loss == 1:
+        #     if iteration % 10 == 0:
+        #         model_s = '{}_reID_Network.pth'.format(iteration)
+        #         if safe_best_loss:
+        #             model_s = 'best_reID_Network.pth'
+        #
+        if iteration % 5000 == 0:
+            model_s = '{}_reID_Network.pth'.format(iteration)
+            model_name = osp.join(output_dir, model_s)
 
-        if iteration % 100 == 0:
-            print('sampled tasks from train {}'.format(sampled_train))
-            print('sampled tasks from val {}'.format(sampled_val))
+            state_dict_to_safe = remove_last(model.state_dict(), model.module.num_output)
+            save_checkpoint({
+                'epoch': iteration,
+                'state_dict': state_dict_to_safe,
+                #'best_acc': (acc_meta_train.avg, acc_meta_val.avg),
+                'best_acc': (0, 0),
+                #'optimizer': opt.state_dict(),
+                'optimizer': None,
+            }, filename=model_name)
+
+        # if iteration % 5000 == 0:
+        #     print('sampled tasks from train {}'.format(sampled_train))
+        #     print('sampled tasks from val {}'.format(sampled_val))
             #print('\n check sampled IDs per dataset {}'.format(sampled_ids_train))
+
+
+        # evaluate tracktor to see performance when using meta-learned model
+        #evaluate_tracktor = [1, 3000, 5000, 10000, 20000, 30000, 40000, 50000, 60000, 70000]
+        #evaluate_tracktor = [20000]
+        #if iteration in evaluate_tracktor:
+        if iteration % 5000 == 0:
+        #if iteration % 2500 == 0:
+        #if iteration % 1 == 0:
+            if reid['ML']['train_others']:
+                trainOthers_tracktor = [True]
+            else:
+                trainOthers_tracktor = [True, False]
+            for train_mode in trainOthers_tracktor:
+                print(f'evaluate tracktor and train others: {train_mode}')
+                time_total, num_frames = 0, 0
+                mot_accums = []
+                dataset = Datasets(tracktor['dataset'])
+                a = remove_last(model.state_dict(), model.module.num_output)
+                for seq in dataset:
+
+                    obj_detect = FRCNN_FPN(num_classes=2).to(device)
+                    obj_detect.load_state_dict(torch.load(_config['tracktor']['obj_detect_model'],
+                                                          map_location=lambda storage, loc: storage))
+                    obj_detect.eval()
+
+                    # tracktor
+                    tracker = Tracker(obj_detect, None, tracktor['tracker'], seq._dets + '_' + seq._seq_name, a,
+                                      tracktor['reid_ML'], tracktor['LR_ML'], reid['ML']['weightening'],
+                                      train_mode)
+
+                    start = time.time()
+
+                    _log.info(f"Tracking: {seq}")
+
+                    data_loader = DataLoader(seq, batch_size=1, shuffle=False)
+                    for i, frame in enumerate(data_loader):
+                        if i >= 0 and len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
+                            tracker.step(frame, i)
+                            num_frames += 1
+
+                    results = tracker.get_results()
+
+                    time_total += time.time() - start
+
+                    _log.info(f"Tracks found: {len(results)}")
+                    _log.info(f"Runtime for {seq}: {time.time() - start :.1f} s.")
+                    _log.info(f"Total number of reIDs: {tracker.num_reids}")
+                    _log.info(f"Total number of Trainings: {tracker.num_training}")
+                    #_log.info(f"TRAIN Acc values after training {tracker.acc_after_train}")
+                    # _log.info(f"TRAIN Acc avg. {sum(tracker.acc_after_train)/len(tracker.acc_after_train)}")
+                    train_acc_id = [a[0] for a in tracker.acc_after_train]
+                    train_acc_others = [a[1] for a in tracker.acc_after_train]
+                    _log.info(f"TRAIN Acc avg. {sum(train_acc_id) / len(train_acc_id)}")
+                    _log.info(f"TRAIN Acc avg. {sum(train_acc_others) / len(train_acc_others)}")
+                    if len(tracker.acc_val_after_train) > 0:
+                        val_acc_id = [a[0] for a in tracker.acc_val_after_train]
+                        val_acc_others = [a[1] for a in tracker.acc_val_after_train]
+                        _log.info(f"TRAIN Acc IDs avg. {sum(val_acc_id) / len(val_acc_id)}")
+                        _log.info(f"TRAIN Acc others avg. {sum(val_acc_others) / len(val_acc_others)}")
+                    #_log.info(f"VAL Acc values after training {tracker.acc_val_after_train}")
+                    # if len(tracker.acc_val_after_train)>0:
+                    #    _log.info(f"VAL Acc avg. {sum(tracker.acc_val_after_train)/len(tracker.acc_val_after_train)}")
+
+                    if len(tracker.trained_epochs) > 0:
+                        _log.info(f"Epochs trained effectivly: {tracker.trained_epochs}")
+                        _log.info(f"Epochs average: {sum(tracker.trained_epochs) / len(tracker.trained_epochs)}")
+
+                    if tracktor['interpolate']:
+                        results = interpolate(results)
+
+                    if seq.no_gt:
+                        _log.info(f"No GT data for evaluation available.")
+                    else:
+                        mot_accums.append(get_mot_accum(results, seq))
+
+                    _log.info(f"Writing predictions to: {output_dir}")
+
+                    seq.write_results(results, output_dir)
+                    if tracktor['write_images']:
+                        plot_sequence(results, seq, osp.join(output_dir, tracktor['dataset'], str(seq)))
+
+                    del tracker
+                    del obj_detect
+                    torch.cuda.empty_cache()
+
+                _log.info(f"Tracking runtime for all sequences (without evaluation or image writing): "
+                          f"{time_total:.1f} s ({num_frames / time_total:.1f} Hz)")
+                del a
+                if mot_accums:
+                    summary = evaluate_mot_accums(mot_accums, [str(s) for s in dataset if not s.no_gt],
+                                                  generate_overall=True)
+                    summary.to_pickle(
+                        "output/finetuning_results/results_{}_{}_{}_{}_{}.pkl".format(tracktor['output_subdir'],
+                                                                                      tracktor['tracker']['finetuning'][
+                                                                                          'max_displacement'],
+                                                                                      tracktor['tracker']['finetuning'][
+                                                                                          'batch_size'],
+                                                                                      tracktor['tracker']['finetuning'][
+                                                                                          'learning_rate'],
+                                                                                      tracktor['tracker']['finetuning'][
+                                                                                          'epochs']))
+                overall = summary.idf1['OVERALL'] * 100
+                if train_mode:
+                    plotter.plot(epoch=iteration, loss=-1, acc=overall, split_name='idf1_TrainOn')
+                    idf1_trainOthers.append(round(overall,1))
+                else:
+                    plotter.plot(epoch=iteration, loss=-1, acc=overall, split_name='idf1_TrainOff')
+                    idf1_NotrainOthers.append(round(overall, 1))
+
+                print(f"\nIteration {iteration}")
+                print(f"IDF1 scores train others in tracktor {idf1_trainOthers}")

@@ -38,7 +38,7 @@ def plot_compare_bounding_boxes(box_finetune, box_no_finetune, image):
 class VisdomLinePlotter(object):
     """Plots to Visdom"""
 
-    def __init__(self, id, env, n_samples_train, n_samples_val, im, offline=False):
+    def __init__(self, id, env, n_samples_train_id, n_samples_train_others, n_samples_val_id, n_samples_val_others, im, offline=False):
         logger = logging.getLogger()
         logger.setLevel(40)
 
@@ -51,31 +51,33 @@ class VisdomLinePlotter(object):
         logger.setLevel(20)
         self.env = env
         self.id = id
-        self.n_samples_train = n_samples_train
-        self.n_samples_val = n_samples_val
+        self.n_samples_train_id = n_samples_train_id
+        self.n_samples_train_others = n_samples_train_others
+        self.n_samples_val_id = n_samples_val_id
+        self.n_samples_val_others = n_samples_val_others
         self.im = im
         self.loss_window = self.viz.line(X=torch.zeros((1,)).cpu(),
                            Y=torch.zeros((1)).cpu(),
                            opts=dict(xlabel='epoch',
                                      ylabel='Loss',
                                      env=self.env,
-                                     title='({})Loss inactive {}'.format(im, id),
-                                     legend=['train #{}'.format(self.n_samples_train)]))
+                                     title=f"({im})Loss inactive {id}",
+                                     legend=['train']))
         self.accuracy_window = self.viz.line(X=torch.zeros((1,)).cpu(),
                            Y=torch.zeros((1)).cpu(),
                            opts=dict(xlabel='epoch',
                                      ylabel='accuracy',
                                      env=self.env,
-                                     title='({})Accuracy inactive {}'.format(im, id),
-                                     legend=['train #{}'.format(self.n_samples_train)]))
+                                     title=f"({im})Accuracy inactive {id}",
+                                     legend=[f"train id #{self.n_samples_train_id}"]))
 
 
     def plot_(self, epoch, loss, acc, split_name):
         if split_name=='train':
-            name = split_name+' #{}'.format(self.n_samples_train)
+            name = split_name
         elif split_name =='val':
-            name = split_name+' #{}'.format(self.n_samples_val)
-            loss, loss_others, loss_inactive, max_sample_loss_others = loss
+            name = split_name
+            #loss, loss_others, loss_inactive, max_sample_loss_others = loss
         else:
             print('error, splitname incorrect')
 
@@ -88,29 +90,36 @@ class VisdomLinePlotter(object):
             update='append')
         self.viz.line(
             X=torch.ones((1, 1)).cpu() * epoch,
-            Y=torch.Tensor([acc]).unsqueeze(0).cpu(),
+            Y=torch.Tensor([acc[0]]).unsqueeze(0).cpu(),
             env=self.env,
             win=self.accuracy_window,
-            name=name,
+            name=f"train id #{self.n_samples_train_id}" if name == 'train' else f"val id #{self.n_samples_val_id}",
+            update='append')
+        self.viz.line(
+            X=torch.ones((1, 1)).cpu() * epoch,
+            Y=torch.Tensor([acc[1]]).unsqueeze(0).cpu(),
+            env=self.env,
+            win=self.accuracy_window,
+            name=f"train others #{self.n_samples_train_others}" if name == 'train' else f"val others #{self.n_samples_val_others}",
             update='append')
 
-        if split_name == 'val':
-            if (loss_inactive > 0 or loss_inactive==-1):
-                self.viz.line(
-                    X=torch.ones((1, 1)).cpu() * epoch,
-                    Y=torch.Tensor([loss_inactive]).unsqueeze(0).cpu(),
-                    env=self.env,
-                    win=self.loss_window,
-                    name='inactive',
-                    update='append')
-
-                self.viz.line(
-                    X=torch.ones((1, 1)).cpu() * epoch,
-                    Y=torch.Tensor([loss_others]).unsqueeze(0).cpu(),
-                    env=self.env,
-                    win=self.loss_window,
-                    name='others',
-                    update='append')
+        # if split_name == 'val':
+        #     if (loss_inactive > 0 or loss_inactive==-1):
+        #         self.viz.line(
+        #             X=torch.ones((1, 1)).cpu() * epoch,
+        #             Y=torch.Tensor([loss_inactive]).unsqueeze(0).cpu(),
+        #             env=self.env,
+        #             win=self.loss_window,
+        #             name='inactive',
+        #             update='append')
+        #
+        #         self.viz.line(
+        #             X=torch.ones((1, 1)).cpu() * epoch,
+        #             Y=torch.Tensor([loss_others]).unsqueeze(0).cpu(),
+        #             env=self.env,
+        #             win=self.loss_window,
+        #             name='others',
+        #             update='append')
 
                 # self.viz.line(
                 #     X=torch.ones((1, 1)).cpu() * epoch,
@@ -169,6 +178,13 @@ class VisdomLinePlotter_ML(object):
                                      env=self.env,
                                      title='MEAN learned weights',
                                      legend=['Mean_fc7_w']))
+        # self.idf1_window = self.viz.line(X=torch.zeros((1,)).cpu(),
+        #                    Y=torch.zeros((1)).cpu(),
+        #                    opts=dict(xlabel='Iteration',
+        #                              ylabel='Score',
+        #                              env=self.env,
+        #                              title=f'IDF1 Score Overall {info[5]}',
+        #                              legend=['idf1_TrainOn']))
 
     def plot(self, epoch, loss, acc, split_name, info=None, LR=-100):
         epoch -= 1
@@ -252,6 +268,25 @@ class VisdomLinePlotter_ML(object):
                                                 name=split_name,
                                                update='append')
             return
+
+        elif 'idf1' in split_name:
+            if not hasattr(self, 'idf1_window'):
+                self.idf1_window = self.viz.line(X=torch.zeros((1,)).cpu(),
+                                                 Y=torch.Tensor([acc]).unsqueeze(0).cpu(),
+                                                 opts=dict(xlabel='Iteration',
+                                                           ylabel='Score',
+                                                           env=self.env,
+                                                           title=f'IDF1 Score Overall',
+                                                           legend=['idf1_TrainOn']))
+
+            self.viz.line(X=torch.ones((1, 1)).cpu() * epoch,
+                          Y=torch.Tensor([acc]).unsqueeze(0).cpu(),
+                          env=self.env,
+                          win=self.idf1_window,
+                          name=split_name,
+                          update='append')
+            return
+
         else:
             name = split_name
         if loss > 0:

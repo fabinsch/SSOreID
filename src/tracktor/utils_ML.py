@@ -5,6 +5,7 @@ import learn2learn as l2l
 from torch.utils.data import Dataset
 import datetime
 from tracktor.visualization import VisdomLinePlotter_ML
+import numpy as np
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -136,25 +137,25 @@ def load_checkpoint(reid, model, opt):
 
 def sample_task(sets, nways, kshots, i_to_dataset, sample, val=False, num_tasks=-1, sample_uniform_DB=False):
     if sample_uniform_DB:
-        # original version
-        if len(sets) > 1:
-            j = random.choice(range(7))  # sample which dataset, 0 MOT, 1,2,3 cuhk, 4,5,6 market to balance IDs
-            if j == 0:
-                i = random.choice(range(6))  # which of the MOT sequence
-            elif j in [1, 2, 3]:
-                i = 6
-            elif j in [4, 5, 6]:
-                i = 7
-        else:
-            i = random.choice(range(len(sets)))  # sample sequence
+        # first version
+        # if len(sets) > 1:
+        #     j = random.choice(range(7))  # sample which dataset, 0 MOT, 1,2,3 cuhk, 4,5,6 market to balance IDs
+        #     if j == 0:
+        #         i = random.choice(range(6))  # which of the MOT sequence
+        #     elif j in [1, 2, 3]:
+        #         i = 6
+        #     elif j in [4, 5, 6]:
+        #         i = 7
+        # else:
+        #     i = random.choice(range(len(sets)))  # sample sequence
 
-        # sample equally probable from mot or market
-        # j = random.choice(range(4))  # sample which dataset, 0 MOT 1 market
-        # if j == 0:
-        #     i = random.choice(range(6))  # which of the MOT sequence
-        # elif j in [1, 2, 3]:
-        #     i = 6
-
+        # change here to 8->9 and 6->7 when working without val seq
+        number_of_sequences = len(i_to_dataset)
+        number_of_mot_sequences = number_of_sequences - 2
+        sequence = list(range(number_of_sequences))
+        #prob = [1 / 3 * 1 / 6] * 6 + [1 / 3] * 2  # equally likely all seq
+        prob = [1 / 7 * 1 / number_of_mot_sequences] * number_of_mot_sequences + [3 / 7] * 2
+        i = int(np.random.choice(sequence, 1, p=prob))
     else:
         i = random.choice(range(len(sets)))  # sample sequence
 
@@ -172,7 +173,7 @@ def sample_task(sets, nways, kshots, i_to_dataset, sample, val=False, num_tasks=
                                    task_transforms=transform,
                                    num_tasks=num_tasks)
     try:
-        batch = taskset.sample() # train
+        batch = taskset.sample()  # train
         return batch, n, k, seq, i
     except ValueError:
         return sample_task(sets, nways, kshots, i_to_dataset, sample, val, num_tasks)
