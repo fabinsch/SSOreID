@@ -47,6 +47,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 @ex.automain
 def main(tracktor, reid, _config, _log, _run):
+    a = None
     sacred.commands.print_config(_run)
     _log.setLevel(tracktor['loggerLevel']) # 5 is personal debug, 10 is debug, 20 info
     # set all seeds
@@ -54,7 +55,7 @@ def main(tracktor, reid, _config, _log, _run):
     torch.cuda.manual_seed(tracktor['seed'])
     np.random.seed(tracktor['seed'])
     torch.backends.cudnn.deterministic = True
-    random.seed=(tracktor['seed'])
+    random.seed(tracktor['seed'])
 
     output_dir = osp.join(get_output_dir(tracktor['module_name']), tracktor['name'], tracktor['output_subdir'])
     sacred_config = osp.join(output_dir, 'sacred_config.yaml')
@@ -74,10 +75,10 @@ def main(tracktor, reid, _config, _log, _run):
         h = pos[3] - pos[1]
         return w*h
 
-    db_others=None
-    db_others_loaded=None
-    load_others=tracktor['tracker']['finetuning']['load_others']
-    fill_up=tracktor['tracker']['finetuning']['fill_up']
+    db_others = None
+    db_others_loaded = None
+    load_others = tracktor['tracker']['finetuning']['load_others']
+    fill_up = tracktor['tracker']['finetuning']['fill_up']
     if load_others:# or fill_up:
         # load db for others, without area and frame
         start_time_load = time.time()
@@ -193,7 +194,9 @@ def main(tracktor, reid, _config, _log, _run):
         if 'oracle' in tracktor:
             tracker = OracleTracker(obj_detect, reid_network, tracktor['tracker'], tracktor['oracle'])
         else:
-            tracker = Tracker(obj_detect, reid_network, tracktor['tracker'], seq._dets+'_'+seq._seq_name, a, tracktor['reid_ML'], tracktor['LR_ML'], db=db_others_loaded)
+            tracker = Tracker(obj_detect, reid_network, tracktor['tracker'], seq._dets+'_'+seq._seq_name, a,
+                              tracktor['reid_ML'], tracktor['LR_ML'], weightening=tracktor['tracker']['finetuning']['weightening'],
+                              train_others=tracktor['tracker']['finetuning']['train_others'], db=db_others_loaded)
 
         start = time.time()
 
@@ -204,6 +207,8 @@ def main(tracktor, reid, _config, _log, _run):
             if i>=0 and len(seq) * tracktor['frame_split'][0] <= i <= len(seq) * tracktor['frame_split'][1]:
                 tracker.step(frame, i)
                 num_frames += 1
+
+
 
         results = tracker.get_results()
 
@@ -233,10 +238,10 @@ def main(tracktor, reid, _config, _log, _run):
         _log.info(f"nWays {tracker.count_nways}")
         _log.info(f"kShots {tracker.count_kshots}")
         _log.info(f"TRAIN Acc values after training {tracker.acc_after_train}")
-        _log.info(f"TRAIN Acc avg. {sum(tracker.acc_after_train)/len(tracker.acc_after_train)}")
+        #_log.info(f"TRAIN Acc avg. {sum(tracker.acc_after_train)/len(tracker.acc_after_train)}")
         _log.info(f"VAL Acc values after training {tracker.acc_val_after_train}")
-        if len(tracker.acc_val_after_train)>0:
-            _log.info(f"VAL Acc avg. {sum(tracker.acc_val_after_train)/len(tracker.acc_val_after_train)}")
+        #if len(tracker.acc_val_after_train)>0:
+        #    _log.info(f"VAL Acc avg. {sum(tracker.acc_val_after_train)/len(tracker.acc_val_after_train)}")
         _log.info(f"Currently always calculates scores for train samples - DEACTIVATE l. 1205")
 
         with open(seq._seq_name + '_count_nWays'+ '.pkl', 'wb') as f:
@@ -285,3 +290,4 @@ def main(tracktor, reid, _config, _log, _run):
                                                                                             'learning_rate'],
                                                                                         tracktor['tracker']['finetuning'][
                                                                                             'epochs']))
+

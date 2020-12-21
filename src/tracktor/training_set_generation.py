@@ -33,7 +33,6 @@ def apply_random_factors(gt_pos, random_factors):
     return training_boxes_xywh
 
 def replicate_and_randomize_boxes(gt_pos, batch_size, max_displacement=0.2, seed=1000):
-    torch.manual_seed(seed)
     width = abs(gt_pos[0,0]-gt_pos[0,2])
     height = abs(gt_pos[0,1]-gt_pos[0,3])
     #smallest_edge = min(abs(gt_pos[0,0]-gt_pos[0,2]), abs(gt_pos[0,1]-gt_pos[0,3]))

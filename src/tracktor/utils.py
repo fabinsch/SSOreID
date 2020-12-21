@@ -797,7 +797,7 @@ def reid_by_finetuned_model_oracle(self, new_det_pos, new_det_scores, frame, blo
                 fill = self.fill_up_to-len(inactive_tracks)
                 iou = torch.cat((torch.ones(iou.shape[0], fill).to(device), iou), dim=1)
 
-        if len(self.flexible)>0:
+        if len(self.flexible) > 0:
             fill = self.flexible[0]
             iou = torch.cat((torch.ones(iou.shape[0], fill).to(device), iou), dim=1)
 
@@ -833,7 +833,7 @@ def reid_by_finetuned_model_oracle(self, new_det_pos, new_det_scores, frame, blo
             for i, d in enumerate(dist):
                 if (max[i] > self.finetuning_config['reid_score_threshold']):
                     #if False: # TODO
-                    if self.finetuning_config['others_class'] or (len(inactive_tracks)==1 and not self.finetuning_config['fill_up'] and not self.finetuning_config['flexible']):
+                    if self.finetuning_config['others_class'] or (len(inactive_tracks) == 1 and not self.finetuning_config['fill_up'] and not self.finetuning_config['flexible']):
                         # idx = 0 means unknown background people, idx=1,2,.. is inactive
                         if max_idx[i] == 0:
                             logger.debug('no reid because class 0 has score {}'.format(max[i]))
