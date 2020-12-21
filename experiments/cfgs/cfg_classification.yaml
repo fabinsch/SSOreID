@@ -1,6 +1,6 @@
 tracktor:
-  'loggerLevel': 10
-  'dataset': mot17_02_FRCNN17
+  'loggerLevel': 15
+  'dataset': mot17_14_DPM17
   'write_images': False
   'reid_ML': True
   'LR_ML': True
@@ -10,17 +10,17 @@ tracktor:
   #'reid_weights': output/tracktor/ml_classification/3DB_val_09/best_reID_Network.pth
   #'reid_weights': output/tracktor/ml_classification/LR_per_Parameter_09_clamp_OLDSamp_init1e-4/best_reID_Network.pth
   #'reid_weights': output/tracktor/ml_classification/LR_per_Parameter_clamp_2/best_reID_Network.pth
-  'reid_weights': output/tracktor/ml_classification/LR_per_Parameter_02_other_val_splitGPU/best_reID_Network.pth
+  'reid_weights': output/tracktor/ml_classification/LrPP_NoVal_trainAll3_ClassRatio_TrainOthersML/20000_reID_Network.pth
   'tracker':
     'inactive_patience': 50
     'reid_iou_threshold': 0.2
     'finetuning':
       'epochs': 500
       'epochs_wo_val': 10
-      'learning_rate': 1e-4
+      'learning_rate': 1e-2
       'validate': False
       'others_class': True
-      'train_others': False
+      'train_others': True
       'upsampling': False
       'weightedLoss': True
       'load_others': False
@@ -39,5 +39,7 @@ tracktor:
       'plot_offline': False
       'init_last': True
       'init_last_same': True
-      'reid_score_threshold': 0.5
-  'output_subdir': '10_01_test_fillup09_2'
+      'reid_score_threshold': 0.75
+      'weightening': 0  # 0 1/samples, 1 1/number classes * 1/samples
+      'data_augmentation': 0
+  'output_subdir': '11_12_test_final_run'

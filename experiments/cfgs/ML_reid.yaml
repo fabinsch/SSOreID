@@ -1,25 +1,11 @@
-tracktor:
-  # fpn
-  obj_detect_model: output/faster_rcnn_fpn_training_mot_17/model_epoch_27.model
 reid:
-  name: 10_16_test
+  name: train_task04_val13_LR1e-5_noInner
   module_name: ml_classification
   desription:
   seed: 12345
-  # smth like MOT_train, KITTI_train_Pedestrian
-  #db_train: motML_train
-  #db_train: marcuhmot_ML_train
-  #db_train: db_train_marchumot_ML_pad_filtered6
+
   db_train: db_train_marchumot_ML_pad_filtered6
   db_val: False
-
-  model_args:
-    # Recommended for loss: batch_all, batch_hard
-    # Unstable, no guarantee they are working: weighted_triplet, cross_entropy
-    loss: batch_hard
-    margin: 0.2
-    # Plot prec at k to tensorboard, 0 for off
-    prec_at_k: 3
 
   ML:
     #nways: [2,3,4,5,6,7,8,9,10,15,20]
@@ -31,11 +17,12 @@ reid:
     num_tasks: -1
     num_tasks_val: -1
     adaptation_steps: 10
-    meta_batch_size: 10
+    meta_batch_size: 1
     # sample tasks from all train sequences or just 1
     sample_from_all: True
     #db: 'db_train_2'
-    db: 'db_train_marchumot_ML_2'
+    #db: 'db_train_marchumot_ML_2'
+    db: 'db_train_mot_db_debug_3DB'
     #db: 'db_train_marchumot_ML'
     #db: db_train_marchumot_ML_pad_filtered6
     db_sample_uniform: True
@@ -46,21 +33,20 @@ reid:
     init_last: True
     # -1 takes all
     num_others: -1
+    train_others: False
     market_others: False
+    weightening: 0 # 0 class ratio, 1 class ratio + samples / ID, 2 samples / ID, 3 no weights
 
   solver:
-    optim: Adam
-    optim_args:
-      lr: 0.0003
-      weight_decay: 0.0000
-    iterations: 2000
+
+    iterations: 1500
     plot_training_curves: True
     plot_inner_loop: False
     plot_offline: False
     continue_training: False
     checkpoint: output/tracktor/ml_classification/test_load/0_reID_Network.pth
     LR_init: 1e-4
-    LR_LR: 5e-4
+    LR_LR: 1e-4
 
 
   dataloader:
@@ -85,8 +71,129 @@ reid:
       - 0.224
       - 0.225
     build_dataset: False
-    validation_sequence: MOT17-02
-    #validation_sequence: None
+    #validation_sequence: MOT17-04
+    validation_sequence: None
 
-  cnn:
-    output_dim: 128
+tracktor:
+  name: Tracktor++
+  # Subfolder name in output/tracker/
+  module_name: MOT17
+  desription:
+  seed: 12345
+  # frcnn or fpn
+  network: fpn
+  output_subdir: '1'
+  loggerLevel: 20
+
+  # fpn
+  obj_detect_model: output/faster_rcnn_fpn_training_mot_17/model_epoch_27.model
+
+
+  #reid_weights: output/tracktor/reid/res50-mot17-batch_hard/ResNet_iter_25245.pth
+  reid_ML: True
+  LR_ML: True
+  reid_weights: output/tracktor/ml_classification/2_fulldb/reID_Network.pth
+  reid_config: output/tracktor/reid/res50-mot17-batch_hard/sacred_config.yaml
+
+  interpolate: False
+  # compile video with: `ffmpeg -f image2 -framerate 15 -i %06d.jpg -vcodec libx264 -y movie.mp4 -vf scale=320:-1`
+  write_images: False
+  # dataset (look into tracker/datasets/factory.py)
+  #dataset: mot17_train_FRCNN17
+  dataset: mot17_02_FRCNN17
+  # [start percentage, end percentage], e.g., [0.0, 0.5] for train and [0.75, 1.0] for val split.
+  frame_split: [0.0, 1.0]
+  tracker:
+    # FRCNN score threshold for detections
+    detection_person_thresh: 0.5
+    # FRCNN score threshold for keeping the track alive
+    regression_person_thresh: 0.5
+    # NMS threshold for detection
+    detection_nms_thresh: 0.3
+    # NMS theshold while tracking
+    regression_nms_thresh: 0.6
+    # motion model settings
+    motion_model:
+      enabled: True
+      # average velocity over last n_steps steps
+      n_steps: 5
+      # if true, only model the movement of the bounding box center. If false, width and height are also modeled.
+      center_only: False
+    # DPM or DPM_RAW or 0, raw includes the unfiltered (no nms) versions of the provided detections,
+    # 0 tells the tracker to use private detections (Faster R-CNN)
+    public_detections: True
+    # How much last appearance features are to keep
+    max_features_num: 10
+    # Do camera motion compensation
+    do_align: True
+    # Which warp mode to use (cv2.MOTION_EUCLIDEAN, cv2.MOTION_AFFINE, ...)
+    warp_mode: cv2.MOTION_EUCLIDEAN
+    # maximal number of iterations (original 50)
+    number_of_iterations: 100
+    # Threshold increment between two iterations (original 0.001)
+    termination_eps: 0.00001
+    # Use siamese network to do reid
+    #do_reid: True
+    reid_siamese: False
+    # How much timesteps dead tracks are kept and cosidered for reid
+    inactive_patience: 50
+    # How similar do image and old track need to be to be considered the same person
+    reid_sim_threshold: 2.0
+    # How much IoU do track and image need to be considered for matching
+    reid_iou_threshold: 0.0
+    # Train finetuned bounding box predictor for each track
+    finetuning:
+      # either adam or sgd
+      optimizer: sgd
+      keep_frames: 40
+      for_tracking: False
+      for_reid: True
+      feature_collection_interval: 1
+      # Number of epochs model is tuned
+      epochs: 500
+      epochs_wo_val: 10
+      # Learning rate for the finetuning
+      learning_rate: 1e-3
+      # number of rois generated per batch for training
+      batch_size: 0
+      # number of pixels each bounding box is shifted randomly at max in x y w h direction
+      max_displacement: 0.01
+      # Finetune not only at the beginning of each track but repeatedly over the next frames
+      finetune_repeatedly: False
+      # Finetune on every t mod k frames
+      finetuning_interval: 4
+      build_up_training_set: True
+      # Scheduler
+      gamma: 1
+      #decay_every: 4
+      # Have a validation set randomly generated
+      validate: False
+      others_class: True
+      train_others: False
+      weightedLoss: True
+      load_others: False
+      samples_per_ID: 20
+      # how many samples per person should be included in val set [in %]
+      val_split: 0.2
+      early_stopping_classifier: False
+      early_stopping_method: 2
+      early_stopping_patience: 30
+      plot_training_curves: True
+      reset_dataset: True
+      reset_head: True
+      save_fm: 1
+      reid_score_threshold: 0.9
+      train_iou_threshold: 2.5
+      val_set_random: False
+      val_set_random_from_middle: False
+      data_augmentation: 0
+      # how many different IDs should be considered for others class (0 = all possible)
+      ids_in_others: 0
+      flip_p: 0.5
+      plot_offline: True
+      fill_up_to: 10
+      fill_up: False
+      flexible: False
+      init_last: True
+      upsampling: False
+

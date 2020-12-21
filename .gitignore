@@ -35,3 +35,6 @@ training_set/*
 
 log/*
 *.pt
+*.pkl
+*.txt
+*.png

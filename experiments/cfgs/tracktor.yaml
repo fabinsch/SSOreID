@@ -85,7 +85,7 @@ tracktor:
       # number of rois generated per batch for training
       batch_size: 0
       # number of pixels each bounding box is shifted randomly at max in x y w h direction
-      max_displacement: 0.01
+      max_displacement: 0.1
       # Finetune not only at the beginning of each track but repeatedly over the next frames
       finetune_repeatedly: False
       # Finetune on every t mod k frames
@@ -124,3 +124,4 @@ tracktor:
       ids_in_others: 0
       flip_p: 0.0
       plot_offline: False
+      init_last: True
