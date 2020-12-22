@@ -4,7 +4,7 @@ import h5py
 import learn2learn as l2l
 from torch.utils.data import Dataset
 import datetime
-from tracktor.visualization import VisdomLinePlotter_ML
+from ml.visualization import VisdomLinePlotter_ML
 import numpy as np
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -107,8 +107,9 @@ def get_ML_settings(reid):
     num_tasks_val = reid['ML']['num_tasks_val']
     adaptation_steps = reid['ML']['adaptation_steps']
     meta_batch_size = reid['ML']['meta_batch_size']
+    lr = float(reid['solver']['LR_init'])
 
-    return nways_list, kshots_list, num_tasks, num_tasks_val, adaptation_steps, meta_batch_size
+    return nways_list, kshots_list, num_tasks, num_tasks_val, adaptation_steps, meta_batch_size, lr
 
 def get_plotter(reid, info):
     plotter = None
@@ -207,39 +208,3 @@ class ML_dataset(Dataset):
 
     def __len__(self):
         return len(self.id)
-
-
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-    def __init__(self, name, fmt=':f'):
-        self.name = name
-        self.fmt = fmt
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-        self.best = 1000
-        self.best_it = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-
-    def update_best(self, val, it):
-        save = 0
-        if val < self.best:
-            self.best = val
-            self.best_it = it
-            save = 1
-        return save
-
-
-    def __str__(self):
-        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
-        return fmtstr.format(**self.__dict__)
