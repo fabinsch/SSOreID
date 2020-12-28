@@ -1,23 +1,8 @@
-from sacred import Experiment
-import sacred
-import os.path as osp
-import os
 import numpy as np
-import yaml
-import time
-import functools, operator
-
 import torch
 import torch.nn
-from torch.autograd import grad
 from torch.nn import functional as F
-
-from tracktor.config import get_output_dir, get_tb_dir
 import random
-from ml.utils import load_dataset, get_ML_settings, get_plotter, save_checkpoint, sample_task
-
-import learn2learn as l2l
-from learn2learn.utils import clone_module, clone_parameters
 from collections import Counter
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -27,10 +12,9 @@ class reID_Model(torch.nn.Module):
         super(reID_Model, self).__init__()
         self.head = head
         for n in n_list:
-            n += 1 # using others neuron
+            n += 1  # using others neuron
             self.add_module(f"last_{n}", torch.nn.Linear(1024, n).to(device))
 
-        # deactive to try without templates
         if lr > 0:
             lrs = [torch.ones_like(p) * lr for p in self.parameters()]
             lrs = [torch.normal(mean=lr, std=1e-4) for lr in lrs]
@@ -67,9 +51,7 @@ class reID_Model(torch.nn.Module):
         return r
 
     def forward_pass_for_classifier_training(self, learner, features, labels, nways, return_scores=False, weights=[]):
-        # occ = torch.sqrt(occ)
-        # occ = torch.ones(nways + 1).to(device)
-        # num_others = len(features[1])
+
         if type(features) is tuple:  # if val set includes others
             # first task, than others own seq
             tasks_others_own = torch.cat((features[0], features[1]))
@@ -86,20 +68,7 @@ class reID_Model(torch.nn.Module):
 
         if return_scores:
             pred_scores = F.softmax(class_logits, -1)
-            # w = torch.ones(int(torch.max(labels).item()) + 1).to(device)
-            # occ = torch.ones(nways + 1).to(device)
-            # w = w * (1 / occ)
-            # do not train on others, just eval
-            # if occ[0] < 0:
-            #    w[0] = 0
 
-            # print(f"occ : {occ}")
-            # print(f"weights : {w}")
-            # print(f"weight before norm {w}")
-            # exit()
-            # w /= w.sum()
-            # print(f"weight after norm {w}")
-            # loss = F.cross_entropy(class_logits, labels.long(), weight=w)
             if len(weights) < 1:
                 loss = F.cross_entropy(class_logits, labels.long())
             elif len(weights) == (nways + 1):  # class ratio
@@ -107,24 +76,8 @@ class reID_Model(torch.nn.Module):
             else:
                 loss = F.cross_entropy(class_logits, labels.long(), reduction='none')
                 loss = (loss * weights / weights.sum()).sum()  # needs to be sum at the end not mean!
-            # loss = (loss * weights).mean()
 
-            # loss2 = F.cross_entropy(class_logits[:15], labels[:15].long())  # just samples for task
-            # loss3 = F.cross_entropy(class_logits[15:], labels[15:].long())  # just samples for class 0
-
-            # loss_individual_zero = F.cross_entropy(class_logits[30].unsqueeze(0), labels[30].unsqueeze(0).long())
-            # loss_individual_task = F.cross_entropy(class_logits[10].unsqueeze(0), labels[10].unsqueeze(0).long())
-            # loss4 = F.cross_entropy(class_logits, labels.long())
-            # print(loss3.item())
-            # print(loss2.item())
-            # print(loss.item())
-            # print(loss==loss2)
             return pred_scores.detach(), loss
-
-    def accuracy_noOthers(self, predictions, targets):
-        predictions = predictions.argmax(dim=1).view(targets.shape)
-        valid_accuracy_without_zero = (predictions == targets).sum().float() / targets.size(0)
-        return (valid_accuracy_without_zero, torch.zeros(1), torch.zeros(1), torch.zeros(1))
 
     def accuracy(self, predictions, targets, iter=-1, train=False, seq=-1, num_others_own=-1):
         # in target there are first the labels of the tasks (1, N) N*K*2 times, afterwards the labels of others own (0)
@@ -159,45 +112,6 @@ class reID_Model(torch.nn.Module):
 
         return (
         valid_accuracy_without_zero, valid_accuracy_with_zero, valid_accuracy_just_zero, valid_accuracy_others_own)
-
-    def fast_adapt_noOthers(self, batch, learner, adaptation_steps, shots, ways, train_task=True,
-                            plotter=None, iteration=-1, task=-1, taskID=-1, reid=None, seq=-1):
-
-        flip_p = reid['ML']['flip_p']
-
-        data, labels = batch
-        data, labels = data, labels.to(device)
-        n = 1  # consider flip in indices
-        if flip_p > 0.0:
-            n = 2
-            # do all flipping here, put flips at the end
-            data = torch.cat((data, data.flip(-1)))
-            labels = labels.repeat(2)
-
-        # Separate data into adaptation/evaluation sets
-        train_indices = np.zeros(data.size(0), dtype=bool)
-        train_indices[np.arange(shots * ways * n) * 2] = True  # true false true false ...
-        val_indices = torch.from_numpy(~train_indices)
-        train_indices = torch.from_numpy(train_indices)
-
-        train_data, train_labels = data[train_indices], labels[train_indices]
-        val_data, val_labels = data[val_indices], labels[val_indices]
-
-        # init last layer with the template weights
-        learner.init_last(ways)
-        train_accuracies = []
-        for step in range(adaptation_steps):
-            train_predictions, train_loss = forward_pass_for_classifier_training(learner, train_data, train_labels,
-                                                                                 ways, return_scores=True)
-            train_accuracy = accuracy_noOthers(train_predictions, train_labels)
-            train_accuracies.append(train_accuracy)
-            learner.adapt(train_loss)  # Takes a gradient step on the loss and updates the cloned parameters in place
-
-        predictions, validation_loss = forward_pass_for_classifier_training(learner, val_data, val_labels, ways,
-                                                                            return_scores=True)
-        valid_accuracy = accuracy_noOthers(predictions, val_labels)
-
-        return validation_loss, valid_accuracy, train_accuracies
 
     def fast_adapt(self, batch, learner, adaptation_steps, shots, ways, train_task=True,
                    plotter=None, iteration=-1, task=-1, taskID=-1, reid=None,

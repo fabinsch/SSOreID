@@ -14,7 +14,7 @@ from tracktor.config import get_output_dir, get_tb_dir
 import random
 from ml.reid_model import reID_Model
 from ml.maml import MAML
-from ml.meta_sgd import MetaSGD, MetaSGD_noOthers, MetaSGD_noTemplate, meta_sgd_update
+from ml.meta_sgd import MetaSGD
 from ml.utils import load_dataset, get_ML_settings, get_plotter, save_checkpoint, sample_task
 
 from tracktor.frcnn_fpn import FRCNN_FPN
@@ -33,18 +33,11 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 def my_main(tracktor, reid, _config, _log, _run):
     print('both just 10 percent val and train set others own')
     print('NOT SAVING ANY MODEL')
-    #print('NO OTHERS neuron, change in reid model init und forward pass, remove last beim speichern')
-    #print('no val set others, occ -1')
 
     idf1_trainOthers = []
     idf1_NotrainOthers = []
 
     sacred.commands.print_config(_run)
-
-    # statistics over sampled tasks
-    sampled_val = {}
-    sampled_train = {}
-    sampled_ids_train = {}
 
     # set all seeds
     torch.manual_seed(reid['seed'])
@@ -104,31 +97,6 @@ def my_main(tracktor, reid, _config, _log, _run):
             {'params': model.lrs, 'lr': lr_lr},  # the template + others LR
             {'params': model.module.lrs[:4], 'lr': lr_lr}  # LRs for the head
         ], lr=lr)
-
-        # no other neuron
-        # predictor = torch.nn.Linear(in_features=1024, out_features=1).to(device)
-        # model = MetaSGD_noOthers(reID_network, lr=1e-3, first_order=True, allow_nograd=True, global_LR=reid['ML']['global_LR'],
-        #                 template_neuron_b=torch.nn.Parameter(predictor.bias[0].unsqueeze(0)),
-        #                 template_neuron_w=torch.nn.Parameter(predictor.weight[0, :].unsqueeze(0)))
-        #
-        # lr_lr = float(reid['solver']['LR_LR'])
-        # opt = torch.optim.Adam([
-        #     {'params': model.module.head.parameters()},
-        #     {'params': model.template_neuron_bias},
-        #     {'params': model.template_neuron_weight},
-        #     {'params': model.lrs, 'lr': lr_lr},  # the template + others LR
-        #     {'params': model.module.lrs[:4], 'lr': lr_lr}  # LRs for the head
-        # ], lr=lr)
-
-        # no template neuron
-        # model = MetaSGD_noTemplate(reID_network, lr=1e-3, first_order=True, allow_nograd=True,
-        #                            global_LR=reid['ML']['global_LR'])
-        # lr_lr = float(reid['solver']['LR_LR'])
-        # opt = torch.optim.Adam([
-        #     {'params': model.module.parameters()},
-        #     {'params': model.lrs, 'lr': lr_lr},
-        # ], lr=lr)
-
 
     ##################
     # Begin training #
@@ -202,14 +170,6 @@ def my_main(tracktor, reid, _config, _log, _run):
                 if label not in used_labels]
             others_own_idx = functools.reduce(operator.iconcat, others_own_idx, [])
 
-            # if sequence not in sampled_train.keys():
-            #     sampled_train[sequence] = {}
-            #
-            # if (nways, kshots) not in sampled_train[sequence].keys():
-            #     sampled_train[sequence][(nways, kshots)] = 1
-            # else:
-            #     sampled_train[sequence][(nways, kshots)] += 1
-            start_time = time.time()
 
             evaluation_loss, evaluation_accuracy = reID_network.fast_adapt(batch=batch,
                                                                                 learner=learner,
@@ -227,19 +187,6 @@ def my_main(tracktor, reid, _config, _log, _run):
                                                                                 seq=sequence,
                                                                                 train_others=reid['ML']['train_others'],
                                                                                 set=meta_datasets[sequence_idx])
-
-            # evaluation_loss, evaluation_accuracy, train_accuracies = fast_adapt_noOthers(batch=batch,
-            #                                                                     learner=learner,
-            #                                                                     adaptation_steps=adaptation_steps,
-            #                                                                     shots=kshots,
-            #                                                                     ways=nways,
-            #                                                                     train_task=True,
-            #                                                                     plotter=plotter,
-            #                                                                     iteration=iteration,
-            #                                                                     task=task,
-            #                                                                     taskID=taskID,
-            #                                                                     reid=reid,
-            #                                                                     seq=sequence)
 
             evaluation_loss.backward()  # compute gradients, populate grad buffers of maml
             plotter.update_batch_train_stats(evaluation_accuracy, evaluation_loss)
@@ -296,10 +243,7 @@ def my_main(tracktor, reid, _config, _log, _run):
                 'optimizer': None,
             }, filename=model_name)
 
-        # if iteration % 5000 == 0:
-        #     print('sampled tasks from train {}'.format(sampled_train))
-        #     print('sampled tasks from val {}'.format(sampled_val))
-            #print('\n check sampled IDs per dataset {}'.format(sampled_ids_train))
+
 
 
         # evaluate tracktor to see performance when using meta-learned model
@@ -307,8 +251,6 @@ def my_main(tracktor, reid, _config, _log, _run):
         #evaluate_tracktor = [20000]
         #if iteration in evaluate_tracktor:
         if iteration % 5000 == 0:
-        #if iteration % 2500 == 0:
-        #if iteration % 1 == 0:
             if reid['ML']['train_others']:
                 trainOthers_tracktor = [True]
             else:
