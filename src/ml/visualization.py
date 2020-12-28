@@ -206,8 +206,6 @@ class VisdomLinePlotter_ML(object):
         self.LR_fc6_b = AverageMeter('Acc', ':6.2f')
         self.LR_last_w = AverageMeter('Acc', ':6.2f')
         self.LR_last_b = AverageMeter('Acc', ':6.2f')
-        self.LR_others_w = AverageMeter('Acc', ':6.2f')
-        self.LR_others_b = AverageMeter('Acc', ':6.2f')
         self.LR_template_w = AverageMeter('Acc', ':6.2f')
         self.LR_template_b = AverageMeter('Acc', ':6.2f')
 
@@ -216,8 +214,6 @@ class VisdomLinePlotter_ML(object):
         self.Mean_fc7_b = AverageMeter('Acc', ':6.2f')
         self.Mean_fc6_w = AverageMeter('Acc', ':6.2f')
         self.Mean_fc6_b = AverageMeter('Acc', ':6.2f')
-        self.Mean_others_w = AverageMeter('Acc', ':6.2f')
-        self.Mean_others_b = AverageMeter('Acc', ':6.2f')
         self.Mean_template_w = AverageMeter('Acc', ':6.2f')
         self.Mean_template_b = AverageMeter('Acc', ':6.2f')
 
@@ -228,20 +224,14 @@ class VisdomLinePlotter_ML(object):
         self.LR_fc7_b.update(model.module.lrs[1].mean().item())
         self.LR_fc6_w.update(model.module.lrs[2].mean().item())
         self.LR_fc6_b.update(model.module.lrs[3].mean().item())
-        self.LR_others_w.update(model.lrs[0].mean().item())  # others neuron
-        self.LR_others_b.update(model.lrs[1].mean().item())  # others neuron
-        self.LR_template_w.update(model.lrs[2].mean().item())  # template neuron
-        self.LR_template_b.update(model.lrs[3].mean().item())  # template neuron
-        # LR_template_w.update(model.lrs[0].mean().item())  # template neuron
-        # LR_template_b.update(model.lrs[1].mean().item())  # template neuron
+        self.LR_template_w.update(model.lrs[0].mean().item())  # template neuron
+        self.LR_template_b.update(model.lrs[1].mean().item())  # template neuron
 
         # weights
         self.Mean_fc7_w.update(model.module.head.fc7.weight.mean())
         self.Mean_fc7_b.update(model.module.head.fc7.bias.mean())
         self.Mean_fc6_w.update(model.module.head.fc6.weight.mean())
         self.Mean_fc6_b.update(model.module.head.fc6.bias.mean())
-        self.Mean_others_w.update(model.others_neuron_weight.mean())
-        self.Mean_others_b.update(model.others_neuron_bias.mean())
         self.Mean_template_w.update(model.template_neuron_weight.mean())
         self.Mean_template_b.update(model.template_neuron_bias.mean())
 
@@ -370,8 +360,6 @@ class VisdomLinePlotter_ML(object):
         self.plot(epoch=iteration, loss=-1, acc=self.LR_fc7_b.val, split_name='LR_fc7_b')
         self.plot(epoch=iteration, loss=-1, acc=self.LR_fc6_w.val, split_name='LR_fc6_w')
         self.plot(epoch=iteration, loss=-1, acc=self.LR_fc6_b.val, split_name='LR_fc6_b')
-        self.plot(epoch=iteration, loss=-1, acc=self.LR_others_w.val, split_name='LR_others_w')
-        self.plot(epoch=iteration, loss=-1, acc=self.LR_others_b.val, split_name='LR_others_b')
         self.plot(epoch=iteration, loss=-1, acc=self.LR_template_w.val, split_name='LR_template_w')
         self.plot(epoch=iteration, loss=-1, acc=self.LR_template_b.val, split_name='LR_template_b')
 
@@ -379,8 +367,6 @@ class VisdomLinePlotter_ML(object):
         self.plot(epoch=iteration, loss=-1, acc=self.Mean_fc7_b.val, split_name='Mean_fc7_b')
         self.plot(epoch=iteration, loss=-1, acc=self.Mean_fc6_w.val, split_name='Mean_fc6_w')
         self.plot(epoch=iteration, loss=-1, acc=self.Mean_fc6_b.val, split_name='Mean_fc6_b')
-        self.plot(epoch=iteration, loss=-1, acc=self.Mean_others_w.val, split_name='Mean_others_w')
-        self.plot(epoch=iteration, loss=-1, acc=self.Mean_others_b.val, split_name='Mean_others_b')
         self.plot(epoch=iteration, loss=-1, acc=self.Mean_template_w.val, split_name='Mean_template_w')
         self.plot(epoch=iteration, loss=-1, acc=self.Mean_template_b.val, split_name='Mean_template_b')
 

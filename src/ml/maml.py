@@ -1,24 +1,7 @@
-from sacred import Experiment
-import sacred
-import os.path as osp
-import os
-import numpy as np
-import yaml
-import time
-import functools, operator
-
 import torch
 import torch.nn
-from torch.autograd import grad
-from torch.nn import functional as F
-
-from tracktor.config import get_output_dir, get_tb_dir
-import random
-from ml.utils import load_dataset, get_ML_settings, get_plotter, save_checkpoint, sample_task
-
 import learn2learn as l2l
-from learn2learn.utils import clone_module, clone_parameters
-from collections import Counter
+from learn2learn.utils import clone_module
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 

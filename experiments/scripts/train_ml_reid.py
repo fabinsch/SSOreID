@@ -5,7 +5,6 @@ import os
 import numpy as np
 import yaml
 import time
-import functools, operator
 
 import torch
 import torch.nn
@@ -14,7 +13,7 @@ from tracktor.config import get_output_dir, get_tb_dir
 import random
 from ml.reid_model import reID_Model
 from ml.maml import MAML
-from ml.meta_sgd import MetaSGD, MetaSGD_noOthers, MetaSGD_noTemplate, meta_sgd_update
+from ml.meta_sgd import MetaSGD
 from ml.utils import load_dataset, get_ML_settings, get_plotter, save_checkpoint, sample_task
 
 from tracktor.frcnn_fpn import FRCNN_FPN
@@ -31,20 +30,12 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 @ex.automain
 def my_main(tracktor, reid, _config, _log, _run):
-    print('both just 10 percent val and train set others own')
     print('NOT SAVING ANY MODEL')
-    #print('NO OTHERS neuron, change in reid model init und forward pass, remove last beim speichern')
-    #print('no val set others, occ -1')
 
     idf1_trainOthers = []
     idf1_NotrainOthers = []
 
     sacred.commands.print_config(_run)
-
-    # statistics over sampled tasks
-    sampled_val = {}
-    sampled_train = {}
-    sampled_ids_train = {}
 
     # set all seeds
     torch.manual_seed(reid['seed'])
@@ -66,7 +57,7 @@ def my_main(tracktor, reid, _config, _log, _run):
     # Initialize dataloader #
     #########################
     print("[*] Initializing Dataloader")
-    meta_datasets, validation_set, i_to_dataset, others_FM = load_dataset(reid, exclude=['cuhk03', 'market1501'], only='MOT17-13')
+    meta_datasets, validation_set, i_to_dataset, others_FM = load_dataset(reid)  #, exclude=['cuhk03', 'market1501'], only='MOT17-13')
     nways_list, kshots_list, num_tasks, num_tasks_val, adaptation_steps, meta_batch_size, lr = get_ML_settings(reid)
 
     ##########################
@@ -88,46 +79,20 @@ def my_main(tracktor, reid, _config, _log, _run):
             {'params': model.module.predictor.parameters()}
         ], lr=lr)
     if reid['ML']['learn_LR']:
-        predictor = torch.nn.Linear(in_features=1024, out_features=2).to(device)
+        # no others neuron
+        predictor = torch.nn.Linear(in_features=1024, out_features=1).to(device)
         model = MetaSGD(reID_network, lr=1e-3, first_order=True, allow_nograd=True, global_LR=reid['ML']['global_LR'],
-                        others_neuron_b=torch.nn.Parameter(predictor.bias[1].unsqueeze(0)),
-                        others_neuron_w=torch.nn.Parameter(predictor.weight[1, :].unsqueeze(0)),
                         template_neuron_b=torch.nn.Parameter(predictor.bias[0].unsqueeze(0)),
                         template_neuron_w=torch.nn.Parameter(predictor.weight[0, :].unsqueeze(0)))
+
         lr_lr = float(reid['solver']['LR_LR'])
         opt = torch.optim.Adam([
             {'params': model.module.head.parameters()},
             {'params': model.template_neuron_bias},
             {'params': model.template_neuron_weight},
-            {'params': model.others_neuron_bias},
-            {'params': model.others_neuron_weight},
             {'params': model.lrs, 'lr': lr_lr},  # the template + others LR
             {'params': model.module.lrs[:4], 'lr': lr_lr}  # LRs for the head
         ], lr=lr)
-
-        # no other neuron
-        # predictor = torch.nn.Linear(in_features=1024, out_features=1).to(device)
-        # model = MetaSGD_noOthers(reID_network, lr=1e-3, first_order=True, allow_nograd=True, global_LR=reid['ML']['global_LR'],
-        #                 template_neuron_b=torch.nn.Parameter(predictor.bias[0].unsqueeze(0)),
-        #                 template_neuron_w=torch.nn.Parameter(predictor.weight[0, :].unsqueeze(0)))
-        #
-        # lr_lr = float(reid['solver']['LR_LR'])
-        # opt = torch.optim.Adam([
-        #     {'params': model.module.head.parameters()},
-        #     {'params': model.template_neuron_bias},
-        #     {'params': model.template_neuron_weight},
-        #     {'params': model.lrs, 'lr': lr_lr},  # the template + others LR
-        #     {'params': model.module.lrs[:4], 'lr': lr_lr}  # LRs for the head
-        # ], lr=lr)
-
-        # no template neuron
-        # model = MetaSGD_noTemplate(reID_network, lr=1e-3, first_order=True, allow_nograd=True,
-        #                            global_LR=reid['ML']['global_LR'])
-        # lr_lr = float(reid['solver']['LR_LR'])
-        # opt = torch.optim.Adam([
-        #     {'params': model.module.parameters()},
-        #     {'params': model.lrs, 'lr': lr_lr},
-        # ], lr=lr)
 
 
     ##################
@@ -166,26 +131,8 @@ def my_main(tracktor, reid, _config, _log, _run):
                                                           num_tasks=num_tasks_val)
 
             batch, used_labels = batch
-            others_own_idx = [
-                idx for l, idx in validation_set[0].labels_to_indices.items()
-                if l not in used_labels]
-            others_own_idx = functools.reduce(operator.iconcat, others_own_idx, [])
-
-            evaluation_loss, evaluation_accuracy = reID_network.fast_adapt(batch=batch,
-                                                                 learner=learner,
-                                                                 adaptation_steps=adaptation_steps,
-                                                                 shots=kshots,
-                                                                 ways=nways,
-                                                                 train_task=False,
-                                                                 plotter=plotter,
-                                                                 iteration=iteration,
-                                                                 task=-1,
-                                                                 taskID=taskID,
-                                                                 reid=reid,
-                                                                 others_own=others_own_idx,
-                                                                 #others=#others_FM,
-                                                                 train_others=reid['ML']['train_others'],
-                                                                 set=validation_set[0])
+            evaluation_loss, evaluation_accuracy = reID_network.fast_adapt(
+                batch=batch, learner=learner, adaptation_steps=adaptation_steps, shots=kshots, ways=nways, reid=reid)
 
             plotter.update_batch_val_stats(evaluation_accuracy, evaluation_loss)
 
@@ -195,51 +142,10 @@ def my_main(tracktor, reid, _config, _log, _run):
             batch, nways, kshots, sequence, taskID = sample_task(meta_datasets, nways_list, kshots_list, i_to_dataset,
                                                                  reid['ML']['sample_from_all'], num_tasks=num_tasks,
                                                                  sample_uniform_DB=sample_db)
-            sequence, sequence_idx = sequence
             batch, used_labels = batch
-            others_own_idx = [
-                idx for label, idx in meta_datasets[sequence_idx].labels_to_indices.items()
-                if label not in used_labels]
-            others_own_idx = functools.reduce(operator.iconcat, others_own_idx, [])
 
-            # if sequence not in sampled_train.keys():
-            #     sampled_train[sequence] = {}
-            #
-            # if (nways, kshots) not in sampled_train[sequence].keys():
-            #     sampled_train[sequence][(nways, kshots)] = 1
-            # else:
-            #     sampled_train[sequence][(nways, kshots)] += 1
-            start_time = time.time()
-
-            evaluation_loss, evaluation_accuracy = reID_network.fast_adapt(batch=batch,
-                                                                                learner=learner,
-                                                                                adaptation_steps=adaptation_steps,
-                                                                                shots=kshots,
-                                                                                ways=nways,
-                                                                                train_task=True,
-                                                                                plotter=plotter,
-                                                                                iteration=iteration,
-                                                                                task=task,
-                                                                                taskID=taskID,
-                                                                                reid=reid,
-                                                                                others_own=others_own_idx,
-                                                                                #others=others_FM[others_seq_ID != sequence_idx],
-                                                                                seq=sequence,
-                                                                                train_others=reid['ML']['train_others'],
-                                                                                set=meta_datasets[sequence_idx])
-
-            # evaluation_loss, evaluation_accuracy, train_accuracies = fast_adapt_noOthers(batch=batch,
-            #                                                                     learner=learner,
-            #                                                                     adaptation_steps=adaptation_steps,
-            #                                                                     shots=kshots,
-            #                                                                     ways=nways,
-            #                                                                     train_task=True,
-            #                                                                     plotter=plotter,
-            #                                                                     iteration=iteration,
-            #                                                                     task=task,
-            #                                                                     taskID=taskID,
-            #                                                                     reid=reid,
-            #                                                                     seq=sequence)
+            evaluation_loss, evaluation_accuracy = reID_network.fast_adapt(
+                batch=batch, learner=learner, adaptation_steps=adaptation_steps, shots=kshots, ways=nways, reid=reid)
 
             evaluation_loss.backward()  # compute gradients, populate grad buffers of maml
             plotter.update_batch_train_stats(evaluation_accuracy, evaluation_loss)
@@ -252,12 +158,12 @@ def my_main(tracktor, reid, _config, _log, _run):
         # else:
         #     safe_best_loss = loss_meta_val.update_best(loss_meta_train.avg, iteration)
 
-        if iteration % 10 == 0:
+        if iteration % 1000 == 0:
             # Print some metrics
             print(f"\nIteration {iteration}")
             plotter.print_statistics()
-            if reid['solver']["plot_training_curves"] and (iteration % 100 == 0 or iteration == 1):
-                plotter.plot_statistics(iteration)
+            #if reid['solver']["plot_training_curves"] and (iteration % 1000 == 0 or iteration == 1):
+             #   plotter.plot_statistics(iteration)
 
         # Average the accumulated gradients
         for p in [p for p in model.parameters() if p.requires_grad]:
@@ -283,10 +189,11 @@ def my_main(tracktor, reid, _config, _log, _run):
         #             model_s = 'best_reID_Network.pth'
         #
         if iteration % 5000 == 0:
+            print('safe')
             model_s = '{}_reID_Network.pth'.format(iteration)
             model_name = osp.join(output_dir, model_s)
 
-            state_dict_to_safe = reID_Model.remove_last(model.state_dict(), model.module.num_output)
+            state_dict_to_safe = reID_network.remove_last(model.state_dict(), model.module.num_output)
             save_checkpoint({
                 'epoch': iteration,
                 'state_dict': state_dict_to_safe,
@@ -318,7 +225,7 @@ def my_main(tracktor, reid, _config, _log, _run):
                 time_total, num_frames = 0, 0
                 mot_accums = []
                 dataset = Datasets(tracktor['dataset'])
-                a = reID_Model.remove_last(model.state_dict(), model.module.num_output)
+                a = reID_network.remove_last(model.state_dict(), model.module.num_output)
                 for seq in dataset:
 
                     obj_detect = FRCNN_FPN(num_classes=2).to(device)
