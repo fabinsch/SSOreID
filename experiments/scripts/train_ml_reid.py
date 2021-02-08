@@ -57,7 +57,7 @@ def my_main(tracktor, reid, _config, _log, _run):
     # Initialize dataloader #
     #########################
     print("[*] Initializing Dataloader")
-    meta_datasets, validation_set, i_to_dataset, others_FM = load_dataset(reid)  #, exclude=['cuhk03', 'market1501'], only='MOT17-13')
+    meta_datasets, validation_set, i_to_dataset, others_FM = load_dataset(reid) #, exclude=['cuhk03', 'market1501'], only='MOT17-13')
     nways_list, kshots_list, num_tasks, num_tasks_val, adaptation_steps, meta_batch_size, lr = get_ML_settings(reid)
 
     ##########################
@@ -158,12 +158,12 @@ def my_main(tracktor, reid, _config, _log, _run):
         # else:
         #     safe_best_loss = loss_meta_val.update_best(loss_meta_train.avg, iteration)
 
-        if iteration % 1000 == 0:
+        if (iteration % 1000 == 0) or (iteration == 1):
             # Print some metrics
             print(f"\nIteration {iteration}")
             plotter.print_statistics()
-            #if reid['solver']["plot_training_curves"] and (iteration % 1000 == 0 or iteration == 1):
-             #   plotter.plot_statistics(iteration)
+            if reid['solver']["plot_training_curves"]:
+               plotter.plot_statistics(iteration)
 
         # Average the accumulated gradients
         for p in [p for p in model.parameters() if p.requires_grad]:
@@ -213,13 +213,11 @@ def my_main(tracktor, reid, _config, _log, _run):
         #evaluate_tracktor = [1, 3000, 5000, 10000, 20000, 30000, 40000, 50000, 60000, 70000]
         #evaluate_tracktor = [20000]
         #if iteration in evaluate_tracktor:
-        if iteration % 5000 == 0:
+        # if iteration % 5000 == 0:
+        if False:
         #if iteration % 2500 == 0:
         #if iteration % 1 == 0:
-            if reid['ML']['train_others']:
-                trainOthers_tracktor = [True]
-            else:
-                trainOthers_tracktor = [True, False]
+            trainOthers_tracktor = [True]
             for train_mode in trainOthers_tracktor:
                 print(f'evaluate tracktor and train others: {train_mode}')
                 time_total, num_frames = 0, 0
@@ -235,7 +233,7 @@ def my_main(tracktor, reid, _config, _log, _run):
 
                     # tracktor
                     tracker = Tracker(obj_detect, None, tracktor['tracker'], seq._dets + '_' + seq._seq_name, a,
-                                      tracktor['reid_ML'], tracktor['LR_ML'], reid['ML']['weightening'],
+                                      tracktor['reid_ML'], tracktor['LR_ML'], 0,
                                       train_mode)
 
                     start = time.time()

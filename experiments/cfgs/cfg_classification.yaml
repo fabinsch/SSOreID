@@ -1,6 +1,6 @@
 tracktor:
   'loggerLevel': 15
-  'dataset': mot17_14_DPM17
+  'dataset': mot17_09_DPM17
   'write_images': False
   'reid_ML': True
   'LR_ML': True
@@ -10,7 +10,7 @@ tracktor:
   #'reid_weights': output/tracktor/ml_classification/3DB_val_09/best_reID_Network.pth
   #'reid_weights': output/tracktor/ml_classification/LR_per_Parameter_09_clamp_OLDSamp_init1e-4/best_reID_Network.pth
   #'reid_weights': output/tracktor/ml_classification/LR_per_Parameter_clamp_2/best_reID_Network.pth
-  'reid_weights': output/tracktor/ml_classification/LrPP_NoVal_trainAll3_ClassRatio_TrainOthersML/20000_reID_Network.pth
+  'reid_weights': /usr/stud/schrammf/tracking_wo_bnw/output/tracktor/ml_classification/LrPP_NoVal_trainAll3_ClassRatio_TrainOthersML/5000_reID_Network.pth
   'tracker':
     'inactive_patience': 50
     'reid_iou_threshold': 0.2

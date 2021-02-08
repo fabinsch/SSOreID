@@ -31,11 +31,6 @@ reid:
     learn_LR: True
     global_LR: False
     init_last: True
-    # -1 takes all
-    num_others: -1
-    train_others: False
-    market_others: False
-    weightening: 0 # 0 class ratio, 1 class ratio + samples / ID, 2 samples / ID, 3 no weights
 
   solver:
 

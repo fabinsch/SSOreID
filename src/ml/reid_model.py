@@ -42,33 +42,14 @@ class reID_Model(torch.nn.Module):
             del r[key_lr_bias]
         return r
 
-    def forward_pass_for_classifier_training(self, learner, features, labels, nways, return_scores=False, weights=[]):
-        if type(features) is tuple:  # if val set includes others
-            # first task, than others own seq
-            tasks_others_own = torch.cat((features[0], features[1]))
-            if len(features[2]) > 1:  # if others from all seq used in val set
-                # third others from all others
-                class_logits2 = learner(tasks_others_own, nways)
-                class_logits = learner(features[2], nways)
-                class_logits = torch.cat((class_logits2, class_logits))
-            else:
-                class_logits = learner(tasks_others_own, nways)
-
-        else:  # if no others involved
-            class_logits = learner(features, nways)
-
+    def forward_pass_for_classifier_training(self, learner, features, labels, nways, return_scores=False):
+        class_logits = learner(features, nways)
+        loss = F.cross_entropy(class_logits, labels.long())
         if return_scores:
             pred_scores = F.softmax(class_logits, -1)
-
-            if len(weights) < 1:
-                loss = F.cross_entropy(class_logits, labels.long())
-            elif len(weights) == (nways + 1):  # class ratio
-                loss = F.cross_entropy(class_logits, labels.long(), weight=weights)
-            else:
-                loss = F.cross_entropy(class_logits, labels.long(), reduction='none')
-                loss = (loss * weights / weights.sum()).sum()  # needs to be sum at the end not mean!
-
             return pred_scores.detach(), loss
+        else:
+            return loss
 
     def accuracy(self, predictions, targets):
         predictions = predictions.argmax(dim=1).view(targets.shape)
